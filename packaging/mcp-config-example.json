@@ -1,0 +1,19 @@
+{
+  "_comment": "Example MCP client configuration. Replace INSTALL_DIR with the OpenSees Studio installation folder.",
+  "mcpServers": {
+    "opensees-studio": {
+      "command": "C:\\Program Files\\OpenSees Studio\\mcp\\OpenSeesStudioMCP.exe",
+      "args": [],
+      "env": {}
+    }
+  },
+  "_opencode_example": {
+    "mcp": {
+      "opensees-studio": {
+        "type": "local",
+        "command": ["C:\\Program Files\\OpenSees Studio\\mcp\\OpenSeesStudioMCP.exe"],
+        "enabled": true
+      }
+    }
+  }
+}

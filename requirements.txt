@@ -1,0 +1,6 @@
+PySide6>=6.6
+openseespy==3.8.0.0
+numpy
+mcp>=2.0
+pyinstaller
+pillow

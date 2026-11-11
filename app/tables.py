@@ -1,0 +1,404 @@
+"""Spreadsheet-style model tables."""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Tuple
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout,
+                               QHeaderView, QLabel, QMessageBox, QPushButton,
+                               QTableWidget, QTableWidgetItem, QTabWidget,
+                               QVBoxLayout, QWidget)
+
+from . import theme
+from .model import (Element, ElementLoad, LoadCase, LoadCombination, Material,
+                    NodalLoad, Node, Project, Section, fmt)
+
+
+def _cell(text) -> QTableWidgetItem:
+    it = QTableWidgetItem(str(text))
+    return it
+
+
+class TablePage(QWidget):
+    def __init__(self, headers: List[str], rows: List[List], widths: Optional[Dict[int, int]] = None,
+                 new_row=None) -> None:
+        super().__init__()
+        self._new_row = new_row
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        self.table = QTableWidget(len(rows), len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectItems)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.Interactive)
+        hh.setStretchLastSection(True)
+        for i, h in enumerate(headers):
+            self.table.setColumnWidth(i, (widths or {}).get(i, max(64, 9 * len(h) + 22)))
+        for r, row in enumerate(rows):
+            for c, val in enumerate(row):
+                self.table.setItem(r, c, _cell(val))
+        lay.addWidget(self.table)
+
+        bar = QHBoxLayout()
+        add = QPushButton("Add row")
+        add.clicked.connect(self._add)
+        dup = QPushButton("Duplicate row")
+        dup.clicked.connect(self._dup)
+        rem = QPushButton("Delete rows")
+        rem.clicked.connect(self._del)
+        bar.addWidget(add); bar.addWidget(dup); bar.addWidget(rem); bar.addStretch(1)
+        self.count = QLabel()
+        bar.addWidget(self.count)
+        lay.addLayout(bar)
+        self.table.itemChanged.connect(lambda *_: self._update_count())
+        self._update_count()
+
+    def _update_count(self) -> None:
+        self.count.setText(f"{self.table.rowCount()} rows")
+        self.count.setStyleSheet(f"color: {theme.MUTED};")
+
+    def _add(self) -> None:
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        if self._new_row:
+            for c, v in enumerate(self._new_row(self.table)):
+                self.table.setItem(r, c, _cell(v))
+        self.table.scrollToBottom()
+
+    def _dup(self) -> None:
+        r = self.table.currentRow()
+        if r < 0:
+            return
+        vals = [self.table.item(r, c).text() if self.table.item(r, c) else ""
+                for c in range(self.table.columnCount())]
+        nr = self.table.rowCount()
+        self.table.insertRow(nr)
+        for c, v in enumerate(vals):
+            self.table.setItem(nr, c, _cell(v))
+
+    def _del(self) -> None:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
+        if not rows and self.table.currentRow() >= 0:
+            rows = [self.table.currentRow()]
+        for r in rows:
+            self.table.removeRow(r)
+
+    def rows(self) -> List[List[str]]:
+        out = []
+        for r in range(self.table.rowCount()):
+            row = []
+            for c in range(self.table.columnCount()):
+                it = self.table.item(r, c)
+                row.append(it.text().strip() if it else "")
+            if any(row):
+                out.append(row)
+        return out
+
+
+# --------------------------------------------------------------------------- #
+class TablesDialog(QDialog):
+    def __init__(self, project: Project, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Model Tables")
+        self.resize(1120, 680)
+        self.project = project
+        self.result_project: Optional[Project] = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 10, 10, 10)
+        self.tabs = QTabWidget()
+        lay.addWidget(self.tabs, 1)
+        self._build_pages()
+
+        bar = QHBoxLayout()
+        info = QLabel("Edit cells directly. 'Apply' validates and rebuilds the model.")
+        info.setStyleSheet(f"color: {theme.MUTED};")
+        bar.addWidget(info)
+        bar.addStretch(1)
+        reload_btn = QPushButton("Reload")
+        reload_btn.clicked.connect(self._reload)
+        close = QPushButton("Close")
+        close.clicked.connect(self.reject)
+        apply_btn = QPushButton("Apply")
+        apply_btn.setDefault(True)
+        apply_btn.clicked.connect(self._apply)
+        bar.addWidget(reload_btn); bar.addWidget(close); bar.addWidget(apply_btn)
+        lay.addLayout(bar)
+
+    # ------------------------------------------------------------------ pages
+    def _build_pages(self) -> None:
+        p = self.project
+        self.page_nodes = TablePage(
+            ["Tag", "X", "Y", "Z"],
+            [[n.tag, fmt(n.x), fmt(n.y), fmt(n.z)] for n in p.nodes.values()],
+            {0: 70}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
+                                             if t.item(r, 0)), default=0) + 1, "0", "0", "0"])
+        self.page_supports = TablePage(
+            ["Node", "DX", "DY", "DZ", "RX", "RY", "RZ"],
+            [[n.tag] + [1 if b else 0 for b in n.support] for n in p.nodes.values()],
+            {0: 70})
+        self.page_elements = TablePage(
+            ["Tag", "Type", "Node1", "Node2", "Node3", "Node4", "Material", "Section", "Thickness"],
+            [[e.tag, e.kind, *[e.nodes[i] if i < len(e.nodes) else "" for i in range(4)],
+              e.mat, e.sec, fmt(e.thickness, 2)] for e in p.elements.values()],
+            {0: 60, 1: 80}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
+                                                    if t.item(r, 0)), default=0) + 1, "beam", "", "", "", "", 1, 1, "100"])
+        self.page_materials = TablePage(
+            ["Tag", "Name", "Type", "E", "Nu", "Density", "fy", "b"],
+            [[m.tag, m.name, m.kind, fmt(m.E, 5), fmt(m.nu, 3), f"{m.rho:.6e}",
+              fmt(m.fy, 5), fmt(m.b, 4)] for m in p.materials.values()],
+            {1: 160, 2: 100}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
+                                                      if t.item(r, 0)), default=0) + 1, "New material", "Elastic", 200, 0.3, "7.85e-9", 0.235, 0.01])
+        self.page_sections = TablePage(
+            ["Tag", "Name", "Shape", "b", "h", "d", "t", "tw", "tf", "A", "Iy", "Iz", "J"],
+            [[s.tag, s.name, s.shape, fmt(s.b, 2), fmt(s.h, 2), fmt(s.d, 2), fmt(s.t, 2),
+              fmt(s.tw, 2), fmt(s.tf, 2), fmt(s.A, 3), fmt(s.Iy, 3), fmt(s.Iz, 3), fmt(s.J, 3)]
+             for s in p.sections.values()],
+            {1: 150, 2: 90})
+        self.page_cases = TablePage(
+            ["Name", "Type", "Note"],
+            [[c.name, c.kind, c.note] for c in p.cases.values()],
+            {0: 120, 1: 110}, new_row=lambda t: [f"LC{t.rowCount() + 1}", "Other", ""])
+        self.page_nodal = TablePage(
+            ["Tag", "Node", "Case", "FX", "FY", "FZ", "MX", "MY", "MZ"],
+            [[l.tag, l.node, l.case] + [fmt(v, 3) for v in l.values] for l in p.nodal_loads],
+            {0: 60, 2: 100})
+        self.page_eleload = TablePage(
+            ["Tag", "Element", "Case", "Type", "Direction", "w1 / P", "w2", "x/L"],
+            [[l.tag, l.elem, l.case, "Trapezoid" if l.trapezoid else l.kind.capitalize(),
+              l.direction, fmt(l.value, 5), fmt(l.value2, 5), fmt(l.position, 3)]
+             for l in p.elem_loads],
+            {2: 100, 3: 90, 4: 100})
+        self.page_combos = TablePage(
+            ["Name", "Type", "Factors (case:factor, ...)"],
+            [[c.name, c.kind, ", ".join(f"{n}:{fmt(f, 3)}" for n, f in c.factors)]
+             for c in p.combos.values()],
+            {0: 130, 1: 90, 2: 420}, new_row=lambda t: [f"COMB{t.rowCount() + 1}", "Add", ""])
+
+        for title, page in (("Nodes", self.page_nodes), ("Supports", self.page_supports),
+                            ("Elements", self.page_elements), ("Materials", self.page_materials),
+                            ("Sections", self.page_sections), ("Load Cases", self.page_cases),
+                            ("Nodal Loads", self.page_nodal), ("Element Loads", self.page_eleload),
+                            ("Combinations", self.page_combos)):
+            self.tabs.addTab(page, title)
+
+    def _reload(self) -> None:
+        while self.tabs.count():
+            w = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            w.deleteLater()
+        self._build_pages()
+
+    # ------------------------------------------------------------------ apply
+    def _apply(self) -> None:
+        try:
+            self.result_project = self._collect()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid table data", str(exc))
+            return
+        self.accept()
+
+    def _collect(self) -> Project:
+        base = self.project
+        p = base.clone()
+        errors: List[str] = []
+
+        def num(text: str, where: str, default: float = 0.0) -> float:
+            try:
+                return float(text) if text not in ("", "-") else default
+            except ValueError:
+                errors.append(f"{where}: '{text}' is not a number")
+                return default
+
+        def tag(text: str, where: str) -> int:
+            try:
+                v = int(float(text))
+                if v <= 0:
+                    raise ValueError
+                return v
+            except ValueError:
+                errors.append(f"{where}: '{text}' is not a positive integer tag")
+                return 0
+
+        # ---- nodes -----------------------------------------------------
+        nodes: Dict[int, Node] = {}
+        for row in self.page_nodes.rows():
+            t = tag(row[0], "Nodes")
+            if t in nodes:
+                errors.append(f"Nodes: duplicate tag {t}")
+            old = base.nodes.get(t)
+            nodes[t] = Node(t, num(row[1], f"Node {t} X"), num(row[2], f"Node {t} Y"),
+                            num(row[3], f"Node {t} Z"),
+                            list(old.support) if old else [False] * 6,
+                            list(old.spring) if old else [0.0] * 6)
+        if not nodes:
+            errors.append("Nodes: the model needs at least one node")
+
+        # ---- supports --------------------------------------------------
+        for row in self.page_supports.rows():
+            t = tag(row[0], "Supports")
+            if t not in nodes:
+                errors.append(f"Supports: node {t} does not exist")
+                continue
+            flags = []
+            for text in row[1:7]:
+                flags.append(text.strip().lower() in ("1", "y", "yes", "true"))
+            nodes[t].support = flags
+
+        # ---- materials -------------------------------------------------
+        materials: Dict[int, Material] = {}
+        for row in self.page_materials.rows():
+            t = tag(row[0], "Materials")
+            if t in materials:
+                errors.append(f"Materials: duplicate tag {t}")
+            m = materials.setdefault(t, Material(t))
+            m.name = row[1] or f"Material {t}"
+            m.kind = row[2] if row[2] in ("Elastic", "ElasticPP", "Steel02", "Concrete02") else "Elastic"
+            m.E = num(row[3], f"Material {t} E")
+            m.nu = num(row[4], f"Material {t} Nu", 0.3)
+            m.rho = num(row[5], f"Material {t} density")
+            m.fy = num(row[6], f"Material {t} fy")
+            m.b = num(row[7], f"Material {t} b", 0.01)
+        if not materials:
+            materials[1] = Material(1, "Steel", "Elastic", 200.0, 0.3, 7.85e-9)
+
+        # ---- sections --------------------------------------------------
+        sections: Dict[int, Section] = {}
+        for row in self.page_sections.rows():
+            t = tag(row[0], "Sections")
+            if t in sections:
+                errors.append(f"Sections: duplicate tag {t}")
+            s = sections.setdefault(t, Section(t))
+            s.name = row[1] or f"Section {t}"
+            s.shape = row[2] if row[2] in ("Rectangle", "Circle", "Pipe", "Box", "I-Shape", "User") else "Rectangle"
+            s.b = num(row[3], f"Section {t} b", 300)
+            s.h = num(row[4], f"Section {t} h", 600)
+            s.d = num(row[5], f"Section {t} d", 400)
+            s.t = num(row[6], f"Section {t} t", 12)
+            s.tw = num(row[7], f"Section {t} tw", 10)
+            s.tf = num(row[8], f"Section {t} tf", 15)
+            if s.shape == "User":
+                s.A = num(row[9], f"Section {t} A", 1)
+                s.Iy = num(row[10], f"Section {t} Iy", 1)
+                s.Iz = num(row[11], f"Section {t} Iz", 1)
+                s.J = num(row[12], f"Section {t} J", 1)
+            else:
+                s.compute()
+        if not sections:
+            s = Section(1, "Section 1", "Rectangle", 300, 600, 400, 12)
+            s.compute()
+            sections[1] = s
+
+        # ---- elements --------------------------------------------------
+        elements: Dict[int, Element] = {}
+        for row in self.page_elements.rows():
+            t = tag(row[0], "Elements")
+            if t in elements:
+                errors.append(f"Elements: duplicate tag {t}")
+            kind = (row[1] or "beam").strip().lower()
+            if kind not in ("beam", "truss", "shell"):
+                errors.append(f"Element {t}: type must be beam, truss or shell")
+                kind = "beam"
+            ns = []
+            for text in row[2:6]:
+                if text.strip():
+                    ns.append(tag(text, f"Element {t} node"))
+            need = 4 if kind == "shell" else 2
+            if len(ns) != need:
+                errors.append(f"Element {t}: {kind} needs {need} nodes, got {len(ns)}")
+            for nt in ns:
+                if nt not in nodes:
+                    errors.append(f"Element {t}: node {nt} does not exist")
+            mt = tag(row[6], f"Element {t} material")
+            st = tag(row[7], f"Element {t} section")
+            if mt not in materials:
+                errors.append(f"Element {t}: material {mt} does not exist")
+            if st not in sections:
+                errors.append(f"Element {t}: section {st} does not exist")
+            old = base.elements.get(t)
+            elements[t] = Element(t, kind, ns, mt, st,
+                                  list(old.vecxz) if (old and old.vecxz) else None,
+                                  num(row[8], f"Element {t} thickness", 100.0),
+                                  old.group if old else "")
+
+        # ---- cases -----------------------------------------------------
+        cases: Dict[str, LoadCase] = {}
+        for row in self.page_cases.rows():
+            name = row[0]
+            if not name:
+                continue
+            if name in cases:
+                errors.append(f"Load cases: duplicate name '{name}'")
+            cases[name] = LoadCase(name, row[1] if row[1] else "Other", row[2] if len(row) > 2 else "")
+        if not cases:
+            cases["DL"] = LoadCase("DL", "Dead")
+
+        # ---- nodal loads ----------------------------------------------
+        nodal: List[NodalLoad] = []
+        for row in self.page_nodal.rows():
+            t = tag(row[0], "Nodal loads")
+            nt = tag(row[1], f"Nodal load {t} node")
+            if nt not in nodes:
+                errors.append(f"Nodal load {t}: node {nt} does not exist")
+            if row[2] not in cases:
+                errors.append(f"Nodal load {t}: unknown load case '{row[2]}'")
+            vals = [num(v, f"Nodal load {t} value") for v in row[3:9]]
+            nodal.append(NodalLoad(t, nt, row[2], vals))
+
+        # ---- element loads --------------------------------------------
+        eleloads: List[ElementLoad] = []
+        for row in self.page_eleload.rows():
+            t = tag(row[0], "Element loads")
+            et = tag(row[1], f"Element load {t} element")
+            if et not in elements:
+                errors.append(f"Element load {t}: element {et} does not exist")
+            if row[2] not in cases:
+                errors.append(f"Element load {t}: unknown load case '{row[2]}'")
+            typ = row[3].strip().lower()
+            kind = "point" if typ.startswith("point") else "uniform"
+            l = ElementLoad(t, et, row[2], kind, row[4] or "local-z",
+                            num(row[5], f"Element load {t} value"),
+                            num(row[6], f"Element load {t} w2", 0.0),
+                            num(row[7], f"Element load {t} x/L", 0.5),
+                            typ.startswith("trap"))
+            eleloads.append(l)
+
+        # ---- combinations ---------------------------------------------
+        combos: Dict[str, LoadCombination] = {}
+        for row in self.page_combos.rows():
+            name = row[0]
+            if not name:
+                continue
+            if name in combos:
+                errors.append(f"Combinations: duplicate name '{name}'")
+            factors: List[Tuple[str, float]] = []
+            for part in (row[2] if len(row) > 2 else "").replace(";", ",").split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                if ":" not in part:
+                    errors.append(f"Combination {name}: '{part}' must look like CASE:factor")
+                    continue
+                cname, ftext = part.split(":", 1)
+                cname = cname.strip()
+                if cname not in cases:
+                    errors.append(f"Combination {name}: unknown case '{cname}'")
+                factors.append((cname, num(ftext, f"Combination {name} factor", 1.0)))
+            combos[name] = LoadCombination(name, factors, row[1] or "Add")
+
+        if errors:
+            raise ValueError("\n".join(errors[:14]) +
+                             ("\n…" if len(errors) > 14 else ""))
+
+        p.nodes = nodes
+        p.materials = materials
+        p.sections = sections
+        p.elements = elements
+        p.cases = cases
+        p.nodal_loads = nodal
+        p.elem_loads = eleloads
+        p.combos = combos
+        return p

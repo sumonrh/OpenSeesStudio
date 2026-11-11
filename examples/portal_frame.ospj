@@ -1,0 +1,369 @@
+{
+  "format": "OpenSeesStudio",
+  "version": 1,
+  "title": "Portal Frame - Lateral Load",
+  "units": "kN-mm-t",
+  "nodes": [
+    {
+      "tag": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "support": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "spring": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "tag": 2,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 4000.0,
+      "support": [
+        false,
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      "spring": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "tag": 3,
+      "x": 6000.0,
+      "y": 0.0,
+      "z": 0.0,
+      "support": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "spring": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "tag": 4,
+      "x": 6000.0,
+      "y": 0.0,
+      "z": 4000.0,
+      "support": [
+        false,
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      "spring": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "tag": 1,
+      "kind": "beam",
+      "nodes": [
+        1,
+        2
+      ],
+      "mat": 1,
+      "sec": 4,
+      "vecxz": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "thickness": 100.0,
+      "group": ""
+    },
+    {
+      "tag": 2,
+      "kind": "beam",
+      "nodes": [
+        3,
+        4
+      ],
+      "mat": 1,
+      "sec": 4,
+      "vecxz": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "thickness": 100.0,
+      "group": ""
+    },
+    {
+      "tag": 3,
+      "kind": "beam",
+      "nodes": [
+        2,
+        4
+      ],
+      "mat": 1,
+      "sec": 5,
+      "vecxz": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "thickness": 100.0,
+      "group": ""
+    }
+  ],
+  "materials": [
+    {
+      "tag": 1,
+      "name": "Steel (S355)",
+      "kind": "Elastic",
+      "E": 200.0,
+      "nu": 0.3,
+      "rho": 7.85e-09,
+      "fy": 0.235,
+      "b": 0.01,
+      "fc": 0.03,
+      "epsc0": -0.002,
+      "fpcu": -0.006,
+      "epsU": -0.02
+    },
+    {
+      "tag": 2,
+      "name": "Concrete C30",
+      "kind": "Elastic",
+      "E": 30.0,
+      "nu": 0.2,
+      "rho": 2.5e-09,
+      "fy": 0.235,
+      "b": 0.01,
+      "fc": 0.03,
+      "epsc0": -0.002,
+      "fpcu": -0.006,
+      "epsU": -0.02
+    }
+  ],
+  "sections": [
+    {
+      "tag": 1,
+      "name": "H 300x300x10x15",
+      "shape": "I-Shape",
+      "b": 300.0,
+      "h": 300.0,
+      "d": 400.0,
+      "t": 12.0,
+      "tw": 10.0,
+      "tf": 15.0,
+      "A": 11700.0,
+      "Iy": 199327500.0,
+      "Iz": 67522500.0,
+      "J": 765000.0
+    },
+    {
+      "tag": 2,
+      "name": "Rect 300x600",
+      "shape": "Rectangle",
+      "b": 300.0,
+      "h": 600.0,
+      "d": 400.0,
+      "t": 12.0,
+      "tw": 10.0,
+      "tf": 15.0,
+      "A": 180000.0,
+      "Iy": 5400000000.0,
+      "Iz": 1350000000.0,
+      "J": 3707859375.0
+    },
+    {
+      "tag": 3,
+      "name": "Plate 100 mm",
+      "shape": "User",
+      "b": 300.0,
+      "h": 600.0,
+      "d": 400.0,
+      "t": 12.0,
+      "tw": 10.0,
+      "tf": 15.0,
+      "A": 1.0,
+      "Iy": 1.0,
+      "Iz": 1.0,
+      "J": 1.0
+    },
+    {
+      "tag": 4,
+      "name": "H300x300x10x15",
+      "shape": "I-Shape",
+      "b": 300.0,
+      "h": 300.0,
+      "d": 400.0,
+      "t": 12.0,
+      "tw": 10.0,
+      "tf": 15.0,
+      "A": 11700.0,
+      "Iy": 199327500.0,
+      "Iz": 67522500.0,
+      "J": 765000.0
+    },
+    {
+      "tag": 5,
+      "name": "H400x200x8x13",
+      "shape": "I-Shape",
+      "b": 200.0,
+      "h": 400.0,
+      "d": 400.0,
+      "t": 12.0,
+      "tw": 8.0,
+      "tf": 13.0,
+      "A": 8192.0,
+      "Iy": 229648682.66666666,
+      "Iz": 17349290.666666668,
+      "J": 356762.6666666667
+    }
+  ],
+  "cases": [
+    {
+      "name": "DL",
+      "kind": "Dead",
+      "note": ""
+    },
+    {
+      "name": "LL",
+      "kind": "Live",
+      "note": ""
+    },
+    {
+      "name": "WIND",
+      "kind": "Wind",
+      "note": ""
+    }
+  ],
+  "nodal_loads": [
+    {
+      "tag": 2,
+      "node": 2,
+      "case": "WIND",
+      "values": [
+        50.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "tag": 3,
+      "node": 4,
+      "case": "WIND",
+      "values": [
+        50.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "elem_loads": [
+    {
+      "tag": 1,
+      "elem": 3,
+      "case": "DL",
+      "kind": "uniform",
+      "direction": "Global Z",
+      "value": -0.02,
+      "value2": 0.0,
+      "position": 0.5,
+      "trapezoid": false
+    }
+  ],
+  "self_weight": {
+    "DL": 1.0
+  },
+  "combos": [
+    {
+      "name": "COMB1",
+      "kind": "Add",
+      "factors": [
+        [
+          "DL",
+          1.0
+        ],
+        [
+          "LL",
+          1.0
+        ]
+      ]
+    },
+    {
+      "name": "DL+WIND",
+      "kind": "Add",
+      "factors": [
+        [
+          "DL",
+          1.0
+        ],
+        [
+          "WIND",
+          1.0
+        ]
+      ]
+    },
+    {
+      "name": "1.2DL+1.0WIND",
+      "kind": "Add",
+      "factors": [
+        [
+          "DL",
+          1.2
+        ],
+        [
+          "WIND",
+          1.0
+        ]
+      ]
+    }
+  ],
+  "settings": {
+    "static_steps": 1.0,
+    "modal_modes": 6,
+    "mass_from_density": true,
+    "last_case": "1.2DL+1.0WIND",
+    "last_combo": "",
+    "deformed_scale": null
+  }
+}
