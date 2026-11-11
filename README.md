@@ -80,11 +80,13 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 | F7 | Results |
 | F9 | Model check |
 | F | Fit view |
+| O | 3D orbit mode (left-drag rotates) |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Del | Delete selection |
 
 **Mouse:** left = select (drag = box select), middle = pan, right = orbit, wheel = zoom.
-Ctrl/Shift adds to the selection.
+Press **O** (or the Orbit toolbar button) for AutoCAD-style orbit mode, where left-drag rotates
+the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the selection.
 
 ## MCP server (AI agents)
 

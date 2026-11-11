@@ -130,6 +130,7 @@ class Viewport(QWidget):
         self.show_grid = True
         self.show_axes = True
         self.wireframe = True
+        self.orbit_mode = False
 
         self.static_results: Optional[StaticResults] = None
         self.modal_results: Optional[ModalResults] = None
@@ -262,6 +263,14 @@ class Viewport(QWidget):
         for k, v in kwargs.items():
             if hasattr(self, k):
                 setattr(self, k, bool(v))
+        self.update()
+
+    def set_orbit_mode(self, on: bool) -> None:
+        """AutoCAD-style 3D orbit: left-drag rotates instead of selecting."""
+        self.orbit_mode = bool(on)
+        self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
+        self.statusMessage.emit("Orbit mode: drag to rotate   (Esc to exit)"
+                                if self.orbit_mode else "Orbit mode off")
         self.update()
 
     # ---------------------------------------------------------- deformation
@@ -729,10 +738,18 @@ class Viewport(QWidget):
         self._last = self._press
         self._moved = False
         if ev.button() == Qt.LeftButton:
-            self._band = QRect(self._press, self._press)
+            if self.orbit_mode or bool(ev.modifiers() & Qt.ShiftModifier):
+                self._orbiting = True
+                self.setCursor(Qt.ClosedHandCursor)
+            else:
+                self._band = QRect(self._press, self._press)
         elif ev.button() == Qt.MiddleButton:
-            self._panning = True
-            self.setCursor(Qt.ClosedHandCursor)
+            if bool(ev.modifiers() & Qt.ShiftModifier):     # AutoCAD-style orbit
+                self._orbiting = True
+                self.setCursor(Qt.ClosedHandCursor)
+            else:
+                self._panning = True
+                self.setCursor(Qt.ClosedHandCursor)
         elif ev.button() == Qt.RightButton:
             self._orbiting = True
             self.setCursor(Qt.SizeAllCursor)
@@ -766,6 +783,10 @@ class Viewport(QWidget):
             self._last = pos
             self.update()
             return
+        if self.orbit_mode:
+            self.setCursor(Qt.OpenHandCursor)
+            return
+
         node, elem = self._hit(pos)
         if node != self._hover_node or elem != self._hover_elem:
             self._hover_node, self._hover_elem = node, elem
@@ -783,7 +804,7 @@ class Viewport(QWidget):
         if self._band is not None:
             rect = self._band.normalized()
             self._band = None
-            additive = bool(ev.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
+            additive = bool(ev.modifiers() & Qt.ControlModifier)
             if self._moved and rect.width() > 4 and rect.height() > 4:
                 self._rubber_select(rect, additive)
             else:
@@ -807,7 +828,7 @@ class Viewport(QWidget):
         self._orbiting = False
         self._press = None
         self._moved = False
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
         self.update()
 
     def wheelEvent(self, ev) -> None:
@@ -820,7 +841,10 @@ class Viewport(QWidget):
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() == Qt.Key_Escape:
-            self.clear_selection()
+            if self.orbit_mode:
+                self.set_orbit_mode(False)
+            else:
+                self.clear_selection()
         elif ev.key() == Qt.Key_F:
             self.fit()
         else:

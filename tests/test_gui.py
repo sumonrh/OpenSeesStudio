@@ -6,6 +6,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
@@ -137,6 +139,38 @@ win.load_example()
 check("example frame nodes", len(win.project.nodes) == 24, f"({len(win.project.nodes)})")
 check("example frame elements", len(win.project.elements) == 39)
 check("example load cases", len(win.project.cases) == 3)
+
+print("== orbit control ==")
+vp = win.viewport
+
+
+def drag(x0, y0, x1, y1, mods=Qt.NoModifier):
+    vp.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, QPointF(x0, y0),
+                                   QPointF(x0, y0), Qt.LeftButton, Qt.LeftButton, mods))
+    vp.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(x1, y1),
+                                  QPointF(x1, y1), Qt.NoButton, Qt.LeftButton, mods))
+    vp.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPointF(x1, y1),
+                                     QPointF(x1, y1), Qt.LeftButton, Qt.NoButton, mods))
+
+
+yaw0 = vp.camera.yaw
+drag(400, 300, 480, 340)
+check("plain left-drag does not orbit", abs(vp.camera.yaw - yaw0) < 1e-9,
+      f"(dyaw={vp.camera.yaw - yaw0:.5f})")
+
+win.a_orbit.trigger()
+check("orbit mode enabled", vp.orbit_mode is True)
+yaw1 = vp.camera.yaw
+drag(400, 300, 520, 360)
+check("orbit drag rotates", abs(vp.camera.yaw - yaw1) > 1e-4,
+      f"(dyaw={vp.camera.yaw - yaw1:.4f})")
+win.a_orbit.trigger()
+check("orbit mode disabled", vp.orbit_mode is False)
+
+yaw2 = vp.camera.yaw
+drag(400, 300, 470, 330, Qt.ShiftModifier)
+check("Shift+left orbits", abs(vp.camera.yaw - yaw2) > 1e-4,
+      f"(dyaw={vp.camera.yaw - yaw2:.4f})")
 
 print("== static analysis through the GUI ==")
 mainwindow.ResultsDialog = StubResults

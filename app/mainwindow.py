@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
         self.a_delete = self._act("Delete", "delete", self.delete_selection, "Del",
                                   "Delete the selected nodes and elements")
         self.a_sel_all = self._act("Select All", "select", self.viewport.select_all, "Ctrl+A")
-        self.a_deselect = self._act("Deselect", "select", self.viewport.clear_selection, "Esc")
+        self.a_deselect = self._act("Deselect", "select", self._escape, "Esc")
 
         self.a_fit = self._act("Fit", "fit", self.viewport.fit, "F", "Zoom to the whole model")
         self.a_iso = self._act("Iso", "iso", lambda: self.viewport.set_view("iso"), "Ctrl+1")
@@ -175,6 +175,9 @@ class MainWindow(QMainWindow):
         self.a_results = self._act("Results", "results", self.show_results, "F7")
         self.a_animate = self._act("Animate", "run", self.animate_mode, "F8", checkable=True)
 
+        self.a_orbit = self._act("Orbit", "rotate", self._toggle_orbit, "O",
+                                 "3D orbit: left-drag rotates the model "
+                                 "(Shift+left or Shift+middle always orbits)", checkable=True)
         self.a_labels = self._act("Labels", "select", lambda on: self._toggle(labels=on),
                                   "", checkable=True)
         self.a_grid = self._act("Grid", "tables", lambda on: self._toggle(grid=on),
@@ -199,6 +202,16 @@ class MainWindow(QMainWindow):
         if supports is not None:
             kw["show_supports"] = supports
         self.viewport.set_show(**kw)
+
+    def _toggle_orbit(self, checked: bool) -> None:
+        self.viewport.set_orbit_mode(bool(checked))
+
+    def _escape(self) -> None:
+        if self.viewport.orbit_mode:
+            self.a_orbit.setChecked(False)
+            self.viewport.set_orbit_mode(False)
+            return
+        self.viewport.clear_selection()
 
     def _set_deform_scale(self, value: float) -> None:
         self.viewport.deformed_scale = float(value) if value > 0 else None
@@ -230,6 +243,7 @@ class MainWindow(QMainWindow):
         m.addAction(self.a_iso); m.addAction(self.a_top)
         m.addAction(self.a_front); m.addAction(self.a_right)
         m.addSeparator()
+        m.addAction(self.a_orbit)
         m.addAction(self.a_labels); m.addAction(self.a_grid); m.addAction(self.a_deformed)
 
         m = mb.addMenu("&Structure")
@@ -298,6 +312,7 @@ class MainWindow(QMainWindow):
         tb2.addAction(self.a_front)
         tb2.addAction(self.a_right)
         tb2.addSeparator()
+        tb2.addAction(self.a_orbit)
         tb2.addAction(self.a_labels)
         tb2.addAction(self.a_grid)
         tb2.addAction(self.a_deformed)
