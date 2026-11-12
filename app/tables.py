@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout,
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QHBoxLayout,
                                QHeaderView, QLabel, QMessageBox, QPushButton,
                                QTableWidget, QTableWidgetItem, QTabWidget,
                                QVBoxLayout, QWidget)
@@ -28,6 +29,74 @@ def _cell(text) -> QTableWidgetItem:
     return it
 
 
+class EditableTable(QTableWidget):
+    """QTableWidget with Excel-compatible Ctrl+C / Ctrl+V."""
+
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.Copy):
+            self.copy_selection()
+            event.accept()
+            return
+        if event.matches(QKeySequence.Paste):
+            self.paste_clipboard()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def copy_selection(self) -> None:
+        ranges = self.selectedRanges()
+        if ranges:
+            r0 = min(r.topRow() for r in ranges)
+            r1 = max(r.bottomRow() for r in ranges)
+            c0 = min(r.leftColumn() for r in ranges)
+            c1 = max(r.rightColumn() for r in ranges)
+        else:
+            r0 = r1 = self.currentRow()
+            c0 = c1 = self.currentColumn()
+        if r0 < 0 or c0 < 0:
+            return
+        lines = []
+        for r in range(r0, r1 + 1):
+            row = []
+            for c in range(c0, c1 + 1):
+                item = self.item(r, c)
+                row.append(item.text() if item else "")
+            lines.append("\t".join(row))
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def paste_clipboard(self) -> None:
+        text = QApplication.clipboard().text()
+        if not text:
+            return
+        rows = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if rows and rows[-1] == "":
+            rows.pop()
+        if not rows:
+            return
+        ranges = self.selectedRanges()
+        if ranges:
+            r0 = min(r.topRow() for r in ranges)
+            c0 = min(r.leftColumn() for r in ranges)
+        else:
+            r0, c0 = self.currentRow(), self.currentColumn()
+        r0 = max(r0, 0)
+        c0 = max(c0, 0)
+        for i, line in enumerate(rows):
+            r = r0 + i
+            if r >= self.rowCount():
+                self.insertRow(r)
+            for j, value in enumerate(line.split("\t")):
+                c = c0 + j
+                if c >= self.columnCount():
+                    break
+                item = self.item(r, c)
+                if item is None:
+                    self.setItem(r, c, _cell(value))
+                else:
+                    item.setText(value)
+        self.setCurrentCell(r0, c0)
+
+
 class TablePage(QWidget):
     def __init__(self, headers: List[str], rows: List[List], widths: Optional[Dict[int, int]] = None,
                  new_row=None) -> None:
@@ -35,7 +104,7 @@ class TablePage(QWidget):
         self._new_row = new_row
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
-        self.table = QTableWidget(len(rows), len(headers))
+        self.table = EditableTable(len(rows), len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectItems)
@@ -57,7 +126,14 @@ class TablePage(QWidget):
         dup.clicked.connect(self._dup)
         rem = QPushButton("Delete rows")
         rem.clicked.connect(self._del)
-        bar.addWidget(add); bar.addWidget(dup); bar.addWidget(rem); bar.addStretch(1)
+        copy = QPushButton("Copy")
+        copy.setToolTip("Copy selected cells as tab-separated text (Ctrl+C)")
+        copy.clicked.connect(self.table.copy_selection)
+        paste = QPushButton("Paste")
+        paste.setToolTip("Paste cells copied from Excel (Ctrl+V)")
+        paste.clicked.connect(self.table.paste_clipboard)
+        bar.addWidget(add); bar.addWidget(dup); bar.addWidget(rem)
+        bar.addWidget(copy); bar.addWidget(paste); bar.addStretch(1)
         self.count = QLabel()
         bar.addWidget(self.count)
         lay.addLayout(bar)

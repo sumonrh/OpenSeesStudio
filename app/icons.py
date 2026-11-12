@@ -1,8 +1,8 @@
 """Vector toolbar icons drawn with QPainter (no external assets)."""
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import (QBrush, QColor, QIcon, QPainter, QPainterPath, QPen,
-                           QPixmap, QPolygonF)
+from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
+                           QPen, QPixmap, QPolygonF)
 
 _CACHE: dict = {}
 
@@ -265,6 +265,238 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         path.lineTo(13.5, 21); path.lineTo(16.5, 19.5); path.lineTo(13.5, 13.8)
         path.lineTo(19, 13.5); path.closeSubpath()
         _fill(p, "#ffffff"); p.drawPath(path)
+
+    elif name == "run_static":
+        _fill(p, GREEN)
+        p.drawPolygon(QPolygonF([QPointF(4, 4), QPointF(13, 12), QPointF(4, 20)]))
+        _pen(p, accent, 1.5)
+        for y, ln in ((7, 5), (12, 8), (17, 6)):
+            p.drawLine(QPointF(15, y), QPointF(15 + ln, y))
+
+    elif name == "modal":
+        _pen(p, accent, 1.8)
+        path = QPainterPath()
+        path.moveTo(3, 12)
+        path.cubicTo(6, 2, 9, 2, 12, 12)
+        path.cubicTo(15, 22, 18, 22, 21, 12)
+        p.drawPath(path)
+        _fill(p, GREEN)
+        p.drawPolygon(QPolygonF([QPointF(2.5, 8), QPointF(6, 10.5), QPointF(2.5, 13)]))
+
+    elif name == "animate":
+        _pen(p, accent, 1.3)
+        p.drawArc(QRectF(3, 4, 9, 16), 90 * 16, 180 * 16)
+        p.drawArc(QRectF(12, 4, 9, 16), 270 * 16, 180 * 16)
+        _fill(p, GREEN)
+        p.drawPolygon(QPolygonF([QPointF(8, 6), QPointF(18, 12), QPointF(8, 18)]))
+
+    elif name == "check":
+        _pen(p, GREEN, 1.7)
+        path = QPainterPath()
+        path.moveTo(12, 2.5); path.lineTo(20, 6); path.lineTo(20, 12)
+        path.lineTo(12, 21.5); path.lineTo(4, 12); path.lineTo(4, 6)
+        path.closeSubpath()
+        p.drawPath(path)
+        _pen(p, GREEN, 2.2)
+        p.drawPolyline([QPointF(7.5, 12), QPointF(10.8, 15.2), QPointF(16.8, 8.5)])
+
+    elif name == "material":
+        for i, color in enumerate(("#c5d9ec", "#8fb4d6", accent)):
+            y = 5 + i * 5
+            poly = QPolygonF([QPointF(12, y), QPointF(21, y + 3.5),
+                              QPointF(12, y + 7), QPointF(3, y + 3.5)])
+            _fill(p, color)
+            p.drawPolygon(poly)
+
+    elif name == "section":
+        _pen(p, accent, 1.4)
+        pts = [(6, 3), (18, 3), (18, 7), (14, 7), (14, 17), (18, 17),
+               (18, 21), (6, 21), (6, 17), (10, 17), (10, 7), (6, 7)]
+        _fill(p, "#dcebf9")
+        p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+
+    elif name == "nodal_load":
+        _pen(p, accent, 1.7)
+        p.drawLine(QPointF(8, 3), QPointF(8, 14))
+        _fill(p, accent)
+        _arrow_head(p, 8, 16.5, 0, 1, 3.2)
+        _fill(p, ORANGE)
+        p.drawEllipse(QPointF(8, 20), 2.6, 2.6)
+        _pen(p, "#8ea6bd", 1.2)
+        p.drawLine(QPointF(4, 22), QPointF(20, 22))
+
+    elif name == "element_load":
+        _pen(p, "#8ea6bd", 1.4)
+        p.drawLine(QPointF(3, 19), QPointF(21, 19))
+        _pen(p, accent, 1.5)
+        for x in (7, 12, 17):
+            p.drawLine(QPointF(x, 4), QPointF(x, 14))
+            _fill(p, accent)
+            _arrow_head(p, x, 16.4, 0, 1, 2.9)
+
+    elif name == "self_weight":
+        _pen(p, INK, 1.4)
+        p.drawRect(QRectF(5, 6, 14, 9))
+        _fill(p, "#dcebf9")
+        p.drawRect(QRectF(6, 7, 12, 7))
+        _pen(p, accent, 1.6)
+        p.drawLine(QPointF(12, 16), QPointF(12, 21))
+        _fill(p, accent)
+        _arrow_head(p, 12, 22.5, 0, 1, 2.8)
+        p.setFont(QFont("Segoe UI", 6, QFont.Bold))
+        p.setPen(QPen(QColor(INK)))
+        p.drawText(QPointF(9.3, 13.2), "g")
+
+    elif name == "label":
+        _pen(p, INK, 1.3)
+        path = QPainterPath()
+        path.moveTo(3, 6); path.lineTo(14, 6); path.lineTo(21, 12)
+        path.lineTo(14, 18); path.lineTo(3, 18); path.closeSubpath()
+        _fill(p, "#ffffff")
+        p.drawPath(path)
+        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.drawText(QPointF(7.6, 15.5), "A")
+
+    elif name == "select_all":
+        _pen(p, accent, 1.3)
+        p.drawRect(QRectF(4, 4, 16, 16))
+        _fill(p, accent)
+        for x, y in ((4, 4), (20, 4), (4, 20), (20, 20)):
+            p.drawRect(QRectF(x - 1.5, y - 1.5, 3, 3))
+
+    elif name == "deselect":
+        _pen(p, "#8ea6bd", 1.3)
+        p.drawRect(QRectF(4, 4, 16, 16))
+        _pen(p, ORANGE, 1.7)
+        p.drawLine(QPointF(7, 7), QPointF(17, 17))
+        p.drawLine(QPointF(17, 7), QPointF(7, 17))
+
+    elif name == "fit_selection":
+        _pen(p, "#8ea6bd", 1.2)
+        p.drawRect(QRectF(7, 7, 10, 10))
+        _pen(p, accent, 1.6)
+        for x, y, dx, dy in ((2, 2, 1, 1), (22, 2, -1, 1),
+                              (2, 22, 1, -1), (22, 22, -1, -1)):
+            p.drawLine(QPointF(x, y), QPointF(x + dx * 5, y + dy * 5))
+            p.drawLine(QPointF(x + dx * 5, y), QPointF(x + dx * 5, y + dy * 5))
+
+    elif name == "grid":
+        _pen(p, accent, 1.2)
+        for v in (4, 9.3, 14.6, 20):
+            p.drawLine(QPointF(v, 4), QPointF(v, 20))
+            p.drawLine(QPointF(4, v), QPointF(20, v))
+
+    elif name == "deformed":
+        p.setPen(QPen(QColor("#9fb0c4"), 1.3, Qt.DashLine))
+        p.drawLine(QPointF(3, 17), QPointF(21, 17))
+        _pen(p, ORANGE, 1.8)
+        path = QPainterPath()
+        path.moveTo(3, 17)
+        path.cubicTo(7, 3, 17, 3, 21, 17)
+        p.drawPath(path)
+
+    elif name == "clean":
+        _pen(p, accent, 1.5)
+        p.drawRoundedRect(QRectF(3, 5, 18, 14), 1.5, 1.5)
+        p.drawLine(QPointF(6, 17), QPointF(12, 9))
+        p.drawLine(QPointF(12, 9), QPointF(18, 17))
+        p.drawLine(QPointF(8, 14), QPointF(16, 14))
+        _fill(p, ORANGE)
+        p.drawPolygon(QPolygonF([QPointF(19, 2), QPointF(20.2, 4.8),
+                                  QPointF(23, 6), QPointF(20.2, 7.2),
+                                  QPointF(19, 10), QPointF(17.8, 7.2),
+                                  QPointF(15, 6), QPointF(17.8, 4.8)]))
+
+    elif name == "extruded":
+        _pen(p, accent, 1.4)
+        top = QPolygonF([QPointF(12, 2.5), QPointF(21, 7), QPointF(12, 11.5),
+                         QPointF(3, 7)])
+        left = QPolygonF([QPointF(3, 7), QPointF(12, 11.5), QPointF(12, 21.5),
+                          QPointF(3, 17)])
+        right = QPolygonF([QPointF(21, 7), QPointF(12, 11.5), QPointF(12, 21.5),
+                           QPointF(21, 17)])
+        _fill(p, "#dcebf9"); p.drawPolygon(top)
+        _fill(p, "#8fb4d6"); p.drawPolygon(left)
+        _fill(p, "#c5d9ec"); p.drawPolygon(right)
+
+    elif name == "support_show":
+        _pen(p, GREEN, 1.4)
+        p.drawLine(QPointF(3, 21), QPointF(21, 21))
+        p.drawPolygon(QPolygonF([QPointF(12, 6), QPointF(4, 20), QPointF(20, 20)]))
+        _pen(p, accent, 1.3)
+        p.drawEllipse(QPointF(12, 13), 5.5, 3.4)
+        _fill(p, accent)
+        p.drawEllipse(QPointF(12, 13), 1.7, 1.7)
+
+    elif name == "load_show":
+        _pen(p, accent, 1.6)
+        p.drawLine(QPointF(7, 3), QPointF(7, 13))
+        _fill(p, accent)
+        _arrow_head(p, 7, 15.5, 0, 1, 2.8)
+        _pen(p, ORANGE, 1.3)
+        p.drawEllipse(QPointF(16, 15), 5.5, 3.4)
+        _fill(p, ORANGE)
+        p.drawEllipse(QPointF(16, 15), 1.7, 1.7)
+
+    elif name in ("panel_model", "panel_props", "panel_log"):
+        _pen(p, INK, 1.4)
+        p.drawRoundedRect(QRectF(3, 4, 18, 16), 1.5, 1.5)
+        p.drawLine(QPointF(10, 4), QPointF(10, 20))
+        if name == "panel_model":
+            _pen(p, accent, 1.2)
+            for y in (8, 12, 16):
+                p.drawLine(QPointF(5, y), QPointF(8, y))
+        elif name == "panel_props":
+            _pen(p, accent, 1.2)
+            for y in (8.5, 13, 17.5):
+                p.drawLine(QPointF(12.5, y), QPointF(18.5, y))
+                p.drawEllipse(QPointF(15, y), 1.1, 1.1)
+        else:
+            _pen(p, accent, 1.2)
+            for y in (8, 12, 16):
+                p.drawLine(QPointF(12.5, y), QPointF(18.5, y))
+
+    elif name == "help":
+        _pen(p, accent, 1.5)
+        p.drawEllipse(QPointF(12, 12), 9, 9)
+        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        p.drawText(QPointF(8.6, 16), "?")
+
+    elif name == "export":
+        _pen(p, INK, 1.4)
+        path = QPainterPath()
+        path.moveTo(5, 3); path.lineTo(14, 3); path.lineTo(19, 8)
+        path.lineTo(19, 21); path.lineTo(5, 21); path.closeSubpath()
+        p.drawPath(path)
+        _pen(p, accent, 1.6)
+        p.drawLine(QPointF(12, 6), QPointF(12, 15))
+        _fill(p, accent)
+        _arrow_head(p, 12, 17.5, 0, 1, 2.8)
+
+    elif name == "exit":
+        _pen(p, "#8ea6bd", 1.5)
+        p.drawLine(QPointF(4, 3), QPointF(4, 21))
+        p.drawRect(QRectF(4, 4, 9, 16))
+        _pen(p, ORANGE, 1.7)
+        p.drawLine(QPointF(11, 12), QPointF(21, 12))
+        _fill(p, ORANGE)
+        _arrow_head(p, 22.5, 12, 1, 0, 3.0)
+
+    elif name == "example":
+        _pen(p, accent, 1.5)
+        p.drawLine(QPointF(4, 20), QPointF(20, 20))
+        p.drawLine(QPointF(6, 20), QPointF(6, 7))
+        p.drawLine(QPointF(18, 20), QPointF(18, 7))
+        p.drawLine(QPointF(6, 7), QPointF(18, 7))
+        p.drawLine(QPointF(6, 14), QPointF(18, 14))
+
+    elif name == "save_as":
+        _pen(p, INK, 1.4)
+        p.drawRect(QRectF(4, 3, 13, 18))
+        p.drawRect(QRectF(7, 3, 7, 5))
+        _pen(p, accent, 1.7)
+        p.drawLine(QPointF(15, 14), QPointF(22, 14))
+        p.drawLine(QPointF(22, 14), QPointF(22, 21))
 
     elif name in ("lock", "unlock"):
         _pen(p, INK, 1.6)

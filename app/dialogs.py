@@ -629,6 +629,11 @@ class SectionDialog(BaseDialog):
         row = self.list.currentRow()
         keys = list(self.sections)
         if 0 <= row < len(keys) and len(self.sections) > 1:
+            used = [e.tag for e in self.project.elements.values() if e.sec == keys[row]]
+            if used:
+                QMessageBox.warning(self, "Section in use",
+                                    f"Section {keys[row]} is used by {len(used)} element(s).")
+                return
             del self.sections[keys[row]]
             self.current = None
             self._reload()

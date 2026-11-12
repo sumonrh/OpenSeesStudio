@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QLabel, QToolButton
+from PySide6.QtWidgets import (QApplication, QLabel, QTableWidgetSelectionRange,
+                               QToolButton)
 
 app = QApplication.instance() or QApplication([])
 
@@ -202,10 +203,41 @@ win.a_props_visible.trigger()
 check("properties panel collapses", win.props_dock.isHidden())
 win.a_props_visible.trigger()
 check("properties panel restores", not win.props_dock.isHidden())
-
 root = win.tree.topLevelItem(0)
 tree_items = {root.child(i).text(0).split("   ")[0]: root.child(i)
               for i in range(root.childCount())}
+check("nodes tree is a table link", tree_items["Nodes"].childCount() == 0)
+check("elements tree is a table link", tree_items["Elements"].childCount() == 0)
+orig_open_tables = win.open_tables
+table_calls = []
+win.open_tables = lambda tab=0: table_calls.append(tab)
+win._tree_clicked(tree_items["Nodes"], 0)
+win._tree_clicked(tree_items["Elements"], 0)
+win.open_tables = orig_open_tables
+check("tree links open tables", table_calls == [0, 2], f"({table_calls})")
+mat_item = tree_items["Materials"].child(0)
+win._tree_double(mat_item, 0)
+check("tree material selects elements", len(win.viewport.sel_elements) > 0)
+check("analysis icons are unique",
+      len({win.a_run.icon().cacheKey(), win.a_modal.icon().cacheKey(),
+           win.a_animate.icon().cacheKey()}) == 3)
+check("library icons are unique",
+      win.a_material.icon().cacheKey() != win.a_section.icon().cacheKey())
+
+win.a_extruded.trigger()
+check("extruded view enabled", win.viewport.show_extruded)
+vp_shot = win.viewport.grab()
+check("extruded view renders", not vp_shot.isNull() and vp_shot.width() > 0)
+win.a_extruded.trigger()
+
+win.clean_view()
+check("clean view hides results and loads",
+      not win.viewport.show_deformed and not win.viewport.show_loads
+      and not win.viewport.show_labels)
+win.viewport.set_show(show_deformed=True, show_loads=True)
+win.a_deformed.setChecked(True)
+win.a_loads_visible.setChecked(True)
+
 check("tree lists materials",
       tree_items["Materials"].childCount() == len(win.project.materials))
 check("tree lists sections",
@@ -304,6 +336,16 @@ check("element load added", any(l.elem == 1 and l.case == "LL"
 
 print("== tables dialog round trip ==")
 dlg = TablesDialog(win.project)
+dlg.page_nodes.table.setRangeSelected(QTableWidgetSelectionRange(0, 0, 0, 3), True)
+dlg.page_nodes.table.copy_selection()
+check("table copies tab-separated text", "\t" in QApplication.clipboard().text())
+QApplication.clipboard().setText("1\t1.5\t2.5\t3.5\n2\t4.0\t5.0\t6.0")
+dlg.page_nodes.table.setCurrentCell(0, 0)
+dlg.page_nodes.table.paste_clipboard()
+p_paste = dlg._collect()
+check("table pastes Excel block",
+      abs(p_paste.nodes[1].x - UNITS.length_base(1.5)) < 1e-9
+      and abs(p_paste.nodes[2].z - UNITS.length_base(6.0)) < 1e-9)
 dlg.page_nodes.table.item(0, 1).setText("250")
 p2 = dlg._collect()
 check("table edit applied", abs(p2.nodes[1].x - UNITS.length_base(250.0)) < 1e-9)

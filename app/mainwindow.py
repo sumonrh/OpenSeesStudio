@@ -9,7 +9,7 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+                               QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QSpinBox, QStackedWidget,
                                QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
@@ -134,26 +134,26 @@ class MainWindow(QMainWindow):
         self.a_new = self._act("New", "new", self.file_new, "Ctrl+N", "New project")
         self.a_open = self._act("Open", "open", self.file_open, "Ctrl+O", "Open a project")
         self.a_save = self._act("Save", "save", self.file_save, "Ctrl+S", "Save the project")
-        self.a_save_as = self._act("Save As", "save", self.file_save_as, "Ctrl+Shift+S")
-        self.a_export_tcl = self._act("Export Tcl", "tables", self.export_tcl, "",
+        self.a_save_as = self._act("Save As", "save_as", self.file_save_as, "Ctrl+Shift+S")
+        self.a_export_tcl = self._act("Export Tcl", "export", self.export_tcl, "",
                                       "Write an OpenSees Tcl input file")
-        self.a_example = self._act("Example Frame", "iso", self.load_example, "",
+        self.a_example = self._act("Example Frame", "example", self.load_example, "",
                                    "Load the built-in three-storey steel frame")
-        self.a_exit = self._act("Exit", "delete", self.close, "Alt+F4")
+        self.a_exit = self._act("Exit", "exit", self.close, "Alt+F4")
 
         self.a_undo = self._act("Undo", "undo", self.undo, "Ctrl+Z")
         self.a_redo = self._act("Redo", "redo", self.redo, "Ctrl+Y")
         self.a_delete = self._act("Delete", "delete", self.delete_selection, "Del",
                                   "Delete the selected nodes and elements")
-        self.a_sel_all = self._act("Select All", "select", self.viewport.select_all, "Ctrl+A")
-        self.a_deselect = self._act("Deselect", "select", self._escape, "Esc")
+        self.a_sel_all = self._act("Select All", "select_all", self.viewport.select_all, "Ctrl+A")
+        self.a_deselect = self._act("Deselect", "deselect", self._escape, "Esc")
 
         self.a_fit = self._act("Fit", "fit", self.viewport.fit, "F", "Zoom to the whole model")
         self.a_iso = self._act("Iso", "iso", lambda: self.viewport.set_view("iso"), "Ctrl+1")
         self.a_top = self._act("Top", "top", lambda: self.viewport.set_view("top"), "Ctrl+2")
         self.a_front = self._act("Front", "front", lambda: self.viewport.set_view("front"), "Ctrl+3")
         self.a_right = self._act("Right", "right", lambda: self.viewport.set_view("right"), "Ctrl+4")
-        self.a_fit_sel = self._act("Fit selection", "fit", self.viewport.fit_selection, "")
+        self.a_fit_sel = self._act("Fit selection", "fit_selection", self.viewport.fit_selection, "")
 
         self.a_nodes = self._act("New Nodes", "node", self.new_nodes, "N",
                                  "Create nodes by coordinates")
@@ -162,43 +162,49 @@ class MainWindow(QMainWindow):
         self.a_copy = self._act("Copy / Move", "copy", self.copy_move, "C")
         self.a_mirror = self._act("Mirror", "mirror", self.mirror, "M")
         self.a_support = self._act("Supports", "support", self.assign_supports, "S")
-        self.a_material = self._act("Materials", "case", self.materials, "")
-        self.a_section = self._act("Sections", "case", self.sections, "")
+        self.a_material = self._act("Materials", "material", self.materials, "")
+        self.a_section = self._act("Sections", "section", self.sections, "")
         self.a_tables = self._act("Tables", "tables", lambda: self.open_tables(0), "T")
 
         self.a_cases = self._act("Load Cases", "case", self.load_cases, "")
-        self.a_nload = self._act("Nodal Loads", "load", self.nodal_loads, "L")
-        self.a_eload = self._act("Element Loads", "load", self.element_loads, "")
-        self.a_sw = self._act("Self Weight", "load", self.self_weight, "")
+        self.a_nload = self._act("Nodal Loads", "nodal_load", self.nodal_loads, "L")
+        self.a_eload = self._act("Element Loads", "element_load", self.element_loads, "")
+        self.a_sw = self._act("Self Weight", "self_weight", self.self_weight, "")
         self.a_combo = self._act("Combinations", "combo", self.combinations, "K")
 
         self.a_settings = self._act("Settings", "settings", self.analysis_settings, "")
-        self.a_check = self._act("Check Model", "results", self.check_model, "F9",
+        self.a_check = self._act("Check Model", "check", self.check_model, "F9",
                                  "Validate the model before analysis")
-        self.a_run = self._act("Run", "run", self.run_static, "F5",
+        self.a_run = self._act("Run Static", "run_static", self.run_static, "F5",
                                "Run a static analysis for the active load case")
-        self.a_modal = self._act("Modal", "run", self.run_modal, "F6",
+        self.a_modal = self._act("Modal", "modal", self.run_modal, "F6",
                                  "Run an eigenvalue analysis")
         self.a_results = self._act("Results", "results", self.show_results, "F7")
-        self.a_animate = self._act("Animate", "run", self.animate_mode, "F8", checkable=True)
+        self.a_animate = self._act("Animate", "animate", self.animate_mode, "F8", checkable=True)
 
         self.a_orbit = self._act("Orbit", "rotate", self._toggle_orbit, "O",
                                  "3D orbit: left-drag rotates the model "
                                  "(Shift+left or Shift+middle always orbits)", checkable=True)
-        self.a_labels = self._act("Labels", "select", lambda on: self._toggle(labels=on),
+        self.a_labels = self._act("Labels", "label", lambda on: self._toggle(labels=on),
                                   "", checkable=True)
-        self.a_grid = self._act("Grid", "tables", lambda on: self._toggle(grid=on),
+        self.a_grid = self._act("Grid", "grid", lambda on: self._toggle(grid=on),
                                 "", checkable=True)
         self.a_grid.setChecked(True)
-        self.a_deformed = self._act("Deformed", "results",
+        self.a_deformed = self._act("Deformed", "deformed",
                                     lambda on: self._toggle(deformed=on), "", checkable=True)
         self.a_deformed.setChecked(True)
-        self.a_loads_visible = self._act("Show Loads", "load",
+        self.a_clean_view = self._act("Clean View", "clean", self.clean_view, "",
+                                      "Hide deformation, loads and labels")
+        self.a_extruded = self._act("Extruded", "extruded",
+                                    lambda on: self._toggle(extruded=on), "",
+                                    "Show beams and columns with full section sizes",
+                                    checkable=True)
+        self.a_loads_visible = self._act("Show Loads", "load_show",
                                          lambda on: self._toggle(loads=on), "",
                                          "Draw nodal and element loads in the viewport",
                                          checkable=True)
         self.a_loads_visible.setChecked(True)
-        self.a_supports_visible = self._act("Show Supports", "support",
+        self.a_supports_visible = self._act("Show Supports", "support_show",
                                             lambda on: self._toggle(supports=on), "",
                                             "Draw support symbols in the viewport",
                                             checkable=True)
@@ -206,19 +212,19 @@ class MainWindow(QMainWindow):
         self.a_lock = self._act("Lock", "unlock", self._toggle_lock, "Ctrl+L",
                                 "Lock model editing to protect analysis results",
                                 checkable=True)
-        self.a_model_visible = self._act("Model", "panel",
+        self.a_model_visible = self._act("Model", "panel_model",
                                          lambda on: self.model_dock.setVisible(on), "",
                                          "Show or hide the model tree", checkable=True)
         self.a_model_visible.setChecked(True)
-        self.a_props_visible = self._act("Properties", "panel",
+        self.a_props_visible = self._act("Properties", "panel_props",
                                          lambda on: self.props_dock.setVisible(on), "",
                                          "Show or hide the properties panel", checkable=True)
         self.a_props_visible.setChecked(True)
-        self.a_log_visible = self._act("Messages", "panel",
+        self.a_log_visible = self._act("Messages", "panel_log",
                                        lambda on: self.log_dock.setVisible(on), "",
                                        "Show or hide the messages panel", checkable=True)
         self.a_log_visible.setChecked(True)
-        self.a_quick = self._act("Quick Start", "about", self.quick_start, "F1")
+        self.a_quick = self._act("Quick Start", "help", self.quick_start, "F1")
         self.a_about = self._act("About", "about", self.about, "")
 
         self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_mirror,
@@ -227,7 +233,8 @@ class MainWindow(QMainWindow):
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings)
 
-    def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None) -> None:
+    def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None,
+                extruded=None) -> None:
         kw = {}
         if labels is not None:
             kw["show_labels"] = labels
@@ -239,7 +246,22 @@ class MainWindow(QMainWindow):
             kw["show_loads"] = loads
         if supports is not None:
             kw["show_supports"] = supports
+        if extruded is not None:
+            kw["show_extruded"] = extruded
         self.viewport.set_show(**kw)
+
+    def clean_view(self) -> None:
+        self.viewport.stop_animation()
+        self.viewport.set_show(show_deformed=False, show_loads=False,
+                               show_labels=False)
+        for action, state in ((self.a_deformed, False),
+                              (self.a_loads_visible, False),
+                              (self.a_labels, False),
+                              (self.a_animate, False)):
+            action.blockSignals(True)
+            action.setChecked(state)
+            action.blockSignals(False)
+        self._status("Clean view: deformation, loads and labels hidden")
 
     def _toggle_orbit(self, checked: bool) -> None:
         self.viewport.set_orbit_mode(bool(checked))
@@ -328,6 +350,9 @@ class MainWindow(QMainWindow):
         group.add_column((self.a_orbit, self.a_labels, self.a_grid, self.a_deformed))
         group = page.add_group("Deformed shape")
         group.add_field("Scale", self.scale_spin)
+        group = page.add_group("View mode")
+        group.add_large(self.a_extruded)
+        group.add_large(self.a_clean_view)
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
         group = page.add_group("Panels")
@@ -452,7 +477,7 @@ class MainWindow(QMainWindow):
         views.setIconSize(QSize(18, 18))
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right,
                        None, self.a_orbit, self.a_labels, self.a_grid, self.a_deformed,
-                       None, self.a_fit_sel):
+                       self.a_extruded, None, self.a_fit_sel):
             if action is None:
                 views.addSeparator()
             else:
@@ -477,7 +502,8 @@ class MainWindow(QMainWindow):
         self.tree.setMinimumWidth(220)
         self.tree.itemClicked.connect(self._tree_clicked)
         self.tree.itemDoubleClicked.connect(self._tree_double)
-        self.tree.itemExpanded.connect(self._tree_expanded)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_context_menu)
         dock = QDockWidget("Model", self)
         dock.setObjectName("model_dock")
         dock.setWidget(self.tree)
@@ -722,25 +748,16 @@ class MainWindow(QMainWindow):
             return item
 
         g_nodes = group("Nodes", "nodes", len(p.nodes))
-        for t in list(p.nodes)[:800]:
-            n = p.nodes[t]
-            node_item = QTreeWidgetItem([f"{t}   ({fmt(UNITS.length(n.x), 1)}, "
-                                         f"{fmt(UNITS.length(n.y), 1)}, "
-                                         f"{fmt(UNITS.length(n.z), 1)})"])
-            node_item.setData(0, Qt.UserRole, ("node", t))
-            g_nodes.addChild(node_item)
         g_elem = group("Elements", "elements", len(p.elements))
-        for t in list(p.elements)[:800]:
-            e = p.elements[t]
-            elem_item = QTreeWidgetItem([f"{t}   {e.kind}   {e.nodes}"])
-            elem_item.setData(0, Qt.UserRole, ("element", t))
-            g_elem.addChild(elem_item)
 
         def add_child(parent: QTreeWidgetItem, text: str, kind: str = "",
                       tag=None) -> QTreeWidgetItem:
             item = QTreeWidgetItem([text])
             if kind:
                 item.setData(0, Qt.UserRole, (kind, tag))
+            if kind in ("material", "section"):
+                item.setToolTip(0, "Double-click: select elements using this. "
+                                   "Right-click: delete.")
             parent.addChild(item)
             return item
 
@@ -785,39 +802,20 @@ class MainWindow(QMainWindow):
         self.tree.expandAll()
         self.tree.blockSignals(False)
 
-    def _tree_expanded(self, item: QTreeWidgetItem) -> None:
+    def _tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(0, Qt.UserRole)
         if not data:
             return
         key, tag = data
-        if tag is not None or key not in ("nodes", "elements"):
-            return
-        if item.childCount() == 1 and item.child(0).text(0) == "loading…":
-            item.takeChild(0)
-            limit = 800
+        if tag is None:
             if key == "nodes":
-                for t in list(self.project.nodes)[:limit]:
-                    n = self.project.nodes[t]
-                    child = QTreeWidgetItem([f"{t}   ({fmt(UNITS.length(n.x), 1)}, "
-                                             f"{fmt(UNITS.length(n.y), 1)}, "
-                                             f"{fmt(UNITS.length(n.z), 1)})"])
-                    child.setData(0, Qt.UserRole, ("node", t))
-                    item.addChild(child)
-            else:
-                for t in list(self.project.elements)[:limit]:
-                    e = self.project.elements[t]
-                    child = QTreeWidgetItem([f"{t}   {e.kind}   {e.nodes}"])
-                    child.setData(0, Qt.UserRole, ("element", t))
-                    item.addChild(child)
-
-    def _tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
-        data = item.data(0, Qt.UserRole)
-        if not data or data[1] is None:
+                self.open_tables(0)
+            elif key == "elements":
+                self.open_tables(2)
             return
-        kind, tag = data
-        if kind == "node":
+        if key == "node":
             self.viewport.select_nodes([tag])
-        elif kind == "element":
+        elif key == "element":
             self.viewport.select_elements([tag])
 
     def _tree_double(self, item: QTreeWidgetItem, _col: int) -> None:
@@ -826,14 +824,16 @@ class MainWindow(QMainWindow):
             return
         key, tag = data
         if tag is not None:
+            if key in ("material", "section"):
+                self._select_elements_using(key, tag)
+            return
+        if key in ("nodes", "elements"):
             return
         if self.model_locked:
             self._status("Model is locked - press Ctrl+L to unlock before editing.")
             return
         actions = {
-            "nodes": lambda: self.open_tables(0),
             "supports": lambda: self.open_tables(1),
-            "elements": lambda: self.open_tables(2),
             "materials": self.materials,
             "sections": self.sections,
             "cases": self.load_cases,
@@ -845,6 +845,66 @@ class MainWindow(QMainWindow):
         fn = actions.get(key)
         if fn:
             fn()
+
+    def _select_elements_using(self, kind: str, tag) -> None:
+        if kind == "material":
+            tags = [e.tag for e in self.project.elements.values() if e.mat == tag]
+            label = f"material {tag}"
+        else:
+            tags = [e.tag for e in self.project.elements.values() if e.sec == tag]
+            label = f"section {tag}"
+        if not tags:
+            self._status(f"No elements use {label}")
+            return
+        self.viewport.select_elements(tags)
+        self.viewport.fit_selection()
+        self._status(f"Selected {len(tags)} element(s) using {label}")
+
+    def _tree_context_menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        data = item.data(0, Qt.UserRole)
+        if not data or data[1] is None or data[0] not in ("material", "section"):
+            return
+        kind, tag = data
+        menu = QMenu(self)
+        select = menu.addAction("Select elements using this")
+        select.triggered.connect(lambda: self._select_elements_using(kind, tag))
+        menu.addSeparator()
+        delete = menu.addAction(f"Delete {kind} {tag}")
+        delete.setEnabled(not self.model_locked)
+        delete.triggered.connect(lambda: self._delete_tree_entity(kind, tag))
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _delete_tree_entity(self, kind: str, tag) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        if kind == "material":
+            collection = self.project.materials
+            used = [e.tag for e in self.project.elements.values() if e.mat == tag]
+            noun = "material"
+        else:
+            collection = self.project.sections
+            used = [e.tag for e in self.project.elements.values() if e.sec == tag]
+            noun = "section"
+        obj = collection.get(tag)
+        if obj is None:
+            return
+        if used:
+            QMessageBox.warning(self, f"Delete {noun}",
+                                f"{noun.capitalize()} {tag} is used by {len(used)} element(s).")
+            return
+        if len(collection) <= 1:
+            QMessageBox.warning(self, f"Delete {noun}",
+                                f"The model needs at least one {noun}.")
+            return
+        if QMessageBox.question(self, f"Delete {noun}",
+                                f"Delete {noun} {tag} - {obj.name}?") != QMessageBox.Yes:
+            return
+        del collection[tag]
+        self._commit(f"Deleted {noun} {tag}")
 
     def _refresh_scenarios(self) -> None:
         names = self.project.scenario_names()

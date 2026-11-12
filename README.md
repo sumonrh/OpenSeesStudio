@@ -39,9 +39,14 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Ribbon tabs (View, Structure, Node/Element, Properties, Boundary, Load, Analysis,
   Results, Tools) with command groups and captions.
 - Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
-  vertical view strip (fit, iso, top, front, right, orbit, labels, grid, deformed).
+  vertical view strip (fit, iso, top, front, right, orbit, labels, grid, deformed,
+  extruded).
 - Model, Properties and Messages panels can be collapsed and restored from
   **View > Panels**.
+- **Clean View** hides deformation, loads and labels for a plain structural view.
+- **Extruded** mode draws beams and columns with their real section sizes.
+
+![extruded section view](docs/extruded.png)
 
 **Structure**
 - Create nodes by coordinates, with repetition and spacing.
@@ -53,9 +58,11 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with automatic properties for rectangle, circle, pipe, box and I-shape;
   user sections can supply A, Iy, Iz, J directly.
-- Model tree lists nodes, elements, materials, sections, supports, load cases, loads
-  and combinations.
-- Spreadsheet **Tables** editor for every entity, with validation.
+- Model tree lists materials, sections, supports, load cases, loads and combinations.
+  **Nodes** and **Elements** are table links; clicking them opens their spreadsheet.
+  Double-click a material or section to select its elements, right-click to delete it.
+- Spreadsheet **Tables** editor for every entity, with validation and Excel-compatible
+  copy/paste (Ctrl+C / Ctrl+V).
 
 **Loads**
 - Load cases (Dead, Live, Wind, Seismic, …), each becomes an OpenSees pattern.

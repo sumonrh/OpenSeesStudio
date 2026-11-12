@@ -132,6 +132,7 @@ class Viewport(QWidget):
         self.show_axes = True
         self.wireframe = True
         self.orbit_mode = False
+        self.show_extruded = False
 
         self.static_results: Optional[StaticResults] = None
         self.modal_results: Optional[ModalResults] = None
@@ -369,38 +370,41 @@ class Viewport(QWidget):
                     dproj[tag] = s
 
         # ---- elements --------------------------------------------------
-        items = []
-        for tag, e in self.project.elements.items():
-            pts = [proj.get(t) for t in e.nodes]
-            if any(s is None for s in pts):
-                continue
-            depth = sum(s[2] for s in pts) / len(pts)
-            items.append((depth, tag, e, pts))
-        items.sort(key=lambda x: -x[0])
+        if self.show_extruded:
+            self._draw_extruded(p, w, h)
+        else:
+            items = []
+            for tag, e in self.project.elements.items():
+                pts = [proj.get(t) for t in e.nodes]
+                if any(s is None for s in pts):
+                    continue
+                depth = sum(s[2] for s in pts) / len(pts)
+                items.append((depth, tag, e, pts))
+            items.sort(key=lambda x: -x[0])
 
-        for depth, tag, e, pts in items:
-            selected = tag in self.sel_elements
-            base = {"beam": theme.ELEM_BEAM, "truss": theme.ELEM_TRUSS,
-                    "shell": theme.ELEM_SHELL}.get(e.kind, theme.ELEM_BEAM)
-            if selected:
-                pen = QPen(theme.SELECTED, 3.4)
-            elif self.show_deformed and dproj:
-                pen = QPen(QColor("#c3cdd9"), 1.2, Qt.DashLine)
-            else:
-                pen = QPen(base, 2.6 if e.kind == "beam" else 1.9)
-            p.setPen(pen)
-            poly = QPolygonF([QPointF(s[0], s[1]) for s in pts])
-            if e.kind == "shell" and len(pts) >= 4:
-                p.setBrush(QBrush(QColor(113, 136, 165, 28)))
-                p.drawPolygon(poly)
-                p.setBrush(Qt.NoBrush)
-            else:
-                p.drawPolyline(poly)
-            if not self.show_elements:
-                continue
+            for depth, tag, e, pts in items:
+                selected = tag in self.sel_elements
+                base = {"beam": theme.ELEM_BEAM, "truss": theme.ELEM_TRUSS,
+                        "shell": theme.ELEM_SHELL}.get(e.kind, theme.ELEM_BEAM)
+                if selected:
+                    pen = QPen(theme.SELECTED, 3.4)
+                elif self.show_deformed and dproj:
+                    pen = QPen(QColor("#c3cdd9"), 1.2, Qt.DashLine)
+                else:
+                    pen = QPen(base, 2.6 if e.kind == "beam" else 1.9)
+                p.setPen(pen)
+                poly = QPolygonF([QPointF(s[0], s[1]) for s in pts])
+                if e.kind == "shell" and len(pts) >= 4:
+                    p.setBrush(QBrush(QColor(113, 136, 165, 28)))
+                    p.drawPolygon(poly)
+                    p.setBrush(Qt.NoBrush)
+                else:
+                    p.drawPolyline(poly)
+                if not self.show_elements:
+                    continue
 
         # ---- deformed shape -------------------------------------------
-        if dproj and self.show_deformed:
+        if dproj and self.show_deformed and not self.show_extruded:
             items2 = []
             for tag, e in self.project.elements.items():
                 pts = [dproj.get(t) for t in e.nodes]
@@ -433,6 +437,8 @@ class Viewport(QWidget):
                 selected = tag in self.sel_nodes
                 hover = tag == self._hover_node
                 r = 5.2 if selected else (4.6 if hover else 3.9)
+                if self.show_extruded:
+                    r = 4.2 if selected else (3.2 if hover else 1.8)
                 if selected:
                     p.setBrush(QBrush(theme.SELECTED))
                     p.setPen(QPen(QColor("#ffffff"), 1.6))
@@ -470,6 +476,107 @@ class Viewport(QWidget):
         p.end()
 
     # ------------------------------------------------------------- paint bits
+    def _draw_extruded(self, p: QPainter, w: int, h: int) -> None:
+        """Draw beam members as extruded solids using their section sizes."""
+        if not self.project or not self.project.elements:
+            return
+        cam = self.camera
+        deformed = self._deformed_points()
+        pts3 = deformed if (self.show_deformed and deformed) else \
+            {tag: n.xyz for tag, n in self.project.nodes.items()}
+
+        items = []
+        for tag, e in self.project.elements.items():
+            base = [pts3.get(t) for t in e.nodes]
+            if any(pt is None for pt in base):
+                continue
+            screen = [cam.project(pt, w, h) for pt in base]
+            if any(s is None for s in screen):
+                continue
+            depth = sum(s[2] for s in screen) / len(screen)
+            items.append((depth, tag, e, base, screen))
+        items.sort(key=lambda x: -x[0])
+
+        for _depth, tag, e, base, screen in items:
+            selected = tag in self.sel_elements
+            hover = tag == self._hover_elem
+            color = QColor(theme.SELECTED if selected else
+                           (theme.ACCENT if hover else theme.ELEM_BEAM))
+            if e.kind == "shell" and len(screen) >= 4:
+                p.setPen(QPen(color, 2.2 if selected else 1.4))
+                p.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 55)))
+                p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in screen]))
+                p.setBrush(Qt.NoBrush)
+                continue
+            if e.kind != "beam" or len(base) < 2:
+                p.setPen(QPen(color, 3.4 if selected else 2.0))
+                p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in screen]))
+                continue
+
+            p0, p1 = base[0], base[1]
+            if math.dist(p0, p1) < 1e-6:
+                continue
+            vec = e.vecxz or auto_vecxz(p0, p1)
+            axes = local_axes(p0, p1, vec)
+            if axes is None:
+                continue
+            _x, uy, uz = axes
+            outer, inner = _section_profiles(self.project.section_of(e))
+
+            def offset_point(pt, oy, oz):
+                return (pt[0] + oy * uy[0] + oz * uz[0],
+                        pt[1] + oy * uy[1] + oz * uz[1],
+                        pt[2] + oy * uy[2] + oz * uz[2])
+
+            def project_profile(pt, profile):
+                out = []
+                for oy, oz in profile:
+                    s = cam.project(offset_point(pt, oy, oz), w, h)
+                    if s is None:
+                        return None
+                    out.append(s)
+                return out
+
+            ep0 = project_profile(p0, outer)
+            ep1 = project_profile(p1, outer)
+            if not ep0 or not ep1:
+                continue
+
+            fill = QColor(color.red(), color.green(), color.blue(),
+                          34 if selected else 16)
+            for i in range(len(ep0)):
+                j = (i + 1) % len(ep0)
+                side = QPolygonF([QPointF(ep0[i][0], ep0[i][1]),
+                                  QPointF(ep0[j][0], ep0[j][1]),
+                                  QPointF(ep1[j][0], ep1[j][1]),
+                                  QPointF(ep1[i][0], ep1[i][1])])
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(fill))
+                p.drawPolygon(side)
+
+            p.setPen(QPen(color, 1.7 if selected else 1.0))
+            p.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(),
+                                     46 if selected else 28)))
+            p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in ep0]))
+            p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in ep1]))
+            p.setBrush(Qt.NoBrush)
+
+            p.setPen(QPen(color, 1.15 if selected else 0.8))
+            for i in range(len(ep0)):
+                p.drawLine(QPointF(ep0[i][0], ep0[i][1]),
+                           QPointF(ep1[i][0], ep1[i][1]))
+
+            if inner:
+                ip0 = project_profile(p0, inner)
+                ip1 = project_profile(p1, inner)
+                if ip0 and ip1:
+                    p.setPen(QPen(QColor(255, 255, 255, 190), 0.9))
+                    p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in ip0]))
+                    p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in ip1]))
+                    for i in range(len(ip0)):
+                        p.drawLine(QPointF(ip0[i][0], ip0[i][1]),
+                                   QPointF(ip1[i][0], ip1[i][1]))
+
     def _draw_grid(self, p: QPainter, w: int, h: int) -> None:
         ext = self.camera.distance * math.tan(self.camera.fov / 2) * 1.25
         step = _nice_step(ext / 7.0)
@@ -520,6 +627,8 @@ class Viewport(QWidget):
 
     def _draw_hud(self, p: QPainter, w: int, h: int) -> None:
         lines = [f"Nodes {len(self.project.nodes)}   Elements {len(self.project.elements)}"]
+        if self.show_extruded:
+            lines.append("Extruded sections")
         if self.static_results:
             sc = self._display_scale()
             lines.append(f"Case: {self.static_results.scenario}    Deformed shape ×{sc:,.1f}")
@@ -872,6 +981,53 @@ def _nice_step(x: float) -> float:
         if x <= m * base:
             return m * base
     return 10 * base
+
+
+def _section_profiles(sec) -> list:
+    """Return (outer, inner) cross-section outlines in local (y, z) mm."""
+    shape = getattr(sec, "shape", "Rectangle")
+    b = max(float(getattr(sec, "b", 300.0) or 300.0), 1.0)
+    h = max(float(getattr(sec, "h", 600.0) or 600.0), 1.0)
+    d = max(float(getattr(sec, "d", 400.0) or 400.0), 1.0)
+    t = max(float(getattr(sec, "t", 0.0) or 0.0), 0.0)
+    tw = max(float(getattr(sec, "tw", 0.0) or 0.0), 1.0)
+    tf = max(float(getattr(sec, "tf", 0.0) or 0.0), 1.0)
+
+    if shape == "Circle":
+        pts = [(0.5 * d * math.cos(a), 0.5 * d * math.sin(a))
+               for a in [i * 2 * math.pi / 16 for i in range(16)]]
+        return [pts, None]
+
+    if shape == "Pipe":
+        ro = 0.5 * d
+        ri = max(ro - t, 0.0)
+        outer = [(ro * math.cos(a), ro * math.sin(a))
+                 for a in [i * 2 * math.pi / 16 for i in range(16)]]
+        inner = [(ri * math.cos(a), ri * math.sin(a))
+                 for a in [i * 2 * math.pi / 16 for i in range(16)]] if ri > 1 else None
+        return [outer, inner]
+
+    if shape == "I-Shape":
+        tw = min(tw, b)
+        tf = min(tf, 0.49 * h)
+        outer = [(-b / 2, h / 2), (b / 2, h / 2), (b / 2, h / 2 - tf),
+                 (tw / 2, h / 2 - tf), (tw / 2, -h / 2 + tf), (b / 2, -h / 2 + tf),
+                 (b / 2, -h / 2), (-b / 2, -h / 2), (-b / 2, -h / 2 + tf),
+                 (-tw / 2, -h / 2 + tf), (-tw / 2, h / 2 - tf), (-b / 2, h / 2 - tf)]
+        return [outer, None]
+
+    if shape == "Box":
+        outer = [(-b / 2, -h / 2), (b / 2, -h / 2), (b / 2, h / 2), (-b / 2, h / 2)]
+        bi, hi = b - 2 * t, h - 2 * t
+        inner = ([(-bi / 2, -hi / 2), (bi / 2, -hi / 2),
+                  (bi / 2, hi / 2), (-bi / 2, hi / 2)] if bi > 1 and hi > 1 else None)
+        return [outer, inner]
+
+    if shape == "User" and float(getattr(sec, "A", 0.0) or 0.0) > 0:
+        side = math.sqrt(float(sec.A))
+        b = h = max(side, 1.0)
+
+    return [[(-b / 2, -h / 2), (b / 2, -h / 2), (b / 2, h / 2), (-b / 2, h / 2)], None]
 
 
 def _point_segment_distance(px, py, x0, y0, x1, y1) -> float:
