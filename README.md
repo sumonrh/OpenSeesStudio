@@ -3,15 +3,16 @@
 A graphical model generator for **OpenSees**, built with Python,
 PySide6 and OpenSeesPy. It focuses on the model-generation workflow: nodes, elements,
 copy/move/mirror, supports, load cases, nodal and element loads, self weight,
-load combinations, static and modal analysis, and result review.
+load combinations, static and modal analysis, and result review. The interface uses a
+ribbon with task tabs, command groups and group captions.
 
 ![main window](docs/main.png)
 
 ## Units
 
-The model is stored and solved in **kN, mm, tonne, s**. The status bar at the bottom right
-has two selectors that change the units used for input, tables and results without changing
-the stored model:
+The model is stored and solved in **kN, mm, tonne, s**. The default display units are
+**kN and m**. The status bar at the bottom right has two selectors that change the units
+used for input, tables and results without changing the stored model:
 
 - **Force:** kN, N, kip, lbs
 - **Length:** m, mm, in, ft
@@ -53,7 +54,7 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   in local y/z or global X/Y/Z directions, with automatic local-axis conversion.
 - Self weight per load case with a factor.
 - Load combinations with per-case factors.
-- Active load case selector in the toolbar; loads are drawn for the active case.
+- Active load case selector in the status bar; loads are drawn for the active case.
 
 **Analysis and results**
 - Static analysis (`LoadControl`, `BandGen`, RCM, Linear).
@@ -95,7 +96,7 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 | Del | Delete selection |
 
 **Mouse:** left = select (drag = box select), middle = pan, right = orbit, wheel = zoom.
-Press **O** (or the Orbit toolbar button) for AutoCAD-style orbit mode, where left-drag rotates
+Press **O** (or the Orbit ribbon button) for AutoCAD-style orbit mode, where left-drag rotates
 the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the selection.
 
 ## MCP server (AI agents)
@@ -238,7 +239,8 @@ Inno Setup installer. Outputs:
 ```
 app/
   main.py         entry point, self test, screenshot mode
-  mainwindow.py   menus, toolbars, docks, workflows
+  mainwindow.py   ribbon, docks, workflows
+  ribbon.py       ribbon tabs, command groups and captions
   viewport.py     3D viewport: camera, picking, loads, deformed shapes
   model.py        data model and JSON persistence
   units.py        display-unit conversion and unit labels
@@ -248,7 +250,7 @@ app/
   results.py      result viewer and CSV export
   example.py      built-in demo frame
   theme.py        light professional theme
-  icons.py        vector toolbar icons
+  icons.py        vector ribbon icons
   bridge.py       local JSON bridge for live GUI control
 mcp_server/
   server.py       MCP tools, state, resources

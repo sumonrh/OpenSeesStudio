@@ -266,6 +266,12 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         path.lineTo(19, 13.5); path.closeSubpath()
         _fill(p, "#ffffff"); p.drawPath(path)
 
+    elif name == "menu":
+        _fill(p, INK)
+        for row in range(3):
+            for col in range(3):
+                p.drawEllipse(QPointF(6 + col * 6, 6 + row * 6), 1.7, 1.7)
+
     elif name == "about":
         _pen(p, accent, 1.6)
         p.drawEllipse(QPointF(12, 12), 8.6, 8.6)

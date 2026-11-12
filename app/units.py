@@ -24,9 +24,9 @@ class Units:
 
     def __init__(self) -> None:
         self.force_name = "kN"
-        self.length_name = "mm"
+        self.length_name = "m"
         self._fb = 1.0
-        self._lb = 1.0
+        self._lb = 1000.0
 
     # ------------------------------------------------------------- selection
     def set(self, force: str | None = None, length: str | None = None) -> bool:

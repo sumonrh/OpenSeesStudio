@@ -5,18 +5,19 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-                               QPushButton, QSizePolicy, QSpinBox, QStackedWidget,
-                               QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QPushButton, QSpinBox, QStackedWidget,
+                               QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
 from . import dialogs, icons, opsgen, theme
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
+from .ribbon import Ribbon
 from .results import ResultsDialog
 from .tables import TablesDialog
 from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
@@ -93,8 +94,7 @@ class MainWindow(QMainWindow):
         self.viewport.statusMessage.connect(self._status)
 
         self._make_actions()
-        self._make_menus()
-        self._make_toolbars()
+        self._make_ribbon()
         self._make_docks()
         self._make_statusbar()
 
@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
         self.viewport.fit()
         self._log(f"OpenSees Studio ready. Display units: {UNITS.label()}.")
         self._log("Start with Structure > New Nodes (N), then New Elements (E).")
+        self._log("Use the ribbon tabs above the viewport to create, load and analyse.")
         self._shown = False
 
     def showEvent(self, event) -> None:
@@ -189,6 +190,16 @@ class MainWindow(QMainWindow):
         self.a_deformed = self._act("Deformed", "results",
                                     lambda on: self._toggle(deformed=on), "", checkable=True)
         self.a_deformed.setChecked(True)
+        self.a_loads_visible = self._act("Show Loads", "load",
+                                         lambda on: self._toggle(loads=on), "",
+                                         "Draw nodal and element loads in the viewport",
+                                         checkable=True)
+        self.a_loads_visible.setChecked(True)
+        self.a_supports_visible = self._act("Show Supports", "support",
+                                            lambda on: self._toggle(supports=on), "",
+                                            "Draw support symbols in the viewport",
+                                            checkable=True)
+        self.a_supports_visible.setChecked(True)
         self.a_quick = self._act("Quick Start", "about", self.quick_start, "F1")
         self.a_about = self._act("About", "about", self.about, "")
 
@@ -224,128 +235,135 @@ class MainWindow(QMainWindow):
         value = self.scale_spin.value()
         self.viewport.deformed_scale = float(value) if value > 0 else None
 
-    # ==================================================================== menus
-    def _make_menus(self) -> None:
-        mb = self.menuBar()
+    # ==================================================================== ribbon
+    def _make_ribbon(self) -> None:
+        ribbon = Ribbon(self)
+        self.ribbon = ribbon
+        self.setMenuWidget(ribbon)
 
-        m = mb.addMenu("&File")
-        m.addAction(self.a_new); m.addAction(self.a_open)
-        m.addAction(self.a_save); m.addAction(self.a_save_as)
-        m.addSeparator(); m.addAction(self.a_example)
-        m.addSeparator(); m.addAction(self.a_export_tcl)
-        m.addSeparator(); m.addAction(self.a_exit)
+        menu = ribbon.app_menu
+        menu.addAction(self.a_new)
+        menu.addAction(self.a_open)
+        menu.addSeparator()
+        menu.addAction(self.a_save)
+        menu.addAction(self.a_save_as)
+        menu.addSeparator()
+        menu.addAction(self.a_export_tcl)
+        menu.addAction(self.a_example)
+        menu.addSeparator()
+        menu.addAction(self.a_exit)
+        ribbon.set_app_icon(icons.icon("menu", 22))
+        ribbon.add_quick(self.a_undo)
+        ribbon.add_quick(self.a_redo)
 
-        m = mb.addMenu("&Edit")
-        m.addAction(self.a_undo); m.addAction(self.a_redo)
-        m.addSeparator(); m.addAction(self.a_delete)
-        m.addAction(self.a_sel_all); m.addAction(self.a_deselect)
-
-        m = mb.addMenu("&View")
-        m.addAction(self.a_fit); m.addAction(self.a_fit_sel)
-        m.addSeparator()
-        m.addAction(self.a_iso); m.addAction(self.a_top)
-        m.addAction(self.a_front); m.addAction(self.a_right)
-        m.addSeparator()
-        m.addAction(self.a_orbit)
-        m.addAction(self.a_labels); m.addAction(self.a_grid); m.addAction(self.a_deformed)
-
-        m = mb.addMenu("&Structure")
-        m.addAction(self.a_nodes); m.addAction(self.a_elements)
-        m.addSeparator()
-        m.addAction(self.a_copy); m.addAction(self.a_mirror)
-        m.addSeparator()
-        m.addAction(self.a_support)
-        m.addAction(self.a_material); m.addAction(self.a_section)
-        m.addSeparator(); m.addAction(self.a_tables)
-
-        m = mb.addMenu("&Load")
-        m.addAction(self.a_cases)
-        m.addAction(self.a_nload); m.addAction(self.a_eload)
-        m.addAction(self.a_sw)
-        m.addSeparator(); m.addAction(self.a_combo)
-
-        m = mb.addMenu("&Analysis")
-        m.addAction(self.a_check)
-        m.addAction(self.a_settings)
-        m.addSeparator()
-        m.addAction(self.a_run); m.addAction(self.a_modal)
-        m.addSeparator(); m.addAction(self.a_results); m.addAction(self.a_animate)
-
-        m = mb.addMenu("&Help")
-        m.addAction(self.a_quick); m.addAction(self.a_about)
-
-    # ================================================================= toolbars
-    def _make_toolbars(self) -> None:
-        tb = QToolBar("Model", self)
-        tb.setObjectName("model_toolbar")
-        tb.setMovable(False)
-        tb.setFloatable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        tb.setIconSize(QSize(22, 22))
-        tb.addAction(self.a_new); tb.addAction(self.a_open); tb.addAction(self.a_save)
-        tb.addSeparator()
-        tb.addAction(self.a_nodes); tb.addAction(self.a_elements)
-        tb.addAction(self.a_copy); tb.addAction(self.a_mirror)
-        tb.addAction(self.a_support)
-        tb.addSeparator()
-        tb.addAction(self.a_material); tb.addAction(self.a_section)
-        tb.addAction(self.a_cases); tb.addAction(self.a_nload)
-        tb.addAction(self.a_eload); tb.addAction(self.a_combo)
-        tb.addSeparator()
-        tb.addAction(self.a_tables)
-        tb.addSeparator()
-        tb.addAction(self.a_undo); tb.addAction(self.a_redo)
-        self.addToolBar(tb)
-
-        self.addToolBarBreak()
-        tb2 = QToolBar("Analysis and view", self)
-        tb2.setObjectName("view_toolbar")
-        tb2.setMovable(False)
-        tb2.setFloatable(False)
-        tb2.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        tb2.setIconSize(QSize(22, 22))
-        tb2.addAction(self.a_run)
-        tb2.addAction(self.a_modal)
-        tb2.addAction(self.a_results)
-        tb2.addAction(self.a_settings)
-        tb2.addSeparator()
-        tb2.addAction(self.a_fit)
-        tb2.addAction(self.a_iso)
-        tb2.addAction(self.a_top)
-        tb2.addAction(self.a_front)
-        tb2.addAction(self.a_right)
-        tb2.addSeparator()
-        tb2.addAction(self.a_orbit)
-        tb2.addAction(self.a_labels)
-        tb2.addAction(self.a_grid)
-        tb2.addAction(self.a_deformed)
-        tb2.addSeparator()
-        lbl_scale = QLabel("Deform ×")
-        lbl_scale.setStyleSheet(f"color: {theme.MUTED}; padding: 0 4px;")
-        tb2.addWidget(lbl_scale)
         self.scale_spin = QDoubleSpinBox()
         self.scale_spin.setRange(0, 100000)
         self.scale_spin.setDecimals(0)
         self.scale_spin.setSingleStep(100)
         self.scale_spin.setValue(0)
         self.scale_spin.setSpecialValueText("Auto")
-        self.scale_spin.setMaximumWidth(90)
+        self.scale_spin.setFixedWidth(88)
         self.scale_spin.setToolTip("Deformed-shape scale; Auto fits the view")
         self.scale_spin.valueChanged.connect(self._set_deform_scale)
-        tb2.addWidget(self.scale_spin)
 
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        tb2.addWidget(spacer)
-        lbl = QLabel("Load case")
-        lbl.setStyleSheet(f"color: {theme.MUTED}; padding: 0 6px;")
-        tb2.addWidget(lbl)
-        self.scenario_combo = QComboBox()
-        self.scenario_combo.setMinimumWidth(170)
-        self.scenario_combo.setMaximumWidth(250)
-        self.scenario_combo.currentTextChanged.connect(self._scenario_changed)
-        tb2.addWidget(self.scenario_combo)
-        self.addToolBar(tb2)
+        page = ribbon.add_tab("View")
+        group = page.add_group("Navigate")
+        for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right):
+            group.add_large(action)
+        group = page.add_group("Display")
+        group.add_column((self.a_orbit, self.a_labels, self.a_grid, self.a_deformed))
+        group = page.add_group("Deformed shape")
+        group.add_field("Scale", self.scale_spin)
+        group = page.add_group("Selection")
+        group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
+
+        page = ribbon.add_tab("Structure")
+        group = page.add_group("Model")
+        group.add_large(self.a_nodes)
+        group.add_large(self.a_elements)
+        group = page.add_group("Edit")
+        group.add_large(self.a_copy)
+        group.add_large(self.a_mirror)
+        group = page.add_group("Selection")
+        group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
+        group = page.add_group("Model data")
+        group.add_large(self.a_tables)
+
+        page = ribbon.add_tab("Node/Element")
+        group = page.add_group("Nodes")
+        group.add_large(self.a_nodes)
+        group.add_column((self.a_sel_all, self.a_deselect))
+        group = page.add_group("Elements")
+        group.add_large(self.a_elements)
+        group.add_column((self.a_delete, self.a_fit_sel))
+        group = page.add_group("Modify")
+        group.add_large(self.a_copy)
+        group.add_large(self.a_mirror)
+        group = page.add_group("Model data")
+        group.add_large(self.a_tables)
+
+        page = ribbon.add_tab("Properties")
+        group = page.add_group("Libraries")
+        group.add_large(self.a_material)
+        group.add_large(self.a_section)
+        group = page.add_group("Model data")
+        group.add_large(self.a_tables)
+        group = page.add_group("Display")
+        group.add_column((self.a_labels, self.a_grid))
+
+        page = ribbon.add_tab("Boundary")
+        group = page.add_group("Supports")
+        group.add_large(self.a_support)
+        group = page.add_group("Display")
+        group.add_column((self.a_supports_visible, self.a_labels))
+        group = page.add_group("Selection")
+        group.add_column((self.a_sel_all, self.a_deselect))
+        group = page.add_group("Model data")
+        group.add_large(self.a_tables)
+
+        page = ribbon.add_tab("Load")
+        group = page.add_group("Load cases")
+        group.add_large(self.a_cases)
+        group.add_large(self.a_combo)
+        group = page.add_group("Structural loads")
+        group.add_large(self.a_nload)
+        group.add_large(self.a_eload)
+        group.add_large(self.a_sw)
+        group = page.add_group("Display")
+        group.add_column((self.a_loads_visible, self.a_labels, self.a_supports_visible))
+        group = page.add_group("Model data")
+        group.add_large(self.a_tables)
+
+        page = ribbon.add_tab("Analysis")
+        group = page.add_group("Analysis")
+        group.add_large(self.a_settings)
+        group.add_large(self.a_check)
+        group.add_large(self.a_run)
+        group.add_large(self.a_modal)
+        group = page.add_group("Results")
+        group.add_large(self.a_results)
+        group.add_column((self.a_animate, self.a_deformed))
+
+        page = ribbon.add_tab("Results")
+        group = page.add_group("Results")
+        group.add_large(self.a_results)
+        group.add_large(self.a_animate)
+        group = page.add_group("Display")
+        group.add_column((self.a_deformed, self.a_labels, self.a_grid))
+
+        page = ribbon.add_tab("Tools")
+        group = page.add_group("Project")
+        group.add_large(self.a_new)
+        group.add_large(self.a_open)
+        group.add_large(self.a_save)
+        group = page.add_group("Exchange")
+        group.add_large(self.a_export_tcl)
+        group.add_large(self.a_example)
+        group = page.add_group("Help")
+        group.add_large(self.a_quick)
+        group.add_large(self.a_about)
+
+        ribbon.set_current("Structure")
 
     def _scenario_changed(self, text: str) -> None:
         if not text:
@@ -495,6 +513,15 @@ class MainWindow(QMainWindow):
         sb.addWidget(self.status_label, 1)
         self.model_label = QLabel("")
         sb.addPermanentWidget(self.model_label)
+
+        case_label = QLabel("Load case")
+        case_label.setStyleSheet(f"color:{theme.MUTED}; padding-left:10px;")
+        sb.addPermanentWidget(case_label)
+        self.scenario_combo = QComboBox()
+        self.scenario_combo.setMinimumWidth(150)
+        self.scenario_combo.setMaximumWidth(210)
+        self.scenario_combo.currentTextChanged.connect(self._scenario_changed)
+        sb.addPermanentWidget(self.scenario_combo)
 
         def unit_label(text: str) -> QLabel:
             lab = QLabel(text)
@@ -1464,7 +1491,7 @@ class MainWindow(QMainWindow):
             "<li><b>Combinations (K)</b> — factor each case.</li>"
             "<li><b>Run Static (F5)</b> or <b>Run Modal (F6)</b>, then inspect results (F7).</li>"
             "</ol>"
-            "<p>The active load case is chosen in the toolbar; loads are drawn for it.</p>"
+            "<p>The active load case is chosen in the status bar; loads are drawn for it.</p>"
             "<p><b>Mouse:</b> left = select / box-select, middle = pan, right = orbit, wheel = zoom.<br>"
             "<b>Tables (T)</b> edits every entity in a spreadsheet.</p>"))
 

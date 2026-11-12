@@ -132,4 +132,47 @@ QScrollBar:horizontal {{ background: #f2f5f9; height: 12px; }}
 QScrollBar::handle:horizontal {{ background: #c3d1e0; min-width: 24px; border-radius: 5px; margin: 2px; }}
 
 QToolTip {{ background: #1e3a5f; color: #ffffff; border: none; padding: 4px 6px; }}
+
+/* ---------------------------------------------------------------- ribbon */
+QFrame#ribbon {{ background: #f4f7fb; border-bottom: 1px solid #c5d2e0; }}
+QFrame#ribbonTabs {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                      stop:0 #eaf0f7, stop:1 #cfdae7);
+                     border-bottom: 1px solid #b9c8d8; }}
+QFrame#ribbonAccent {{ background: #c0392b; }}
+QFrame#ribbonSeparator {{ background: #b6c5d5; max-width: 1px; margin: 6px 4px; }}
+QTabBar#ribbonTabBar {{ background: transparent; }}
+QTabBar#ribbonTabBar::tab {{ background: transparent; color: #334960;
+                             padding: 5px 15px; margin: 2px 1px 0 1px;
+                             border: 1px solid transparent;
+                             border-top-left-radius: 4px; border-top-right-radius: 4px;
+                             font-size: 12px; }}
+QTabBar#ribbonTabBar::tab:selected {{ background: #ffffff; color: #102a44;
+                                      border: 1px solid #b9c8d8; border-bottom-color: #ffffff;
+                                      font-weight: 600; }}
+QTabBar#ribbonTabBar::tab:hover:!selected {{ background: rgba(255, 255, 255, 150); }}
+QStackedWidget#ribbonStack, QWidget#ribbonPage {{ background: #f4f7fb; }}
+QFrame#ribbonGroup {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                      stop:0 #fbfcfe, stop:1 #f0f4f9);
+                      border-right: 1px solid #d3dde8; border-left: 1px solid #ffffff; }}
+QLabel#ribbonCaption {{ background: #e2e9f2; border-top: 1px solid #d0dbe7;
+                        border-bottom: 1px solid #cdd8e4; color: #53667d;
+                        font-size: 10px; padding: 0 4px; }}
+QLabel#ribbonFieldLabel {{ color: #5b6f86; font-size: 10px; }}
+QToolButton#ribbonLarge {{ min-width: 54px; max-width: 88px; padding: 3px;
+                           font-size: 10px; border: 1px solid transparent;
+                           border-radius: 4px; }}
+QToolButton#ribbonLarge:hover {{ background: #e4f0fb; border: 1px solid #b7d5ee; }}
+QToolButton#ribbonLarge:pressed {{ background: #d3e7f8; }}
+QToolButton#ribbonLarge:checked {{ background: #dcebf9; border: 1px solid #9fc8e8; }}
+QToolButton#ribbonSmall {{ min-width: 0; padding: 2px 5px; font-size: 11px;
+                           text-align: left; border: 1px solid transparent;
+                           border-radius: 3px; }}
+QToolButton#ribbonSmall:hover {{ background: #e4f0fb; border: 1px solid #c2dcf1; }}
+QToolButton#ribbonSmall:checked {{ background: #dcebf9; border: 1px solid #9fc8e8; }}
+QToolButton#ribbonQuick {{ min-width: 22px; max-width: 25px; padding: 1px;
+                           border: 1px solid transparent; border-radius: 3px; }}
+QToolButton#ribbonQuick:hover {{ background: #ffffff; border: 1px solid #b9c8d8; }}
+QToolButton#ribbonApp {{ background: #ffffff; border: 1px solid #b9c8d8;
+                         border-radius: 4px; padding: 1px; }}
+QToolButton#ribbonApp:hover {{ background: #fff4e8; border-color: #e0a37a; }}
 """

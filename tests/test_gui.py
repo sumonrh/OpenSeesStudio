@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QToolButton
 
 app = QApplication.instance() or QApplication([])
 
@@ -173,6 +173,28 @@ drag(400, 300, 470, 330, Qt.ShiftModifier)
 check("Shift+left orbits", abs(vp.camera.yaw - yaw2) > 1e-4,
       f"(dyaw={vp.camera.yaw - yaw2:.4f})")
 
+print("== ribbon ==")
+titles = [win.ribbon.tabs.tabText(i) for i in range(win.ribbon.tabs.count())]
+check("ribbon tabs", titles == ["View", "Structure", "Node/Element", "Properties",
+                                "Boundary", "Load", "Analysis", "Results", "Tools"],
+      f"({titles})")
+check("default ribbon tab", win.ribbon.current_title() == "Structure",
+      f"({win.ribbon.current_title()})")
+check("ribbon group captions", len(win.ribbon.findChildren(QLabel, "ribbonCaption")) >= 5)
+check("ribbon app menu", len(win.ribbon.app_menu.actions()) >= 8)
+check("ribbon actions wired",
+      any(b.defaultAction() is win.a_nodes
+          for b in win.ribbon.findChildren(QToolButton)))
+grid_button = next(b for b in win.ribbon.findChildren(QToolButton)
+                   if b.defaultAction() is win.a_grid)
+grid_before = win.viewport.show_grid
+grid_button.click()
+check("ribbon button triggers action", win.viewport.show_grid != grid_before)
+grid_button.click()
+win.ribbon.set_current("Load")
+check("ribbon tab switching", win.ribbon.current_title() == "Load")
+win.ribbon.set_current("Structure")
+
 print("== static analysis through the GUI ==")
 mainwindow.ResultsDialog = StubResults
 win.run_static()
@@ -255,7 +277,7 @@ print("== tables dialog round trip ==")
 dlg = TablesDialog(win.project)
 dlg.page_nodes.table.item(0, 1).setText("250")
 p2 = dlg._collect()
-check("table edit applied", abs(p2.nodes[1].x - 250.0) < 1e-9)
+check("table edit applied", abs(p2.nodes[1].x - UNITS.length_base(250.0)) < 1e-9)
 dlg.page_nodes.table.item(0, 1).setText("not-a-number")
 try:
     dlg._collect()
@@ -275,7 +297,7 @@ check("save/load self weight", loaded.self_weight == win.project.self_weight)
 print("== unit selector ==")
 check("default force unit", win.units_force.currentText() == "kN",
       f"({win.units_force.currentText()})")
-check("default length unit", win.units_length.currentText() == "mm",
+check("default length unit", win.units_length.currentText() == "m",
       f"({win.units_length.currentText()})")
 
 n0 = win.project.nodes[9]
@@ -360,8 +382,8 @@ m0 = 1000.0
 check("moment round trip", abs(UNITS.moment_base(UNITS.moment(m0)) - m0) < 1e-9)
 
 win.units_force.setCurrentText("kN")
-win.units_length.setCurrentText("mm")
-check("units restored", UNITS.force_unit == "kN" and UNITS.length_unit == "mm")
+win.units_length.setCurrentText("m")
+check("units restored", UNITS.force_unit == "kN" and UNITS.length_unit == "m")
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

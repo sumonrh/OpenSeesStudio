@@ -288,7 +288,7 @@ DEFAULT_SETTINGS = {
     "last_combo": "",
     "deformed_scale": None,   # None = auto
     "force_unit": "kN",       # display only; model data is always kN-mm-t
-    "length_unit": "mm",
+    "length_unit": "m",
 }
 
 
