@@ -128,6 +128,13 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Undo / redo (100 steps).
 - Built-in 3-storey steel frame example.
 
+## Roadmap
+
+The engine audit and prioritized plan for nonlinear materials, fiber modelling,
+plastic hinges, links, dampers, isolation bearings, pushover, response-spectrum
+and time-history analysis is in
+[docs/ANALYSIS_ROADMAP.md](docs/ANALYSIS_ROADMAP.md).
+
 ## Keyboard shortcuts
 
 | Key | Action |
