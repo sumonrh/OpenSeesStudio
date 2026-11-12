@@ -147,8 +147,10 @@ p.nodes[2] = Node(2, 0, 0, 1000)
 p.elements[1] = Element(1, "beam", [1, 2], 1, 2, vecxz=None)
 p.cases["LAT"] = LoadCase("LAT")
 p.nodal_loads.append(NodalLoad(1, 2, "LAT", [10.0, 0, 0, 0, 0, 0]))
-p.hinge_defs[1] = HingeDefinition(1, "Hinge 1", "Takeda", 0.10, 0.235,
-                                 0.02, 10.0, 0.8, 0.02, 0.4)
+p.hinge_defs[1] = HingeDefinition(
+    1, "Hinge 1", "Hysteretic", "Hysteretic", 0.10,
+    {"fy": 0.235, "b": 0.02, "ductility": 10.0, "pinchX": 0.8,
+     "pinchY": 0.8, "damage1": 0.02, "damage2": 0.0, "beta": 0.4})
 p.hinge_assignments[1] = 1
 cfg = {"gravity_case": "", "lateral_case": "LAT", "control_node": 2,
        "control_dof": 1, "target_displacement": 20.0, "steps": 5}
@@ -168,7 +170,7 @@ check("pushover step state is reusable",
 cloned = p.clone()
 check("hinge assignment persists",
       1 if cloned.hinge_defs.get(1)
-      and cloned.hinge_defs[1].model == "Takeda"
+      and cloned.hinge_defs[1].material == "Hysteretic"
       and cloned.hinge_assignments.get(1) == 1 else 0, 1)
 
 p2 = p.clone()
@@ -179,6 +181,22 @@ try:
 except ValueError as exc:
     check("pushover rejects unassigned model",
           1 if "No hinges" in str(exc) else 0, 1)
+
+print("== OpenSees hinge material catalogue ==")
+from app.hinge_catalog import MATERIALS, defaults as hinge_defaults, build_command
+import openseespy.opensees as ops
+ops.wipe()
+ops.model("BasicBuilder", "-ndm", 3, "-ndf", 6)
+for tag, (key, spec) in enumerate(MATERIALS.items(), start=1):
+    if spec.kind != "fiber":
+        continue
+    command, args = build_command(key, tag, hinge_defaults(key), 200.0)
+    try:
+        ops.uniaxialMaterial(command, tag, *args)
+        check(f"{key} material command", 1, 1)
+    except Exception as exc:
+        check(f"{key} material command", 0, 1)
+        print("   ", exc)
 
 print("== custom section shapes ==")
 s = Section(1, "Hex", "Hexagon", d=400.0)

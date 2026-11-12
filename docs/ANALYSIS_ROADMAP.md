@@ -6,11 +6,13 @@
 **Prepared:** 2026-11-12
 
 **Implementation status:** the Results-tab mode selector, node visibility toggle,
-ribbon cleanup, hinge definition library grouped by model type, per-element hinge
-assignments, tree usage colouring, hysteresis diagram sub-dialog and the Pushover
-tab with `beamWithHinges` lumped hinge models (Steel01 / Hysteretic /
-Takeda-like / FlagShape) are implemented. The remaining phases below are still
-planned.
+ribbon cleanup, hinge definition library grouped by material family, per-element
+hinge assignments, tree usage colouring, OpenSees reference diagrams and the
+Pushover tab with `beamWithHinges` lumped hinge models are implemented. The hinge
+library currently includes the main structural OpenSees material families
+(steel, concrete, generic hysteretic, pinching/Bouc-Wen and flag/self-centering,
+plus moment-rotation IMK definitions for future spring hinges). The remaining
+phases below are still planned.
 
 Command-level smoke checks against the installed build passed for:
 

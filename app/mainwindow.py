@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
 
 from . import dialogs, icons, opsgen, theme
 from .hinges import AssignHingesDialog, HingeLibraryDialog
+from .hinge_catalog import MATERIALS as HINGE_MATERIALS
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
 from .pushover import PushoverResultsDialog
@@ -1061,12 +1062,9 @@ class MainWindow(QMainWindow):
             hinge_use[hinge] = hinge_use.get(hinge, 0) + 1
         for h in sorted(p.hinge_defs.values(), key=lambda d: d.tag):
             count = hinge_use.get(h.tag, 0)
-            short = {"Bilinear": "Bilinear", "Trilinear": "Trilinear",
-                     "Takeda": "Takeda-like", "Flag": "Flag"}.get(
-                         h.model, h.model)
             suffix = f"{count} el." if count else "unassigned"
             item = add_child(
-                g_hinge, f"H{h.tag}   {h.name}   ({short}, {suffix})",
+                g_hinge, f"H{h.tag}   {h.name}   ({h.material}, {suffix})",
                 "hinge", h.tag)
             item.setToolTip(0, "Double-click: edit the hinge library.")
             if count == 0:
@@ -2132,6 +2130,8 @@ class MainWindow(QMainWindow):
             return
         assigned = [e for e, h in self.project.hinge_assignments.items()
                     if h in self.project.hinge_defs
+                    and HINGE_MATERIALS.get(self.project.hinge_defs[h].material) is not None
+                    and HINGE_MATERIALS[self.project.hinge_defs[h].material].kind == "fiber"
                     and e in self.project.elements
                     and self.project.elements[e].kind == "beam"]
         if not assigned:
@@ -2145,7 +2145,7 @@ class MainWindow(QMainWindow):
         self._status("Running pushover analysis…")
         used_defs = {self.project.hinge_assignments[e] for e in assigned}
         models = ", ".join(sorted({
-            self.project.hinge_defs[t].model for t in used_defs
+            self.project.hinge_defs[t].material for t in used_defs
             if t in self.project.hinge_defs}))
         self._log(f"Pushover: {len(assigned)} hinge element(s) "
                   f"[{models}], gravity '{cfg['gravity_case'] or 'none'}', "

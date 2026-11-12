@@ -107,7 +107,9 @@ class FakePushover:
     def __init__(self, project, selected_node=None, *a, **k):
         self.project = project
         project.hinge_defs[1] = HingeDefinition(
-            1, "Hinge 1", "Takeda", 0.1, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
+            1, "Hinge 1", "Hysteretic", "Hysteretic", 0.1,
+            {"fy": 0.235, "b": 0.02, "ductility": 10.0, "pinchX": 0.8,
+             "pinchY": 0.8, "damage1": 0.02, "damage2": 0.0, "beta": 0.4})
         for tag, e in project.elements.items():
             if e.kind == "beam" and len(e.nodes) >= 2:
                 project.hinge_assignments[tag] = 1
@@ -695,41 +697,47 @@ if win.pushover_results:
           and pd.plot.results is not None)
     from app.hinges import AssignHingesDialog, HingeLibraryDialog
     from app.hysteresis import HysteresisDialog
+    from app.hinge_catalog import defaults as hinge_defaults
     hl = HingeLibraryDialog(win.project)
-    check("hinge library has one tab per type", hl.tabs.count() == 4)
+    check("hinge library has one tab per family", hl.tabs.count() == 6)
     empty_lib = HingeLibraryDialog(Project())
     check("empty hinge library is empty",
-          all(t.rowCount() == 0 for t in empty_lib.tables.values()))
-    empty_lib.tabs.setCurrentIndex(2)
+          all(widget.count() == 0 for widget in empty_lib.lists.values()))
     empty_lib._new()
-    check("new hinge uses current type",
-          empty_lib.tables["Takeda"].rowCount() == 1
-          and empty_lib.tables["Bilinear"].rowCount() == 0)
+    check("new hinge uses current family",
+          empty_lib.current is not None
+          and empty_lib.current.material == "Steel01")
     empty_lib.close()
-    check("hinge tabs are grouped by model",
-          hl.tables["Bilinear"].rowCount() == 0
-          and hl.tables["Takeda"].rowCount() == 1)
-    check("hinge tabs keep parameter lists separate",
-          "Pinch" in [hl.tables["Takeda"].horizontalHeaderItem(i).text()
-                      for i in range(hl.tables["Takeda"].columnCount())]
-          and "Pinch" not in [hl.tables["Bilinear"].horizontalHeaderItem(i).text()
-                              for i in range(hl.tables["Bilinear"].columnCount())])
+    hl.tabs.setCurrentIndex(2)  # Hysteretic family
+    check("hinge library groups definitions by family",
+          hl.lists["Hysteretic"].count() == 1
+          and hl.lists["Steel"].count() == 0)
+    hl.lists["Hysteretic"].setCurrentRow(0)
+    check("hysteretic hinge exposes hysteretic parameters",
+          "pinchX" in hl._param_widgets and "beta" in hl._param_widgets)
+    hl.tabs.setCurrentIndex(0)  # Steel family
+    empty_steel = HingeLibraryDialog(Project())
+    empty_steel._new()
+    check("steel hinge exposes steel parameters",
+          "fy" in empty_steel._param_widgets
+          and "b" in empty_steel._param_widgets
+          and "pinchX" not in empty_steel._param_widgets)
+    empty_steel.close()
     hl.close()
     ah = AssignHingesDialog(win.project)
     beam_count = sum(1 for e in win.project.elements.values() if e.kind == "beam")
     check("assign hinges lists all beam elements",
           ah.table.rowCount() == beam_count, f"({ah.table.rowCount()})")
     check("assign hinges shows current assignment",
-          all(ah.table.cellWidget(r, 2).currentData() == 1
+          all(ah.table.cellWidget(r, 3).currentData() == 1
               for r in range(ah.table.rowCount())))
     ah.accept()
     check("assign hinges collects assignments",
           len(ah.assignments) == beam_count)
-    for model in ("Bilinear", "Trilinear", "Takeda", "Flag"):
-        hd = HysteresisDialog(model, {"fy": 0.235, "post_yield_ratio": 0.02,
-                                      "ductility": 10.0, "pinching": 0.8,
-                                      "damage": 0.02, "beta": 0.4})
-        check(f"{model} hysteresis definitions", hd.table.rowCount() >= 4)
+    for model in ("Steel01", "Concrete02", "Hysteretic", "HystereticSM",
+                  "Pinching4", "FlagShape"):
+        hd = HysteresisDialog(model, hinge_defaults(model))
+        check(f"{model} parameter definitions", hd.table.rowCount() >= 3)
         hd.close()
     setup = dialogs.PushoverDialog(win.project)
     check("pushover dialog reports hinge definitions",
@@ -740,7 +748,8 @@ if win.pushover_results:
 
     # An unassigned definition plus unused material/section/case for color checks.
     win.project.hinge_defs[2] = HingeDefinition(
-        2, "Unused Hinge", "Bilinear", 0.1, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
+        2, "Unused Hinge", "Steel01", "Steel", 0.1,
+        {"fy": 0.235, "b": 0.02})
     from app.model import LoadCase
     win.project.cases["EMPTY"] = LoadCase("EMPTY", "Dead")
     win._refresh_tree()
@@ -750,7 +759,7 @@ if win.pushover_results:
     hinge_group = items.get("Hinges")
     check("tree lists hinge types",
           hinge_group is not None and hinge_group.childCount() == 2
-          and "Takeda" in hinge_group.child(0).text(0))
+          and "Hysteretic" in hinge_group.child(0).text(0))
     blue = "#0f6fb8"
     check("unused material is blue",
           items["Materials"].child(1).foreground(0).color().name() == blue)

@@ -14,6 +14,7 @@ import openseespy.opensees as ops
 
 from .model import (Element, ElementLoad, Material, Node, Project, Section,
                     G_ACC)
+from .hinge_catalog import MATERIALS, build_command
 
 _EPS = 1e-12
 
@@ -255,36 +256,21 @@ def _add_hinge_section(project: Project, sec: Section, mat: Material,
     if not fibers:
         log.append(f"Section {sec.tag}: no fibers generated for pushover hinge.")
         return False
-    fy = abs(float(config.get("fy", mat.fy) or mat.fy or 0.235))
-    fy = max(fy, 1e-6)
-    post = max(float(config.get("post_yield_ratio", 0.02)), 0.0)
-    ductility = max(float(config.get("ductility", 10.0)), 2.0)
-    model = str(config.get("model", config.get("hinge_model", "Trilinear")))
-    E = max(mat.E, 1e-6)
-    ey = fy / E
-    e2 = ey * 3.0
-    eu = max(ey * ductility, e2 * 1.5)
-    s2 = fy * (1.0 + post * 3.0)
-    su = fy * (1.0 + post * ductility)
-
-    if model == "Bilinear":
-        ops.uniaxialMaterial("Steel01", mat_tag, fy, E, post)
-    elif model == "Flag":
-        flag_beta = max(0.0, min(1.0, float(config.get("beta", 0.5))))
-        ops.uniaxialMaterial("FlagShape", mat_tag, E, fy, E * post, flag_beta)
-    else:
-        if model == "Takeda":
-            pinch = max(0.0, min(1.0, float(config.get("pinching", 0.8))))
-            damage = max(0.0, float(config.get("damage", 0.02)))
-            beta = max(0.0, float(config.get("beta", 0.4)))
-        else:
-            pinch, damage, beta = 1.0, 0.0, 0.0
-        ops.uniaxialMaterial(
-            "Hysteretic", mat_tag,
-            fy, ey, s2, e2, su, eu,
-            -fy, -ey, -s2, -e2, -su, -eu,
-            pinch, pinch, damage, 0.0, beta)
-
+    material = str(config.get("material", "Steel01"))
+    params = config.get("params") or {}
+    if material not in MATERIALS:
+        log.append(f"Unknown hinge material {material}.")
+        return False
+    if MATERIALS[material].kind != "fiber":
+        log.append(f"{material} is a moment-rotation material and cannot be "
+                   "used in a fibre hinge.")
+        return False
+    try:
+        command, args = build_command(material, mat_tag, params, mat.E)
+    except Exception as exc:
+        log.append(f"Cannot build hinge material {material}: {exc}")
+        return False
+    ops.uniaxialMaterial(command, mat_tag, *args)
     ops.section("Fiber", base_sec_tag, "-GJ", max(mat.G * sec.J, 1e-6))
     for y, z, area in fibers:
         ops.fiber(y, z, area, mat_tag)
@@ -293,7 +279,7 @@ def _add_hinge_section(project: Project, sec: Section, mat: Material,
     ops.section("Aggregator", sec_tag, shear_tag, "Vy", shear_tag, "Vz",
                 "-section", base_sec_tag)
     log.append(f"Pushover hinge section {sec_tag}: {len(fibers)} fibers, "
-               f"{model} material {mat_tag}, elastic shear {shear_tag}.")
+               f"{material} material {mat_tag}, elastic shear {shear_tag}.")
     return True
 
 
@@ -374,14 +360,9 @@ def build(project: Project, scenario: Optional[str] = None,
             if hinge is not None:
                 hp = hinge.to_dict()
                 cache_key = (
-                    sec.tag, mat.tag, str(hp.get("model", "Trilinear")),
-                    round(float(hp.get("fy", mat.fy) or 0.0), 9),
-                    round(float(hp.get("post_yield_ratio", 0.02)), 9),
-                    round(float(hp.get("ductility", 10.0)), 9),
-                    round(float(hp.get("pinching", 0.8)), 9),
-                    round(float(hp.get("damage", 0.02)), 9),
-                    round(float(hp.get("beta", 0.4)), 9),
-                )
+                    sec.tag, mat.tag, hinge.material,
+                    tuple(sorted((str(k), round(float(v), 9))
+                                 for k, v in hinge.params.items())))
                 hinge_sec = hinge_cache.get(cache_key)
                 if hinge_sec is None:
                     slot = len(hinge_cache)
@@ -718,7 +699,10 @@ def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverRes
     for element, def_tag in project.hinge_assignments.items():
         e = project.elements.get(element)
         h = project.hinge_defs.get(def_tag)
-        if e is not None and h is not None and e.kind == "beam" and len(e.nodes) >= 2:
+        if (e is not None and h is not None and e.kind == "beam"
+                and len(e.nodes) >= 2
+                and MATERIALS.get(h.material) is not None
+                and MATERIALS[h.material].kind == "fiber"):
             hinges[element] = h
     if not hinges:
         raise ValueError("No hinges are assigned. Create hinge definitions and "
@@ -790,11 +774,16 @@ def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverRes
     result = PushoverResults(
         gravity_case=gravity, lateral_case=lateral,
         control_node=node, control_dof=dof,
-        hinge_model=", ".join(sorted({h.model for h in hinges.values()})))
+        hinge_model=", ".join(sorted({h.material for h in hinges.values()})))
     for tag in hinge_tags:
         e = project.elements[tag]
         sec = _ensure_section(project.section_of(e))
-        fy = abs(float(hinges[tag].fy or 0.235))
+        h = hinges[tag]
+        fy = abs(float(h.params.get("fy")
+                      or h.params.get("sigAct")
+                      or h.params.get("fpc")
+                      or h.params.get("fc")
+                      or 0.235))
         my = fy * sec.Iy / max(sec.h / 2.0, 1e-6)
         mz = fy * sec.Iz / max(sec.b / 2.0, 1e-6)
         result.hinge_yield[tag] = max(my, mz)

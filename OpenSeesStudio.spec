@@ -32,7 +32,7 @@ a = Analysis(
     ["launcher.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[("app/assets/hysteresis", "app/assets/hysteresis")],
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},

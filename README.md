@@ -99,13 +99,20 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - **Mode shapes** are available from a dropdown in the **Results** ribbon tab;
   select any mode and use **Animate** without opening the results table.
 - **Pushover** ribbon tab: displacement-controlled nonlinear static analysis with
-  `beamWithHinges` lumped plastic hinges. Use **Define Hinges** to create a hinge
-  library grouped by model type (bilinear, trilinear, Takeda-like and flag-shaped),
-  then **Assign Hinges** to selected beam elements. Different steel and concrete
-  members can use different hinge definitions; unassigned members stay elastic.
-  The library and assignment dialogs include hysteresis diagrams with parameter
-  definitions. Results include the capacity curve, step table, hinge
-  rotations/moments, yielding state and deformed shape per step.
+  `beamWithHinges` lumped plastic hinges. Use **Define Hinges** to create reusable
+  hinge materials and **Assign Hinges** to selected beam elements. Hinge
+  definitions are grouped by material family and use the exact OpenSees names:
+  `Steel01`, `Steel02`, `Hardening`, `ElasticBilin`, `Concrete01`, `Concrete02`,
+  `Concrete02IS`, `Concrete04`, `Hysteretic`, `HystereticSM`, `HystereticSmooth`,
+  `HystereticAsym`, `Pinching4`, `BoucWen`, `FlagShape`, `SelfCentering`, and
+  moment-rotation `IMKBilin`, `IMKPeakOriented`, `IMKPinching`.
+  Moment-rotation definitions are library-only until rotational spring hinges are
+  added. Fibre models can use different steel and concrete definitions; unassigned
+  members stay elastic.
+  The hinge definition dialog provides the published OpenSees reference diagram,
+  parameter values and definitions for each material.
+  Results include the capacity curve, step table, hinge rotations/moments,
+  yielding state and deformed shape per step.
 - The model tree lists the created hinge definitions under **Hinges**; double-click
   the group or a definition to open the hinge library. Unused materials, sections,
   load cases and hinge definitions are shown in blue.

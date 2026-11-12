@@ -1,4 +1,4 @@
-"""Hinge definition library and element assignment dialogs."""
+"""OpenSees hinge-material library and element assignment dialogs."""
 
 from __future__ import annotations
 
@@ -6,33 +6,32 @@ import copy
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
-                               QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QPushButton, QTableWidget, QTableWidgetItem,
+                               QDoubleSpinBox, QFormLayout, QHBoxLayout,
+                               QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QMessageBox, QPushButton, QScrollArea,
+                               QTableWidget, QTableWidgetItem,
                                QTableWidgetSelectionRange, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from . import theme
-from .hysteresis import HysteresisDialog, MODEL_LABELS
+from .hinge_catalog import FAMILIES, MATERIALS, defaults, image_path
+from .hysteresis import HysteresisDialog
 from .model import HingeDefinition, Project
 from .units import UNITS
 
-MODELS = ("Bilinear", "Trilinear", "Takeda", "Flag")
-
 
 class HingeLibraryDialog(QDialog):
-    """Create and edit reusable hinge definitions, grouped by model type."""
+    """Create reusable hinge definitions using the OpenSees material catalogue."""
 
     def __init__(self, project: Project, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Hinge Library")
-        self.resize(980, 620)
+        self.resize(1120, 760)
         self.project = project
         self.defs: Dict[int, HingeDefinition] = copy.deepcopy(project.hinge_defs)
-        self.defaults = project.pushover_settings()
-        self.tables: Dict[str, QTableWidget] = {}
-        self.row_defs: Dict[str, List[int]] = {}
+        self.current: Optional[HingeDefinition] = None
+        self._loading = False
 
         lay = QVBoxLayout(self)
         title = QLabel("Hinge definitions")
@@ -40,30 +39,65 @@ class HingeLibraryDialog(QDialog):
             f"font-size: 15px; font-weight: 600; color: {theme.ACCENT_DARK};")
         lay.addWidget(title)
         lay.addWidget(QLabel(
-            "Create reusable hinge definitions. Each hinge type has its own tab "
-            "and its own parameter list; a definition can then be assigned to one "
-            "or more beam elements. An empty tab means no hinge of that type exists."))
+            "Each definition is a real OpenSees uniaxial material. Families are "
+            "separated into tabs so material-specific parameters are never mixed. "
+            "Fibre models can be assigned to beam elements; moment-rotation models "
+            "are library-only until spring hinges are available."))
 
+        body = QHBoxLayout()
+        left = QVBoxLayout()
         self.tabs = QTabWidget()
-        lay.addWidget(self.tabs, 1)
-        for model in MODELS:
-            self._build_tab(model)
+        self.lists: Dict[str, QListWidget] = {}
+        for family in FAMILIES:
+            page = QWidget()
+            play = QVBoxLayout(page)
+            play.setContentsMargins(4, 4, 4, 4)
+            widget = QListWidget()
+            widget.currentRowChanged.connect(self._selection_changed)
+            self.lists[family] = widget
+            play.addWidget(widget, 1)
+            self.tabs.addTab(page, family)
+        left.addWidget(self.tabs, 1)
+        row = QHBoxLayout()
+        for text, slot in (("New", self._new), ("Duplicate", self._duplicate),
+                           ("Delete", self._delete)):
+            button = QPushButton(text)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        left.addLayout(row)
+        body.addLayout(left, 0)
 
-        tools = QHBoxLayout()
-        new_btn = QPushButton("New hinge")
-        new_btn.clicked.connect(self._new)
-        dup_btn = QPushButton("Duplicate")
-        dup_btn.clicked.connect(self._duplicate)
-        del_btn = QPushButton("Delete")
-        del_btn.clicked.connect(self._delete)
-        tools.addWidget(new_btn)
-        tools.addWidget(dup_btn)
-        tools.addWidget(del_btn)
-        tools.addStretch(1)
-        diagram_btn = QPushButton("Hysteresis diagram…")
-        diagram_btn.clicked.connect(self._diagram)
-        tools.addWidget(diagram_btn)
-        lay.addLayout(tools)
+        right = QVBoxLayout()
+        form = QFormLayout()
+        self.name = QLineEdit()
+        self.material = QComboBox()
+        self.length_ratio = QDoubleSpinBox()
+        self.length_ratio.setRange(0.01, 0.25)
+        self.length_ratio.setDecimals(3)
+        self.length_ratio.setSingleStep(0.01)
+        form.addRow("Name", self.name)
+        form.addRow("OpenSees material", self.material)
+        form.addRow("Plastic hinge length / L", self.length_ratio)
+        right.addLayout(form)
+        self.material.currentIndexChanged.connect(self._material_changed)
+
+        self.note = QLabel()
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        right.addWidget(self.note)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.form_host = QWidget()
+        self.form = QFormLayout(self.form_host)
+        self.form.setContentsMargins(6, 6, 6, 6)
+        self.scroll.setWidget(self.form_host)
+        right.addWidget(self.scroll, 1)
+        self._param_widgets: Dict[str, QWidget] = {}
+        diagram = QPushButton("Hysteresis diagram / parameter definitions…")
+        diagram.clicked.connect(self._diagram)
+        right.addWidget(diagram)
+        body.addLayout(right, 1)
+        lay.addLayout(body, 1)
 
         bar = QHBoxLayout()
         bar.addStretch(1)
@@ -76,216 +110,305 @@ class HingeLibraryDialog(QDialog):
         bar.addWidget(save)
         lay.addLayout(bar)
 
-        self._reload()
+        self.tabs.currentChanged.connect(self._tab_changed)
+        self._reload_lists()
+        self._select_first()
 
-    # ------------------------------------------------------------------ build
-    def _columns(self, model: str) -> List[str]:
-        columns = ["Name", "Lp / L", f"fy ({UNITS.stress_unit})", "b"]
-        if model in ("Trilinear", "Takeda"):
-            columns.append("μu")
-        if model == "Takeda":
-            columns += ["Pinch", "Damage", "β"]
-        elif model == "Flag":
-            columns += ["β"]
-        return columns
+    # ------------------------------------------------------------------ widgets
+    def _current_family(self) -> str:
+        return self.tabs.tabText(self.tabs.currentIndex())
 
-    def _build_tab(self, model: str) -> None:
-        page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(6, 6, 6, 6)
-        table = QTableWidget(0, len(self._columns(model)))
-        table.setHorizontalHeaderLabels(self._columns(model))
-        table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        table.setEditTriggers(QAbstractItemView.DoubleClicked |
-                                      QAbstractItemView.EditKeyPressed)
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        table.setColumnWidth(0, 200)
-        table.setColumnWidth(1, 78)
-        table.setColumnWidth(2, 120)
-        table.setColumnWidth(3, 70)
-        self.tables[model] = table
-        lay.addWidget(table, 1)
-        self.tabs.addTab(page, MODEL_LABELS[model])
+    def _family_list(self) -> QListWidget:
+        return self.lists[self._current_family()]
 
-    def _current_model(self) -> str:
-        index = self.tabs.currentIndex()
-        return MODELS[index] if 0 <= index < len(MODELS) else MODELS[0]
-
-    # ------------------------------------------------------------------ data
-    def _reload(self) -> None:
-        for model, table in self.tables.items():
-            defs = [h for h in sorted(self.defs.values(), key=lambda d: d.tag)
-                    if h.model == model]
-            self.row_defs[model] = [h.tag for h in defs]
-            table.setRowCount(len(defs))
-            for row, h in enumerate(defs):
-                values = [h.name, f"{h.length_ratio:.3f}",
-                          f"{UNITS.stress(h.fy):.5f}",
-                          f"{h.post_yield_ratio:.4f}"]
-                if model in ("Trilinear", "Takeda"):
-                    values.append(f"{h.ductility:.2f}")
-                if model == "Takeda":
-                    values += [f"{h.pinching:.3f}", f"{h.damage:.4f}",
-                               f"{h.beta:.3f}"]
-                elif model == "Flag":
-                    values.append(f"{h.beta:.3f}")
-                for col, value in enumerate(values):
-                    item = QTableWidgetItem(value)
-                    if col:
-                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    table.setItem(row, col, item)
-            table.resizeColumnsToContents()
-            table.setColumnWidth(0, max(160, table.columnWidth(0)))
-
-    def _selected_def(self) -> Optional[HingeDefinition]:
-        model = self._current_model()
-        rows = {i.row() for i in self.tables[model].selectedIndexes()}
-        if not rows:
+    def _current_def(self) -> Optional[HingeDefinition]:
+        item = self._family_list().currentItem()
+        if item is None:
             return None
-        row = min(rows)
-        tags = self.row_defs.get(model, [])
-        if 0 <= row < len(tags):
-            return self.defs.get(tags[row])
-        return None
+        return self.defs.get(item.data(Qt.UserRole))
 
+    def _select_first(self) -> None:
+        for index, family in enumerate(FAMILIES):
+            widget = self.lists[family]
+            if widget.count():
+                self.tabs.blockSignals(True)
+                self.tabs.setCurrentIndex(index)
+                self.tabs.blockSignals(False)
+                widget.setCurrentRow(0)
+                return
+        self.current = None
+        self._clear_form()
+
+    def _reload_lists(self) -> None:
+        self._loading = True
+        for family in FAMILIES:
+            widget = self.lists[family]
+            current = widget.currentItem().data(Qt.UserRole) if widget.currentItem() else None
+            widget.blockSignals(True)
+            widget.clear()
+            for h in sorted(self.defs.values(), key=lambda d: d.tag):
+                if h.family != family:
+                    continue
+                item = QListWidgetItem(f"H{h.tag}   {h.name}   [{h.material}]")
+                item.setData(Qt.UserRole, h.tag)
+                widget.addItem(item)
+                if h.tag == current:
+                    widget.setCurrentItem(item)
+            widget.blockSignals(False)
+        self._loading = False
+
+    def _clear_form(self) -> None:
+        self.name.clear()
+        self.material.clear()
+        self.length_ratio.setValue(0.1)
+        while self.form.rowCount():
+            self.form.removeRow(0)
+        self._param_widgets = {}
+        self.note.setText("")
+
+    def _fill_materials(self, family: str, preferred: str = "") -> None:
+        self.material.blockSignals(True)
+        self.material.clear()
+        for m in MATERIALS.values():
+            if m.family == family:
+                self.material.addItem(f"{m.key} — {m.label.split(' — ', 1)[-1]}",
+                                      m.key)
+        index = self.material.findData(preferred)
+        self.material.setCurrentIndex(index if index >= 0 else 0)
+        self.material.blockSignals(False)
+
+    def _build_params(self, material: str) -> None:
+        while self.form.rowCount():
+            self.form.removeRow(0)
+        self._param_widgets = {}
+        spec = MATERIALS[material]
+        for p in spec.params:
+            if p.unit == "stress":
+                widget = _spin(UNITS.stress(p.default), UNITS.stress(p.low),
+                               UNITS.stress(p.high), p.decimals,
+                               UNITS.stress_unit)
+            elif p.unit == "length":
+                widget = _spin(UNITS.length(p.default), UNITS.length(p.low),
+                               UNITS.length(p.high), UNITS.length_decimals,
+                               UNITS.length_unit)
+            elif p.unit == "force":
+                widget = _spin(UNITS.force(p.default), UNITS.force(p.low),
+                               UNITS.force(p.high), 3, UNITS.force_unit)
+            elif p.unit == "rotation":
+                widget = _spin(p.default, p.low, p.high, p.decimals, "rad")
+            elif p.unit == "rot_stiffness":
+                widget = _spin(p.default, p.low, p.high, p.decimals,
+                               "kN·mm/rad")
+            else:
+                widget = _spin(p.default, p.low, p.high, p.decimals)
+            widget.setToolTip(p.description)
+            self.form.addRow(p.label, widget)
+            self._param_widgets[p.key] = widget
+        self.note.setText((spec.note + "  " if spec.note else "") +
+                          "Source: OpenSees documentation. " +
+                          ("Moment-rotation material: spring hinge only." if spec.kind == "spring" else ""))
+
+    # ------------------------------------------------------------------ state
+    def _selection_changed(self, _row: int) -> None:
+        if self._loading:
+            return
+        self._store()
+        h = self._current_def()
+        self.current = h
+        if h is None:
+            self._clear_form()
+            return
+        self._loading = True
+        self.name.setText(h.name)
+        self.length_ratio.setValue(h.length_ratio)
+        self._fill_materials(h.family, h.material)
+        self._build_params(h.material)
+        defaults_for_material = {p.key: p.default
+                                 for p in MATERIALS[h.material].params}
+        for key, widget in self._param_widgets.items():
+            value = float(h.params.get(key, defaults_for_material.get(key, 0.0)))
+            self._set_widget(widget, key, value)
+        self._loading = False
+
+    def _tab_changed(self, _index: int) -> None:
+        if self._loading:
+            return
+        self._store()
+        widget = self._family_list()
+        if widget.count():
+            widget.setCurrentRow(0)
+        else:
+            self.current = None
+            self._clear_form()
+
+    def _material_changed(self, _index: int) -> None:
+        if self._loading or self.current is None:
+            return
+        material = self.material.currentData()
+        if not material:
+            return
+        self.current.material = material
+        self.current.family = MATERIALS[material].family
+        self.current.params = defaults(material)
+        self._build_params(material)
+        for key, p in enumerate(MATERIALS[material].params):
+            self._set_widget(self._param_widgets[p.key], p.key, p.default)
+
+    def _set_widget(self, widget: QWidget, key: str, base_value: float) -> None:
+        spec = next(p for p in MATERIALS[self.current.material].params
+                    if p.key == key)
+        if spec.unit == "stress":
+            value = UNITS.stress(base_value)
+        elif spec.unit == "length":
+            value = UNITS.length(base_value)
+        elif spec.unit == "force":
+            value = UNITS.force(base_value)
+        else:
+            value = base_value
+        widget.setValue(value)
+
+    def _read_widget(self, widget: QWidget, key: str) -> float:
+        spec = next(p for p in MATERIALS[self.current.material].params
+                    if p.key == key)
+        value = widget.value()
+        if spec.unit == "stress":
+            return UNITS.stress_base(value)
+        if spec.unit == "length":
+            return UNITS.length_base(value)
+        if spec.unit == "force":
+            return UNITS.force_base(value)
+        return float(value)
+
+    def _store(self) -> None:
+        if self._loading or self.current is None:
+            return
+        self.current.name = self.name.text().strip() or f"Hinge {self.current.tag}"
+        self.current.length_ratio = self.length_ratio.value()
+        material = self.material.currentData()
+        if material:
+            self.current.material = material
+            self.current.family = MATERIALS[material].family
+        if self._param_widgets:
+            self.current.params = {
+                key: self._read_widget(widget, key)
+                for key, widget in self._param_widgets.items()}
+        widget = self.lists.get(self.current.family)
+        if widget is not None:
+            for row in range(widget.count()):
+                item = widget.item(row)
+                if item.data(Qt.UserRole) == self.current.tag:
+                    item.setText(f"H{self.current.tag}   {self.current.name}   "
+                                 f"[{self.current.material}]")
+                    break
+
+    # ------------------------------------------------------------------ actions
     def _new(self) -> None:
-        model = self._current_model()
+        self._store()
+        family = self._current_family()
+        if self.current is not None and self.current.family == family:
+            spec = MATERIALS.get(self.current.material)
+        else:
+            spec = next((m for m in MATERIALS.values() if m.family == family), None)
+        if spec is None:
+            return
         tag = max(self.defs, default=0) + 1
-        defaults = self.defaults
-        h = HingeDefinition(
-            tag, f"{MODEL_LABELS[model].split(' — ')[0]} {tag}",
-            model, float(defaults.get("hinge_length_ratio", 0.10)),
-            float(defaults.get("fy", 0.235)),
-            float(defaults.get("post_yield_ratio", 0.02)),
-            float(defaults.get("ductility", 10.0)),
-            float(defaults.get("pinching", 0.8)),
-            float(defaults.get("damage", 0.02)),
-            float(defaults.get("beta", 0.4)))
+        h = HingeDefinition(tag, f"{spec.key} {tag}", spec.key, family,
+                            0.10, defaults(spec.key))
         self.defs[tag] = h
-        self._reload()
-        table = self.tables[model]
-        row = self.row_defs[model].index(tag)
-        table.selectRow(row)
+        self._reload_lists()
+        widget = self.lists[family]
+        for row in range(widget.count()):
+            if widget.item(row).data(Qt.UserRole) == tag:
+                widget.setCurrentRow(row)
+                break
 
     def _duplicate(self) -> None:
-        source = self._selected_def()
+        self._store()
+        source = self._current_def()
         if source is None:
-            QMessageBox.information(self, "Hinge library",
-                                    "Select a hinge definition first.")
             return
         tag = max(self.defs, default=0) + 1
         h = copy.deepcopy(source)
         h.tag = tag
         h.name = f"{source.name} copy"
         self.defs[tag] = h
-        self._reload()
-        table = self.tables[h.model]
-        table.selectRow(self.row_defs[h.model].index(tag))
+        self._reload_lists()
+        widget = self.lists[h.family]
+        for row in range(widget.count()):
+            if widget.item(row).data(Qt.UserRole) == tag:
+                widget.setCurrentRow(row)
+                break
 
     def _delete(self) -> None:
-        source = self._selected_def()
+        self._store()
+        source = self._current_def()
         if source is None:
             return
         used = sum(1 for hinge in self.project.hinge_assignments.values()
                    if hinge == source.tag)
         if used and QMessageBox.question(
                 self, "Delete hinge",
-                f"{source.name} is assigned to {used} element(s). Delete it and "
-                "clear those assignments?") != QMessageBox.Yes:
+                f"{source.name} is assigned to {used} element(s). "
+                "Delete it and clear those assignments?") != QMessageBox.Yes:
             return
         self.defs.pop(source.tag, None)
-        self._reload()
+        self._reload_lists()
+        self._select_first()
 
     def _diagram(self) -> None:
-        h = self._selected_def()
+        self._store()
+        h = self._current_def()
         if h is None:
-            QMessageBox.information(self, "Hinge library",
-                                    "Select a hinge definition first.")
             return
-        element = next((tag for tag, hinge in self.project.hinge_assignments.items()
-                        if hinge == h.tag), None)
-        E = (self.project.material_of(self.project.elements[element]).E
-             if element is not None else 200.0)
-        HysteresisDialog(h.model, h.to_dict(), self, initial_stiffness=E).exec()
-
-    def _read_table(self, model: str) -> None:
-        table = self.tables[model]
-        tags = self.row_defs.get(model, [])
-        for row, tag in enumerate(tags):
-            h = self.defs.get(tag)
-            if h is None:
-                continue
-            try:
-                h.name = table.item(row, 0).text().strip() or f"Hinge {tag}"
-                h.length_ratio = max(0.01, min(0.25, float(
-                    table.item(row, 1).text())))
-                h.fy = max(UNITS.stress_base(float(table.item(row, 2).text())),
-                           1e-6)
-                h.post_yield_ratio = max(float(table.item(row, 3).text()), 0.0)
-            except (TypeError, ValueError, AttributeError):
-                raise ValueError(f"Invalid value in {model} hinge '{h.name}'.")
-            col = 4
-            if model in ("Trilinear", "Takeda"):
-                h.ductility = max(float(table.item(row, col).text()), 2.0)
-                col += 1
-            if model == "Takeda":
-                h.pinching = min(max(float(table.item(row, col).text()), 0.0), 1.0)
-                h.damage = max(float(table.item(row, col + 1).text()), 0.0)
-                h.beta = min(max(float(table.item(row, col + 2).text()), 0.0), 1.0)
-            elif model == "Flag":
-                h.beta = min(max(float(table.item(row, col).text()), 0.0), 1.0)
+        image = image_path(h.material)
+        HysteresisDialog(h.material, h.params, self, image_path=image,
+                         note=MATERIALS[h.material].note).exec()
 
     def accept(self) -> None:
-        try:
-            for model in MODELS:
-                self._read_table(model)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Hinge library", str(exc))
-            return
+        self._store()
         super().accept()
 
 
 class AssignHingesDialog(QDialog):
-    """Assign created hinge definitions to beam elements."""
+    """Assign created fibre hinge definitions to beam elements."""
 
     def __init__(self, project: Project, parent=None,
                  selected: Optional[List[int]] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Assign Hinges")
-        self.resize(820, 680)
+        self.resize(880, 700)
         self.project = project
-        self.defs = project.hinge_defs
-        self.assignments: Dict[int, int] = copy.deepcopy(project.hinge_assignments)
+        self.defs = {tag: h for tag, h in project.hinge_defs.items()
+                     if MATERIALS.get(h.material) is not None
+                     and MATERIALS[h.material].kind == "fiber"}
+        self.assignments: Dict[int, int] = {
+            e: h for e, h in project.hinge_assignments.items() if h in self.defs}
         self.beams = sorted(tag for tag, e in project.elements.items()
                             if e.kind == "beam" and len(e.nodes) >= 2)
         self._selected = set(selected or [])
 
         lay = QVBoxLayout(self)
-        header = QHBoxLayout()
         title = QLabel("Assign hinges to elements")
         title.setStyleSheet(
             f"font-size: 15px; font-weight: 600; color: {theme.ACCENT_DARK};")
-        header.addWidget(title)
-        header.addStretch(1)
+        lay.addWidget(title)
+        if not self.defs:
+            warning = QLabel(
+                "No fibre hinge definitions exist. Create one in Define Hinges. "
+                "Moment-rotation definitions are spring-only and are not listed here.")
+            warning.setWordWrap(True)
+            warning.setStyleSheet("color:#c92a2a; font-weight:600;")
+            lay.addWidget(warning)
         self.count = QLabel()
         self.count.setStyleSheet(f"color:{theme.MUTED};")
-        header.addWidget(self.count)
-        lay.addLayout(header)
-        if not self.defs:
-            lay.addWidget(QLabel(
-                "No hinge definitions exist. Create hinges first in the Hinge "
-                "Library, then return here to assign them."))
+        lay.addWidget(self.count)
 
         tools = QHBoxLayout()
         tools.addWidget(QLabel("Set selected rows to"))
         self.bulk = QComboBox()
         self.bulk.addItem("None", 0)
         for h in sorted(self.defs.values(), key=lambda d: d.tag):
-            self.bulk.addItem(f"H{h.tag}  {h.name}  ({MODEL_LABELS[h.model]})",
-                              h.tag)
+            self.bulk.addItem(f"H{h.tag}  {h.name}  [{h.material}]", h.tag)
         tools.addWidget(self.bulk)
         apply_btn = QPushButton("Apply")
         apply_btn.clicked.connect(self._apply_bulk)
@@ -299,34 +422,36 @@ class AssignHingesDialog(QDialog):
         tools.addStretch(1)
         lay.addLayout(tools)
 
-        self.table = QTableWidget(len(self.beams), 3)
-        self.table.setHorizontalHeaderLabels(["Element", "Section", "Assigned hinge"])
+        self.table = QTableWidget(len(self.beams), 4)
+        self.table.setHorizontalHeaderLabels(
+            ["Element", "Section", "Material", "Assigned hinge"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setColumnWidth(0, 90)
-        self.table.setColumnWidth(1, 240)
+        for col, width in enumerate((80, 220, 100, 420)):
+            self.table.setColumnWidth(col, width)
         lay.addWidget(self.table, 1)
 
         for row, tag in enumerate(self.beams):
             e = project.elements[tag]
             sec = project.section_of(e)
+            mat = project.material_of(e)
             self.table.setItem(row, 0, QTableWidgetItem(str(tag)))
             self.table.setItem(row, 1, QTableWidgetItem(f"{sec.tag}  {sec.name}"))
+            self.table.setItem(row, 2, QTableWidgetItem(mat.name))
             combo = QComboBox()
             combo.addItem("None", 0)
             for h in sorted(self.defs.values(), key=lambda d: d.tag):
-                combo.addItem(f"H{h.tag}  {h.name}  ({MODEL_LABELS[h.model]})",
-                              h.tag)
+                combo.addItem(f"H{h.tag}  {h.name}  [{h.material}]", h.tag)
             combo.setCurrentIndex(max(0, combo.findData(
                 self.assignments.get(tag, 0))))
             combo.currentIndexChanged.connect(lambda _i: self._update_count())
-            self.table.setCellWidget(row, 2, combo)
+            self.table.setCellWidget(row, 3, combo)
             if tag in self._selected:
                 self.table.setRangeSelected(
-                    QTableWidgetSelectionRange(row, 0, row, 2), True)
+                    QTableWidgetSelectionRange(row, 0, row, 3), True)
 
         bar = QHBoxLayout()
         bar.addStretch(1)
@@ -351,26 +476,37 @@ class AssignHingesDialog(QDialog):
             return
         target = int(self.bulk.currentData() or 0)
         for row in rows:
-            combo = self.table.cellWidget(row, 2)
+            combo = self.table.cellWidget(row, 3)
             combo.setCurrentIndex(max(0, combo.findData(target)))
         self._update_count()
 
     def _clear_selected(self) -> None:
         for row in self._selected_rows():
-            combo = self.table.cellWidget(row, 2)
-            combo.setCurrentIndex(0)
+            self.table.cellWidget(row, 3).setCurrentIndex(0)
         self._update_count()
 
     def _update_count(self) -> None:
         n = sum(1 for row in range(len(self.beams))
-                if self.table.cellWidget(row, 2).currentData())
+                if self.table.cellWidget(row, 3).currentData())
         self.count.setText(f"{n} of {len(self.beams)} beam elements assigned")
 
     def accept(self) -> None:
         out = {}
         for row, tag in enumerate(self.beams):
-            hinge = int(self.table.cellWidget(row, 2).currentData() or 0)
+            hinge = int(self.table.cellWidget(row, 3).currentData() or 0)
             if hinge and hinge in self.defs:
                 out[tag] = hinge
         self.assignments = out
         super().accept()
+
+
+def _spin(value: float, low: float, high: float, decimals: int,
+          suffix: str = ""):
+    widget = QDoubleSpinBox()
+    widget.setRange(low, high)
+    widget.setDecimals(decimals)
+    widget.setValue(value)
+    widget.setKeyboardTracking(False)
+    if suffix:
+        widget.setSuffix(" " + suffix)
+    return widget

@@ -73,6 +73,12 @@ def _selftest(report_path: str) -> int:
         emit(f"combination factor 1.4 -> {rc.displacements[2][2]:.6f} mm")
         assert abs(rc.displacements[2][2] - 1.4 * got) < 1e-6 * abs(got), "combination scaling"
 
+        from .hinge_catalog import MATERIALS, image_path
+        expected_images = [m.key for m in MATERIALS.values() if m.image]
+        missing = [key for key in expected_images if not image_path(key)]
+        assert not missing, f"missing hinge reference images: {missing}"
+        emit(f"hinge reference images: {len(expected_images)} embedded")
+
         emit("RESULT: PASS")
         code = 0
     except Exception as exc:  # pragma: no cover - diagnostics

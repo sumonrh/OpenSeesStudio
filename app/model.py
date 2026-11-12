@@ -343,29 +343,56 @@ class Element:
 
 @dataclass
 class HingeDefinition:
-    """A reusable lumped plastic-hinge property definition."""
+    """A reusable OpenSees uniaxial material definition for a hinge."""
 
     tag: int
     name: str = "Hinge"
-    model: str = "Trilinear"
+    material: str = "Steel01"
+    family: str = "Steel"
     length_ratio: float = 0.10
-    fy: float = 0.235
-    post_yield_ratio: float = 0.02
-    ductility: float = 10.0
-    pinching: float = 0.8
-    damage: float = 0.02
-    beta: float = 0.4
+    params: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return dict(self.__dict__)
+        return {"tag": self.tag, "name": self.name, "material": self.material,
+                "family": self.family, "length_ratio": self.length_ratio,
+                "params": dict(self.params)}
 
     @staticmethod
     def from_dict(d: dict) -> "HingeDefinition":
-        h = HingeDefinition(int(d["tag"]))
-        for k, v in d.items():
-            if hasattr(h, k) and k != "tag":
-                setattr(h, k, v)
-        return h
+        # New format.
+        if "material" in d:
+            h = HingeDefinition(int(d["tag"]), str(d.get("name", "Hinge")),
+                                str(d["material"]), str(d.get("family", "")),
+                                _f(d.get("length_ratio", 0.10)))
+            h.params = {str(k): _f(v) for k, v in (d.get("params") or {}).items()}
+            return h
+        # Legacy GUI format (Bilinear/Trilinear/Takeda/Flag) -> OpenSees material.
+        old = str(d.get("model", "Trilinear"))
+        mapping = {"Bilinear": "Steel01", "Trilinear": "Hysteretic",
+                   "Takeda": "Hysteretic", "Flag": "FlagShape"}
+        material = mapping.get(old, "Hysteretic")
+        params = {
+            "fy": _f(d.get("fy", 0.235)),
+            "b": _f(d.get("post_yield_ratio", 0.02)),
+            "ductility": _f(d.get("ductility", 10.0)),
+            "pinch": _f(d.get("pinching", 0.8)),
+            "pinchX": _f(d.get("pinching", 0.8)),
+            "pinchY": _f(d.get("pinching", 0.8)),
+            "damage": _f(d.get("damage", 0.02)),
+            "damage1": _f(d.get("damage", 0.02)),
+            "damage2": 0.0,
+            "beta": _f(d.get("beta", 0.4)),
+        }
+        if old == "Bilinear":
+            params = {"fy": params["fy"], "b": params["b"]}
+        elif old == "Flag":
+            params = {"fy": params["fy"], "b": params["b"],
+                      "beta": params["beta"]}
+        return HingeDefinition(int(d["tag"]), str(d.get("name", "Hinge")),
+                               material, "Steel" if material == "Steel01"
+                               else "Hysteretic" if material == "Hysteretic"
+                               else "Flag / Self-centering",
+                               _f(d.get("length_ratio", 0.10)), params)
 
 
 LOAD_DIRECTIONS = ("local-y", "local-z", "Global X", "Global Y", "Global Z")
@@ -377,14 +404,6 @@ PUSHOVER_DEFAULTS = {
     "control_dof": 1,
     "target_displacement": 100.0,     # mm
     "steps": 20,
-    "hinge_model": "Trilinear",
-    "hinge_length_ratio": 0.10,
-    "fy": 0.235,                      # kN/mm^2
-    "post_yield_ratio": 0.02,
-    "ductility": 10.0,
-    "pinching": 0.8,
-    "damage": 0.02,
-    "beta": 0.4,
 }
 
 
@@ -708,9 +727,24 @@ class Project:
                 if tag is None:
                     tag = p.next_hinge()
                     grouped[key] = tag
+                    old_model = key[0]
+                    material = {"Bilinear": "Steel01", "Trilinear": "Hysteretic",
+                                "Takeda": "Hysteretic", "Flag": "FlagShape"}.get(
+                                    old_model, "Hysteretic")
+                    family = ("Steel" if material == "Steel01"
+                              else "Flag / Self-centering"
+                              if material == "FlagShape" else "Hysteretic")
+                    params = {
+                        "fy": key[2], "b": key[3], "ductility": key[4],
+                        "pinch": key[5], "pinchX": key[5], "pinchY": key[5],
+                        "damage": key[6], "damage1": key[6], "damage2": 0.0,
+                        "beta": key[7]}
+                    if material == "Steel01":
+                        params = {"fy": key[2], "b": key[3]}
+                    elif material == "FlagShape":
+                        params = {"fy": key[2], "b": key[3], "beta": key[7]}
                     p.hinge_defs[tag] = HingeDefinition(
-                        tag, f"Hinge {tag}", key[0], key[1], key[2], key[3],
-                        key[4], key[5], key[6], key[7])
+                        tag, f"Hinge {tag}", material, family, key[1], params)
                 p.hinge_assignments[element] = tag
         p.settings = dict(DEFAULT_SETTINGS)
         p.settings.update(d.get("settings", {}))

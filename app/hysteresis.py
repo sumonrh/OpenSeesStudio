@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
+from PySide6.QtGui import (QBrush, QColor, QFont, QPainter, QPen, QPixmap,
+                           QPolygonF)
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout,
                                QHeaderView, QLabel, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import theme
+from .hinge_catalog import MATERIALS
 from .units import UNITS
 
 MODEL_LABELS = {
@@ -184,33 +186,90 @@ class HysteresisPlot(QWidget):
 
 
 class HysteresisDialog(QDialog):
-    def __init__(self, model: str, params: dict, parent=None,
-                 initial_stiffness: Optional[float] = None) -> None:
+    def __init__(self, material: str, params: dict, parent=None,
+                 initial_stiffness: Optional[float] = None,
+                 image_path: str = "", note: str = "") -> None:
         super().__init__(parent)
-        self.setWindowTitle("Hinge Hysteresis")
-        self.resize(820, 900)
-        self.model = model
+        legacy = {"Bilinear": "Steel01", "Trilinear": "Hysteretic",
+                  "Takeda": "Hysteretic", "Flag": "FlagShape"}
+        self.material = legacy.get(material, material)
+        self.spec = MATERIALS.get(self.material)
+        if self.spec is None:
+            self.material = "Steel01"
+            self.spec = MATERIALS[self.material]
         self.params = dict(params)
+        # Accept the old GUI parameter names when opening older projects.
+        if "b" not in self.params and "post_yield_ratio" in self.params:
+            self.params["b"] = self.params["post_yield_ratio"]
+        if "pinch" not in self.params and "pinching" in self.params:
+            self.params["pinch"] = self.params["pinching"]
+        if "damage1" not in self.params and "damage" in self.params:
+            self.params["damage1"] = self.params["damage"]
         self.E = float(initial_stiffness or 200.0)
+        self.setWindowTitle(self.spec.label)
+        self.resize(860, 900)
 
         lay = QVBoxLayout(self)
-        title = QLabel(MODEL_LABELS.get(model, model))
+        title = QLabel(self.spec.label)
         title.setStyleSheet(
             f"font-size: 15px; font-weight: 600; color: {theme.ACCENT_DARK};")
         lay.addWidget(title)
-        hint = QLabel("Schematic cyclic response. The diagram identifies the "
-                      "parameters used by the selected hinge law; it is not a "
-                      "calibrated test plot.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
-        lay.addWidget(hint)
-        self.plot = HysteresisPlot()
-        self.plot.setMaximumHeight(430)
-        self.plot.set_model(model, self.params)
-        lay.addWidget(self.plot, 1)
+        caption = QLabel(
+            ("Reference diagram from the OpenSees documentation. " if image_path
+             else "No embedded reference figure; schematic response shown. ")
+            + "Parameter values and definitions are listed below.")
+        caption.setWordWrap(True)
+        caption.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        lay.addWidget(caption)
+
+        self.plot = None
+        pix = QPixmap(image_path) if image_path else QPixmap()
+        if not pix.isNull():
+            pix = pix.scaled(800, 430, Qt.KeepAspectRatio,
+                             Qt.SmoothTransformation)
+            image = QLabel()
+            image.setAlignment(Qt.AlignCenter)
+            image.setPixmap(pix)
+            image.setMaximumHeight(450)
+            lay.addWidget(image, 1)
+        else:
+            fallback = {
+                "Steel01": "Bilinear", "Steel02": "Bilinear",
+                "Hardening": "Bilinear", "ElasticBilin": "Bilinear",
+                "Hysteretic": "Trilinear", "HystereticSM": "Takeda",
+                "HystereticSmooth": "Takeda", "HystereticAsym": "Takeda",
+                "Pinching4": "Takeda", "BoucWen": "Takeda",
+                "FlagShape": "Flag", "SelfCentering": "Flag",
+                "Concrete01": "Trilinear", "Concrete02": "Trilinear",
+                "Concrete02IS": "Trilinear", "Concrete04": "Trilinear",
+            }.get(self.material, "Trilinear")
+            p = {
+                "fy": float(self.params.get("fy", 0.235)),
+                "post_yield_ratio": float(self.params.get("b", 0.02)),
+                "ductility": float(self.params.get("ductility", 10.0)),
+                "pinching": float(self.params.get("pinch",
+                                  self.params.get("pinchX", 0.8))),
+                "damage": float(self.params.get("damage",
+                                 self.params.get("damage1", 0.02))),
+                "beta": float(self.params.get("beta", 0.4)),
+            }
+            self.plot = HysteresisPlot()
+            self.plot.setMaximumHeight(430)
+            self.plot.set_model(fallback, p)
+            lay.addWidget(self.plot, 1)
         self.table = self._build_table()
-        self.table.setMinimumHeight(260)
+        self.table.setMinimumHeight(250)
         lay.addWidget(self.table, 0)
+        if note:
+            note_label = QLabel(note)
+            note_label.setWordWrap(True)
+            note_label.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+            lay.addWidget(note_label)
+        if self.spec.docs:
+            link = QLabel(f'<a href="{self.spec.docs}">OpenSees documentation</a>')
+            link.setOpenExternalLinks(True)
+            link.setStyleSheet(f"color:{theme.ACCENT};")
+            lay.addWidget(link)
         bar = QHBoxLayout()
         bar.addStretch(1)
         close = QPushButton("Close")
@@ -218,54 +277,32 @@ class HysteresisDialog(QDialog):
         bar.addWidget(close)
         lay.addLayout(bar)
 
-    def _build_table(self) -> QTableWidget:
-        fy = float(self.params.get("fy", 0.235))
-        post = float(self.params.get("post_yield_ratio", 0.02))
-        duct = float(self.params.get("ductility", 10.0))
-        pinch = float(self.params.get("pinching", 0.8))
-        damage = float(self.params.get("damage", 0.02))
-        beta = float(self.params.get("beta", 0.4))
-        ey = fy / max(self.E, 1e-9)
-        e2 = ey * 3.0
-        eu = ey * duct
-        s2 = fy * (1.0 + post * 3.0)
-        su = fy * (1.0 + post * duct)
+    def _format(self, spec, value: float) -> str:
+        if spec.unit == "stress":
+            return f"{_num(UNITS.stress(value), 5)} {UNITS.stress_unit}"
+        if spec.unit == "length":
+            return f"{_num(UNITS.length(value), 5)} {UNITS.length_unit}"
+        if spec.unit == "force":
+            return f"{_num(UNITS.force(value), 5)} {UNITS.force_unit}"
+        if spec.unit == "moment":
+            return f"{_num(UNITS.moment(value), 5)} {UNITS.moment_unit}"
+        if spec.unit == "rotation":
+            return f"{_num(value, 5)} rad"
+        if spec.unit == "rot_stiffness":
+            return f"{_num(value, 5)} kN·mm/rad"
+        return _num(value, 5)
 
-        rows = [
-            ("E", f"{_num(UNITS.stress(self.E), 4)} {UNITS.stress_unit}",
-             "Initial elastic stiffness of the hinge material."),
-            ("fy", f"{_num(UNITS.stress(fy), 4)} {UNITS.stress_unit}",
-             "Yield strength; the first envelope point."),
-            ("εy", f"{_num(ey, 4)}", "Yield strain = fy / E."),
-            ("b", f"{_num(post, 4)}",
-             "Post-yield stiffness ratio; hardening modulus Eh = b·E."),
-        ]
-        if self.model in ("Trilinear", "Takeda"):
-            rows += [
-                ("ε2, f2", f"{_num(e2, 4)}, {_num(UNITS.stress(s2), 4)}",
-                 "Second envelope point; defines the trilinear break."),
-                ("εu / εy", f"{_num(duct, 4)}",
-                 "Ultimate-to-yield strain ductility; sets the last envelope point."),
-                ("ffu", f"{_num(UNITS.stress(su), 4)} {UNITS.stress_unit}",
-                 "Force at the ultimate strain."),
-            ]
-        if self.model == "Takeda":
-            rows += [
-                ("β", f"{_num(beta, 4)}",
-                 "Degraded unloading stiffness exponent; the Takeda-like branch."),
-                ("pinching", f"{_num(pinch, 4)}",
-                 "Pinching factor applied during reloading."),
-                ("damage", f"{_num(damage, 4)}",
-                 "Strength/stiffness damage from cyclic deformation."),
-            ]
-        if self.model == "Flag":
-            rows += [
-                ("β", f"{_num(beta, 4)}",
-                 "Flag-shape parameter: 0 gives bilinear elastic, 1 gives "
-                 "bilinear hysteretic response."),
-                ("Eh", f"{_num(UNITS.stress(self.E * post), 4)} {UNITS.stress_unit}",
-                 "Post-yield (flag) stiffness = b·E."),
-            ]
+    def _build_table(self) -> QTableWidget:
+        rows = []
+        if self.spec.kind == "fiber":
+            rows.append(("E (member)", f"{_num(UNITS.stress(self.E), 5)} "
+                        f"{UNITS.stress_unit}",
+                        "Initial elastic stiffness taken from the assigned "
+                        "element material."))
+        for spec in self.spec.params:
+            value = float(self.params.get(spec.key, spec.default))
+            rows.append((spec.label, self._format(spec, value),
+                         spec.description))
         table = QTableWidget(len(rows), 3)
         table.setHorizontalHeaderLabels(["Parameter", "Value", "Definition"])
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
