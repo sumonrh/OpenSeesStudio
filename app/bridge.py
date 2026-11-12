@@ -89,7 +89,8 @@ class GuiBridge(QObject):
             return {"name": "OpenSees Studio", "version": "1.0",
                     "nodes": len(w.project.nodes),
                     "elements": len(w.project.elements),
-                    "project": w.project.title}
+                    "project": w.project.title,
+                    "locked": bool(w.model_locked)}
         if cmd == "get_project":
             return w.project.to_dict()
         if cmd == "load_project":

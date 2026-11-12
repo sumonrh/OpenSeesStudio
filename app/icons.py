@@ -266,6 +266,25 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         path.lineTo(19, 13.5); path.closeSubpath()
         _fill(p, "#ffffff"); p.drawPath(path)
 
+    elif name in ("lock", "unlock"):
+        _pen(p, INK, 1.6)
+        p.drawRoundedRect(QRectF(6, 10.5, 12, 9.5), 1.5, 1.5)
+        if name == "lock":
+            p.drawArc(QRectF(8, 4.5, 8, 10), 0, 180 * 16)
+            p.drawLine(QPointF(8, 9.5), QPointF(8, 10.5))
+            p.drawLine(QPointF(16, 9.5), QPointF(16, 10.5))
+        else:
+            p.drawArc(QRectF(9, 3.5, 8, 10), 20 * 16, 160 * 16)
+            p.drawLine(QPointF(16.6, 9.3), QPointF(16.6, 10.5))
+        _fill(p, accent)
+        p.drawEllipse(QPointF(12, 14.6), 1.5, 1.5)
+        p.drawRect(QRectF(11.4, 15.2, 1.2, 2.6))
+
+    elif name == "panel":
+        _pen(p, INK, 1.5)
+        p.drawRoundedRect(QRectF(3, 4, 18, 16), 2, 2)
+        p.drawLine(QPointF(14.5, 4), QPointF(14.5, 20))
+
     elif name == "menu":
         _fill(p, INK)
         for row in range(3):

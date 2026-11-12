@@ -194,6 +194,27 @@ grid_button.click()
 win.ribbon.set_current("Load")
 check("ribbon tab switching", win.ribbon.current_title() == "Load")
 win.ribbon.set_current("Structure")
+check("quick access toolbar", win.a_run in win.quick_toolbar.actions())
+check("quick view toolbar", win.a_fit in win.quick_view_toolbar.actions()
+      and win.a_orbit in win.quick_view_toolbar.actions())
+check("properties panel action", win.a_props_visible.isChecked())
+win.a_props_visible.trigger()
+check("properties panel collapses", win.props_dock.isHidden())
+win.a_props_visible.trigger()
+check("properties panel restores", not win.props_dock.isHidden())
+
+root = win.tree.topLevelItem(0)
+tree_items = {root.child(i).text(0).split("   ")[0]: root.child(i)
+              for i in range(root.childCount())}
+check("tree lists materials",
+      tree_items["Materials"].childCount() == len(win.project.materials))
+check("tree lists sections",
+      tree_items["Sections"].childCount() == len(win.project.sections))
+loads_item = tree_items["Loads"]
+load_cases_item = next(loads_item.child(i) for i in range(loads_item.childCount())
+                       if loads_item.child(i).text(0).startswith("Load Cases"))
+check("tree lists load cases",
+      load_cases_item.childCount() == len(win.project.cases))
 
 print("== static analysis through the GUI ==")
 mainwindow.ResultsDialog = StubResults
@@ -203,6 +224,11 @@ check("max displacement reasonable", 0.0 < win.static_results.max_disp < 20.0,
       f"({win.static_results.max_disp:.4f} mm)")
 check("viewport shows deformed shape",
       bool(win.viewport._deformed_points()))
+check("analysis switches to results tab", win.ribbon.current_title() == "Results")
+check("model auto-locked after analysis",
+      win.model_locked and win.a_lock.isChecked() and not win.a_nodes.isEnabled())
+win.a_lock.trigger()
+check("lock toggle unlocks", not win.model_locked and win.a_nodes.isEnabled())
 
 print("== load combination scenario ==")
 win.scenario_combo.setCurrentText("1.4DL+1.6LL")
@@ -215,6 +241,9 @@ win.run_modal()
 check("modal results present", win.modal_results is not None and len(win.modal_results.modes) > 0)
 check("first period positive", win.modal_results.modes[0].period > 0,
       f"(T1={win.modal_results.modes[0].period:.4f} s)")
+check("modal analysis locks model", win.model_locked and not win.a_nodes.isEnabled())
+win.a_lock.trigger()
+check("model unlocked for editing", not win.model_locked and win.a_nodes.isEnabled())
 
 print("== copy / move ==")
 base_nodes = [t for t, n in win.project.nodes.items() if abs(n.x) < 1e-6]

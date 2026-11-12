@@ -75,7 +75,6 @@ QToolButton:hover {{ background: #eaf3fb; border: 1px solid #c9dff2; }}
 QToolButton:pressed {{ background: #d7e9f8; }}
 QToolButton:checked {{ background: {ACCENT_SOFT}; border: 1px solid #a9cdea; }}
 
-QDockWidget {{ titlebar-close-icon: none; titlebar-normal-icon: none; }}
 QDockWidget::title {{ background: #e8eef6; padding: 6px 8px; border-bottom: 1px solid {BORDER};
                       font-weight: 600; color: #33475f; }}
 
@@ -175,4 +174,25 @@ QToolButton#ribbonQuick:hover {{ background: #ffffff; border: 1px solid #b9c8d8;
 QToolButton#ribbonApp {{ background: #ffffff; border: 1px solid #b9c8d8;
                          border-radius: 4px; padding: 1px; }}
 QToolButton#ribbonApp:hover {{ background: #fff4e8; border-color: #e0a37a; }}
+
+/* ------------------------------------------------------- quick toolbars */
+QToolBar#quick_toolbar {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                          stop:0 #ffffff, stop:1 #f3f7fb);
+                         border-bottom: 1px solid #c5d2e0; spacing: 1px;
+                         padding: 1px 7px; }}
+QToolBar#quick_toolbar QToolButton {{ min-width: 22px; max-width: 24px;
+                                      min-height: 20px; padding: 2px;
+                                      border: 1px solid transparent; border-radius: 3px; }}
+QToolBar#quick_toolbar QToolButton:hover {{ background: #e4f0fb; border-color: #b7d5ee; }}
+QToolBar#quick_toolbar QToolButton:checked {{ background: #fde7d9; border-color: #e8a27d; }}
+QToolBar#quick_toolbar::separator {{ background: #d5dde7; width: 1px; margin: 4px 5px; }}
+QToolBar#quickview_toolbar {{ background: #fbfcfe; border-left: 1px solid #c5d2e0;
+                              spacing: 2px; padding: 3px 2px; }}
+QToolBar#quickview_toolbar QToolButton {{ min-width: 28px; max-width: 30px;
+                                          min-height: 26px; padding: 2px;
+                                          border: 1px solid transparent;
+                                          border-radius: 3px; }}
+QToolBar#quickview_toolbar QToolButton:hover {{ background: #e4f0fb; border-color: #b7d5ee; }}
+QToolBar#quickview_toolbar QToolButton:checked {{ background: #dcebf9; border-color: #9fc8e8; }}
+QToolBar#quickview_toolbar::separator {{ background: #d5dde7; height: 1px; margin: 5px 6px; }}
 """

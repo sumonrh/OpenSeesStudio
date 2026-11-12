@@ -35,6 +35,14 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 
 ## Features
 
+**Interface**
+- Ribbon tabs (View, Structure, Node/Element, Properties, Boundary, Load, Analysis,
+  Results, Tools) with command groups and captions.
+- Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
+  vertical view strip (fit, iso, top, front, right, orbit, labels, grid, deformed).
+- Model, Properties and Messages panels can be collapsed and restored from
+  **View > Panels**.
+
 **Structure**
 - Create nodes by coordinates, with repetition and spacing.
 - Create beams (`elasticBeamColumn`), trusses and 4-node shells (`ShellMITC4`).
@@ -45,6 +53,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with automatic properties for rectangle, circle, pipe, box and I-shape;
   user sections can supply A, Iy, Iz, J directly.
+- Model tree lists nodes, elements, materials, sections, supports, load cases, loads
+  and combinations.
 - Spreadsheet **Tables** editor for every entity, with validation.
 
 **Loads**
@@ -63,10 +73,15 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   missing supports and missing loads.
 - Result viewer: displacements, reactions, element forces (N, Vy, Vz, T, My, Mz at both ends),
   modal periods; CSV export.
+- Finished analyses switch to the **Results** ribbon tab instead of opening a dialog.
+- The model locks automatically after an analysis; press **Ctrl+L** or use the lock
+  button to unlock for editing. Results clear when the model is changed.
 - Deformed shape overlay with automatic scale.
 
+![results and model lock](docs/results_lock.png)
+
 **AI integration**
-- MCP server (41 tools) so AI agents can build models, run analyses and read
+- MCP server (43 tools) so AI agents can build models, run analyses and read
   results; optional live GUI bridge with screenshots.
 
 **Project**
@@ -92,6 +107,7 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 | F9 | Model check |
 | F | Fit view |
 | O | 3D orbit mode (left-drag rotates) |
+| Ctrl+L | Lock / unlock model editing |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Del | Delete selection |
 
@@ -102,7 +118,7 @@ the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the 
 ## MCP server (AI agents)
 
 `mcp_server/` exposes OpenSees Studio to AI agents over the **Model Context
-Protocol** (stdio transport, 41 tools). Agents can build the whole model,
+Protocol** (stdio transport, 43 tools). Agents can build the whole model,
 run analyses and read results.
 
 **Tools** (grouped): project new/open/save/summary, node creation (single,

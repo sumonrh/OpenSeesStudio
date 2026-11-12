@@ -5,13 +5,13 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
                                QPushButton, QSpinBox, QStackedWidget,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
 from . import dialogs, icons, opsgen, theme
@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self.static_results: Optional[opsgen.StaticResults] = None
         self.modal_results: Optional[opsgen.ModalResults] = None
         self.results_scenario = ""
+        self.model_locked = False
 
         self.setWindowTitle(f"{APP_NAME} - Untitled")
         self.resize(1480, 940)
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
 
         self._make_actions()
         self._make_ribbon()
+        self._make_quick_toolbars()
         self._make_docks()
         self._make_statusbar()
 
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
             a.setShortcut(QKeySequence(shortcut))
         if tip:
             a.setStatusTip(tip)
+        a.setToolTip(tip or text)
         a.setCheckable(checkable)
         return a
 
@@ -200,8 +203,29 @@ class MainWindow(QMainWindow):
                                             "Draw support symbols in the viewport",
                                             checkable=True)
         self.a_supports_visible.setChecked(True)
+        self.a_lock = self._act("Lock", "unlock", self._toggle_lock, "Ctrl+L",
+                                "Lock model editing to protect analysis results",
+                                checkable=True)
+        self.a_model_visible = self._act("Model", "panel",
+                                         lambda on: self.model_dock.setVisible(on), "",
+                                         "Show or hide the model tree", checkable=True)
+        self.a_model_visible.setChecked(True)
+        self.a_props_visible = self._act("Properties", "panel",
+                                         lambda on: self.props_dock.setVisible(on), "",
+                                         "Show or hide the properties panel", checkable=True)
+        self.a_props_visible.setChecked(True)
+        self.a_log_visible = self._act("Messages", "panel",
+                                       lambda on: self.log_dock.setVisible(on), "",
+                                       "Show or hide the messages panel", checkable=True)
+        self.a_log_visible.setChecked(True)
         self.a_quick = self._act("Quick Start", "about", self.quick_start, "F1")
         self.a_about = self._act("About", "about", self.about, "")
+
+        self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_mirror,
+                             self.a_support, self.a_material, self.a_section, self.a_tables,
+                             self.a_cases, self.a_nload, self.a_eload, self.a_sw,
+                             self.a_combo, self.a_delete, self.a_undo, self.a_redo,
+                             self.a_settings)
 
     def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None) -> None:
         kw = {}
@@ -226,6 +250,36 @@ class MainWindow(QMainWindow):
             self.viewport.set_orbit_mode(False)
             return
         self.viewport.clear_selection()
+
+    def _toggle_lock(self, checked: bool) -> None:
+        self._set_locked(bool(checked))
+
+    def _set_locked(self, locked: bool, message: str = "") -> None:
+        locked = bool(locked)
+        changed = locked != self.model_locked
+        self.model_locked = locked
+        self.a_lock.blockSignals(True)
+        self.a_lock.setChecked(locked)
+        self.a_lock.blockSignals(False)
+        self.a_lock.setText("Unlock" if locked else "Lock")
+        self.a_lock.setIcon(icons.icon("lock" if locked else "unlock"))
+        self.a_lock.setToolTip("Model is locked. Click or press Ctrl+L to unlock and edit."
+                               if locked else
+                               "Lock the model to protect analysis results (Ctrl+L).")
+        for action in self.edit_actions:
+            action.setEnabled(not locked)
+        for widget in (self.nd_x, self.nd_y, self.nd_z, *self.nd_boxes, self.nd_apply,
+                       self.el_mat, self.el_sec, self.el_vx, self.el_vy, self.el_vz,
+                       self.el_apply):
+            widget.setEnabled(not locked)
+        if hasattr(self, "lock_label"):
+            self.lock_label.setVisible(locked)
+        if message:
+            self._status(message)
+        if changed:
+            self._log("Model locked - editing disabled. Press Ctrl+L to unlock."
+                      if locked else
+                      "Model unlocked - editing enabled. Results clear on the next change.")
 
     def _set_deform_scale(self, value: float) -> None:
         self.viewport.deformed_scale = float(value) if value > 0 else None
@@ -276,6 +330,8 @@ class MainWindow(QMainWindow):
         group.add_field("Scale", self.scale_spin)
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
+        group = page.add_group("Panels")
+        group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible))
 
         page = ribbon.add_tab("Structure")
         group = page.add_group("Model")
@@ -343,6 +399,8 @@ class MainWindow(QMainWindow):
         group = page.add_group("Results")
         group.add_large(self.a_results)
         group.add_column((self.a_animate, self.a_deformed))
+        group = page.add_group("Model state")
+        group.add_large(self.a_lock)
 
         page = ribbon.add_tab("Results")
         group = page.add_group("Results")
@@ -350,6 +408,8 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_animate)
         group = page.add_group("Display")
         group.add_column((self.a_deformed, self.a_labels, self.a_grid))
+        group = page.add_group("Model state")
+        group.add_large(self.a_lock)
 
         page = ribbon.add_tab("Tools")
         group = page.add_group("Project")
@@ -364,6 +424,42 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_about)
 
         ribbon.set_current("Structure")
+
+    def _make_quick_toolbars(self) -> None:
+        """Tiny horizontal command strip and vertical view strip."""
+        quick = QToolBar("Quick access", self)
+        quick.setObjectName("quick_toolbar")
+        quick.setMovable(False)
+        quick.setFloatable(False)
+        quick.setContextMenuPolicy(Qt.PreventContextMenu)
+        quick.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        quick.setIconSize(QSize(16, 16))
+        for action in (self.a_save, None, self.a_run, self.a_modal, self.a_results,
+                       self.a_check, None, self.a_lock, None, self.a_undo, self.a_redo):
+            if action is None:
+                quick.addSeparator()
+            else:
+                quick.addAction(action)
+        self.addToolBar(Qt.TopToolBarArea, quick)
+        self.quick_toolbar = quick
+
+        views = QToolBar("Quick views", self)
+        views.setObjectName("quickview_toolbar")
+        views.setMovable(False)
+        views.setFloatable(False)
+        views.setContextMenuPolicy(Qt.PreventContextMenu)
+        views.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        views.setIconSize(QSize(18, 18))
+        for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right,
+                       None, self.a_orbit, self.a_labels, self.a_grid, self.a_deformed,
+                       None, self.a_fit_sel):
+            if action is None:
+                views.addSeparator()
+            else:
+                views.addAction(action)
+        views.setFixedWidth(38)
+        self.addToolBar(Qt.RightToolBarArea, views)
+        self.quick_view_toolbar = views
 
     def _scenario_changed(self, text: str) -> None:
         if not text:
@@ -412,6 +508,11 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, dock3)
         dock3.setMaximumHeight(220)
         self.log_dock = dock3
+
+        for dock, action in ((self.model_dock, self.a_model_visible),
+                             (self.props_dock, self.a_props_visible),
+                             (self.log_dock, self.a_log_visible)):
+            dock.visibilityChanged.connect(action.setChecked)
 
     def _build_props(self) -> None:
         # page 0: overview
@@ -469,10 +570,10 @@ class MainWindow(QMainWindow):
             self.nd_boxes.append(cb)
             sup.addWidget(cb)
         lay1.addLayout(sup)
-        apply = QPushButton("Apply to node")
-        apply.setDefault(True)
-        apply.clicked.connect(self._apply_node_props)
-        lay1.addWidget(apply)
+        self.nd_apply = QPushButton("Apply to node")
+        self.nd_apply.setDefault(True)
+        self.nd_apply.clicked.connect(self._apply_node_props)
+        lay1.addWidget(self.nd_apply)
         lay1.addWidget(QLabel("Tip: drag in the viewport to box-select.\n"
                               "Ctrl / Shift adds to the selection."))
         lay1.addStretch(1)
@@ -501,9 +602,9 @@ class MainWindow(QMainWindow):
         self.el_vz = dialogs.spin(1, -1, 1, 3, 0.1)
         row.addWidget(self.el_vx); row.addWidget(self.el_vy); row.addWidget(self.el_vz)
         lay2.addLayout(row)
-        apply2 = QPushButton("Apply to element")
-        apply2.clicked.connect(self._apply_element_props)
-        lay2.addWidget(apply2)
+        self.el_apply = QPushButton("Apply to element")
+        self.el_apply.clicked.connect(self._apply_element_props)
+        lay2.addWidget(self.el_apply)
         lay2.addStretch(1)
         self.props.addWidget(page2)
 
@@ -511,6 +612,11 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         self.status_label = QLabel("Ready")
         sb.addWidget(self.status_label, 1)
+        self.lock_label = QLabel("MODEL LOCKED")
+        self.lock_label.setStyleSheet(
+            "color:#b45309; font-weight:700; padding:0 10px;")
+        self.lock_label.setVisible(False)
+        sb.addPermanentWidget(self.lock_label)
         self.model_label = QLabel("")
         sb.addPermanentWidget(self.model_label)
 
@@ -618,30 +724,63 @@ class MainWindow(QMainWindow):
         g_nodes = group("Nodes", "nodes", len(p.nodes))
         for t in list(p.nodes)[:800]:
             n = p.nodes[t]
-            child = QTreeWidgetItem([f"{t}   ({fmt(UNITS.length(n.x), 1)}, "
-                                     f"{fmt(UNITS.length(n.y), 1)}, "
-                                     f"{fmt(UNITS.length(n.z), 1)})"])
-            child.setData(0, Qt.UserRole, ("node", t))
-            g_nodes.addChild(child)
-        g_el = group("Elements", "elements", len(p.elements))
+            node_item = QTreeWidgetItem([f"{t}   ({fmt(UNITS.length(n.x), 1)}, "
+                                         f"{fmt(UNITS.length(n.y), 1)}, "
+                                         f"{fmt(UNITS.length(n.z), 1)})"])
+            node_item.setData(0, Qt.UserRole, ("node", t))
+            g_nodes.addChild(node_item)
+        g_elem = group("Elements", "elements", len(p.elements))
         for t in list(p.elements)[:800]:
             e = p.elements[t]
-            child = QTreeWidgetItem([f"{t}   {e.kind}   {e.nodes}"])
-            child.setData(0, Qt.UserRole, ("element", t))
-            g_el.addChild(child)
-        group("Materials", "materials", len(p.materials))
-        group("Sections", "sections", len(p.sections))
+            elem_item = QTreeWidgetItem([f"{t}   {e.kind}   {e.nodes}"])
+            elem_item.setData(0, Qt.UserRole, ("element", t))
+            g_elem.addChild(elem_item)
+
+        def add_child(parent: QTreeWidgetItem, text: str, kind: str = "",
+                      tag=None) -> QTreeWidgetItem:
+            item = QTreeWidgetItem([text])
+            if kind:
+                item.setData(0, Qt.UserRole, (kind, tag))
+            parent.addChild(item)
+            return item
+
+        g_mat = group("Materials", "materials", len(p.materials))
+        for m in p.materials.values():
+            add_child(g_mat, f"{m.tag}   {m.name}   ({m.kind})", "material", m.tag)
+        g_sec = group("Sections", "sections", len(p.sections))
+        for s in p.sections.values():
+            add_child(g_sec, f"{s.tag}   {s.name}   ({s.shape})", "section", s.tag)
 
         b = group("Boundary", "boundary")
-        group("Supports", "supports", sum(1 for n in p.nodes.values() if any(n.support)), b)
+        g_sup = group("Supports", "supports",
+                      sum(1 for n in p.nodes.values() if any(n.support)), b)
+        for n in p.nodes.values():
+            if any(n.support):
+                add_child(g_sup, f"{n.tag}   {n.support_code()}", "node", n.tag)
 
         ld = group("Loads", "loads")
-        group("Load Cases", "cases", len(p.cases), ld)
-        group("Nodal Loads", "nodal_loads", len(p.nodal_loads), ld)
-        group("Element Loads", "element_loads", len(p.elem_loads), ld)
-        group("Self Weight", "self_weight", len(p.self_weight), ld)
+        g_cases = group("Load Cases", "cases", len(p.cases), ld)
+        for c in p.cases.values():
+            add_child(g_cases, f"{c.name}   ({c.kind})", "case", c.name)
+        g_nl = group("Nodal Loads", "nodal_loads", len(p.nodal_loads), ld)
+        for load in p.nodal_loads[:200]:
+            add_child(g_nl, f"{load.tag}   node {load.node}   {load.case}",
+                      "node", load.node)
+        if len(p.nodal_loads) > 200:
+            add_child(g_nl, f"... {len(p.nodal_loads) - 200} more in Tables")
+        g_elload = group("Element Loads", "element_loads", len(p.elem_loads), ld)
+        for load in p.elem_loads[:200]:
+            add_child(g_elload, f"{load.tag}   element {load.elem}   {load.case}",
+                      "element", load.elem)
+        if len(p.elem_loads) > 200:
+            add_child(g_elload, f"... {len(p.elem_loads) - 200} more in Tables")
+        g_sw = group("Self Weight", "self_weight", len(p.self_weight), ld)
+        for case, factor in p.self_weight.items():
+            add_child(g_sw, f"{case}   factor {fmt(factor, 3)}")
 
-        group("Load Combinations", "combos", len(p.combos))
+        g_combo = group("Load Combinations", "combos", len(p.combos))
+        for c in p.combos.values():
+            add_child(g_combo, f"{c.name}   ({c.kind})", "combo", c.name)
 
         self.tree.expandAll()
         self.tree.blockSignals(False)
@@ -687,6 +826,9 @@ class MainWindow(QMainWindow):
             return
         key, tag = data
         if tag is not None:
+            return
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
             return
         actions = {
             "nodes": lambda: self.open_tables(0),
@@ -793,7 +935,7 @@ class MainWindow(QMainWindow):
     def _adopt(self, other: Project) -> None:
         p = self.project
         keep_units = (p.settings.get("force_unit", "kN"),
-                      p.settings.get("length_unit", "mm"))
+                      p.settings.get("length_unit", "m"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
                      "settings", "title"):
@@ -801,6 +943,8 @@ class MainWindow(QMainWindow):
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
     def _commit(self, label: str) -> None:
+        if self.static_results or self.modal_results:
+            self._clear_results()
         self.history.push(self.project, label)
         self.refresh_all()
         self._log(f"✔ {label}")
@@ -820,6 +964,7 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self.viewport.fit()
         self.viewport.load_scenario = self.scenario_combo.currentText()
+        self._set_locked(False)
         self._log("Loaded example: 3-storey steel frame (39 elements, 3 load cases).")
 
     def open_path(self, path: str) -> None:
@@ -835,6 +980,7 @@ class MainWindow(QMainWindow):
         self.viewport.set_project(self.project)
         self.refresh_all()
         self.viewport.fit()
+        self._set_locked(False)
 
     def apply_project_dict(self, data: dict, fit: bool = True) -> None:
         """Replace the current model with a project dictionary (MCP bridge)."""
@@ -842,6 +988,7 @@ class MainWindow(QMainWindow):
         self._adopt(loaded)
         self.project.title = str(data.get("title", self.project.title))
         self._clear_results()
+        self._set_locked(False)
         self.viewport.set_project(self.project, fit=fit)
         self.refresh_all()
         self._log("Model synchronised from an MCP client.")
@@ -867,6 +1014,8 @@ class MainWindow(QMainWindow):
         self._apply_scale()
         self.a_deformed.setChecked(True)
         self._status(f"MCP: static results for {res.scenario}")
+        self._set_locked(True)
+        self.ribbon.set_current("Results")
 
     def bridge_show_mode(self, payload: dict) -> None:
         modes = [opsgen.ModeResult(int(m["mode"]), float(m["eigenvalue"]),
@@ -884,6 +1033,8 @@ class MainWindow(QMainWindow):
         self.viewport.start_animation()
         self.a_animate.setChecked(True)
         self._status(f"MCP: animating mode {mode}")
+        self._set_locked(True)
+        self.ribbon.set_current("Results")
 
     def file_new(self) -> None:
         if QMessageBox.question(self, "New project",
@@ -896,6 +1047,7 @@ class MainWindow(QMainWindow):
         self.modal_results = None
         self.viewport.set_project(self.project)
         self.refresh_all()
+        self._set_locked(False)
         self._log("New project created.")
 
     def file_open(self) -> None:
@@ -914,6 +1066,7 @@ class MainWindow(QMainWindow):
         self.viewport.set_project(self.project)
         self.refresh_all()
         self.viewport.fit()
+        self._set_locked(False)
         self._log(f"Opened {path}")
 
     def file_save(self) -> None:
@@ -1352,7 +1505,9 @@ class MainWindow(QMainWindow):
         self._status(f"Static analysis complete - max displacement "
                      f"{fmt(UNITS.length(res.max_disp), 4)} {UNITS.length_unit}")
         self.a_animate.setChecked(False)
-        self._show_results_dialog()
+        self._set_locked(True)
+        self.ribbon.set_current("Results")
+        self._log("Model locked after analysis. Press Ctrl+L to unlock before editing.")
 
     def run_modal(self) -> None:
         if not self.project.elements:
@@ -1375,7 +1530,9 @@ class MainWindow(QMainWindow):
         txt = ", ".join(f"T{m.mode}={fmt(m.period, 4)}s" for m in res.modes[:4])
         self._log(f"Modal analysis complete: {txt}")
         self._status(f"Modal analysis complete - {len(res.modes)} modes")
-        self._show_results_dialog()
+        self._set_locked(True)
+        self.ribbon.set_current("Results")
+        self._log("Model locked after analysis. Press Ctrl+L to unlock before editing.")
 
     def _show_results_dialog(self) -> None:
         if not self.static_results and not self.modal_results:
@@ -1468,6 +1625,9 @@ class MainWindow(QMainWindow):
 
     # ================================================================== tables
     def open_tables(self, tab: int = 0) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
         dlg = TablesDialog(self.project, self)
         dlg.tabs.setCurrentIndex(tab)
         if not dlg.exec() or dlg.result_project is None:
