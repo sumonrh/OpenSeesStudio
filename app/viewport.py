@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QWidget
 from . import theme
 from .model import Project, fmt
 from .opsgen import auto_vecxz, local_axes, ModalResults, StaticResults
+from .units import UNITS
 
 Vec3 = Tuple[float, float, float]
 
@@ -581,7 +582,7 @@ class Viewport(QWidget):
                 self._head(p, sx, sy, vx, vy, 6.0, theme.LOAD_COLOR)
                 p.setFont(QFont("Segoe UI", 7))
                 p.setPen(QPen(QColor(theme.ACCENT_DARK)))
-                p.drawText(QPointF(x0 - 2, y0 - 4), fmt(mag, 1))
+                p.drawText(QPointF(x0 - 2, y0 - 4), fmt(UNITS.force(mag), 1))
             # moments
             for nl in proj_.nodal_loads:
                 if nl.case not in case_map:
@@ -630,7 +631,7 @@ class Viewport(QWidget):
                 self._head(p, s[0], s[1], vx, vy, 5.0, theme.LOAD_COLOR)
                 p.setFont(QFont("Segoe UI", 7))
                 p.setPen(QPen(QColor(theme.ACCENT_DARK)))
-                p.drawText(QPointF(s[0] + 6, s[1] - 6), fmt(el.value * fac, 1))
+                p.drawText(QPointF(s[0] + 6, s[1] - 6), fmt(UNITS.force(el.value * fac), 1))
             else:
                 world_dir = _load_world_dir(proj_, e, el.direction)
                 if world_dir is None:
@@ -794,7 +795,9 @@ class Viewport(QWidget):
             self.update()
             if node:
                 n = self.project.nodes[node]
-                self.statusMessage.emit(f"Node {node}   ({fmt(n.x)}, {fmt(n.y)}, {fmt(n.z)})   "
+                self.statusMessage.emit(f"Node {node}   ({fmt(UNITS.length(n.x), 1)}, "
+                                        f"{fmt(UNITS.length(n.y), 1)}, "
+                                        f"{fmt(UNITS.length(n.z), 1)}) {UNITS.length_unit}   "
                                         f"support {n.support_code()}")
             elif elem:
                 e = self.project.elements[elem]

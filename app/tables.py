@@ -13,6 +13,14 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout,
 from . import theme
 from .model import (Element, ElementLoad, LoadCase, LoadCombination, Material,
                     NodalLoad, Node, Project, Section, fmt)
+from .units import UNITS
+
+
+def _load_values(l: ElementLoad):
+    """Element-load values in the current display units."""
+    if l.kind == "point":
+        return UNITS.force(l.value), UNITS.force(l.value2)
+    return UNITS.dist(l.value), UNITS.dist(l.value2)
 
 
 def _cell(text) -> QTableWidgetItem:
@@ -114,7 +122,8 @@ class TablesDialog(QDialog):
         self._build_pages()
 
         bar = QHBoxLayout()
-        info = QLabel("Edit cells directly. 'Apply' validates and rebuilds the model.")
+        info = QLabel(f"Display units: {UNITS.force_name} · {UNITS.length_name}. "
+                      "Edit cells directly. 'Apply' validates and rebuilds the model.")
         info.setStyleSheet(f"color: {theme.MUTED};")
         bar.addWidget(info)
         bar.addStretch(1)
@@ -131,9 +140,12 @@ class TablesDialog(QDialog):
     # ------------------------------------------------------------------ pages
     def _build_pages(self) -> None:
         p = self.project
+        u = UNITS
         self.page_nodes = TablePage(
             ["Tag", "X", "Y", "Z"],
-            [[n.tag, fmt(n.x), fmt(n.y), fmt(n.z)] for n in p.nodes.values()],
+            [[n.tag, fmt(u.length(n.x), u.length_decimals), fmt(u.length(n.y), u.length_decimals),
+              fmt(u.length(n.z), u.length_decimals)]
+             for n in p.nodes.values()],
             {0: 70}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
                                              if t.item(r, 0)), default=0) + 1, "0", "0", "0"])
         self.page_supports = TablePage(
@@ -143,19 +155,27 @@ class TablesDialog(QDialog):
         self.page_elements = TablePage(
             ["Tag", "Type", "Node1", "Node2", "Node3", "Node4", "Material", "Section", "Thickness"],
             [[e.tag, e.kind, *[e.nodes[i] if i < len(e.nodes) else "" for i in range(4)],
-              e.mat, e.sec, fmt(e.thickness, 2)] for e in p.elements.values()],
+              e.mat, e.sec, fmt(u.length(e.thickness), u.length_decimals)]
+             for e in p.elements.values()],
             {0: 60, 1: 80}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
-                                                    if t.item(r, 0)), default=0) + 1, "beam", "", "", "", "", 1, 1, "100"])
+                                                    if t.item(r, 0)), default=0) + 1, "beam", "", "", "", "", 1, 1,
+                                               fmt(u.length(100.0), u.length_decimals)])
         self.page_materials = TablePage(
             ["Tag", "Name", "Type", "E", "Nu", "Density", "fy", "b"],
-            [[m.tag, m.name, m.kind, fmt(m.E, 5), fmt(m.nu, 3), f"{m.rho:.6e}",
-              fmt(m.fy, 5), fmt(m.b, 4)] for m in p.materials.values()],
+            [[m.tag, m.name, m.kind, fmt(u.stress(m.E), 5), fmt(m.nu, 3),
+              fmt(u.density(m.rho), 6), fmt(u.stress(m.fy), 5), fmt(m.b, 4)]
+             for m in p.materials.values()],
             {1: 160, 2: 100}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
-                                                      if t.item(r, 0)), default=0) + 1, "New material", "Elastic", 200, 0.3, "7.85e-9", 0.235, 0.01])
+                                                      if t.item(r, 0)), default=0) + 1,
+                                                 "New material", "Elastic", fmt(u.stress(200.0), 5), 0.3,
+                                                 fmt(u.density(7.85e-9), 6), fmt(u.stress(0.235), 5), 0.01])
         self.page_sections = TablePage(
             ["Tag", "Name", "Shape", "b", "h", "d", "t", "tw", "tf", "A", "Iy", "Iz", "J"],
-            [[s.tag, s.name, s.shape, fmt(s.b, 2), fmt(s.h, 2), fmt(s.d, 2), fmt(s.t, 2),
-              fmt(s.tw, 2), fmt(s.tf, 2), fmt(s.A, 3), fmt(s.Iy, 3), fmt(s.Iz, 3), fmt(s.J, 3)]
+            [[s.tag, s.name, s.shape, fmt(u.length(s.b), u.length_decimals),
+              fmt(u.length(s.h), u.length_decimals), fmt(u.length(s.d), u.length_decimals),
+              fmt(u.length(s.t), u.length_decimals), fmt(u.length(s.tw), u.length_decimals),
+              fmt(u.length(s.tf), u.length_decimals), fmt(u.area(s.A), 6),
+              fmt(u.inertia(s.Iy), 9), fmt(u.inertia(s.Iz), 9), fmt(u.inertia(s.J), 9)]
              for s in p.sections.values()],
             {1: 150, 2: 90})
         self.page_cases = TablePage(
@@ -164,12 +184,16 @@ class TablesDialog(QDialog):
             {0: 120, 1: 110}, new_row=lambda t: [f"LC{t.rowCount() + 1}", "Other", ""])
         self.page_nodal = TablePage(
             ["Tag", "Node", "Case", "FX", "FY", "FZ", "MX", "MY", "MZ"],
-            [[l.tag, l.node, l.case] + [fmt(v, 3) for v in l.values] for l in p.nodal_loads],
+            [[l.tag, l.node, l.case] + [fmt(v, 3) for v in
+                                        [u.force(x) for x in l.values[:3]]] +
+                                       [fmt(v, 6) for v in
+                                        [u.moment(x) for x in l.values[3:]]]
+             for l in p.nodal_loads],
             {0: 60, 2: 100})
         self.page_eleload = TablePage(
             ["Tag", "Element", "Case", "Type", "Direction", "w1 / P", "w2", "x/L"],
             [[l.tag, l.elem, l.case, "Trapezoid" if l.trapezoid else l.kind.capitalize(),
-              l.direction, fmt(l.value, 5), fmt(l.value2, 5), fmt(l.position, 3)]
+              l.direction, *[fmt(v, 5) for v in _load_values(l)], fmt(l.position, 3)]
              for l in p.elem_loads],
             {2: 100, 3: 90, 4: 100})
         self.page_combos = TablePage(
@@ -230,8 +254,9 @@ class TablesDialog(QDialog):
             if t in nodes:
                 errors.append(f"Nodes: duplicate tag {t}")
             old = base.nodes.get(t)
-            nodes[t] = Node(t, num(row[1], f"Node {t} X"), num(row[2], f"Node {t} Y"),
-                            num(row[3], f"Node {t} Z"),
+            nodes[t] = Node(t, UNITS.length_base(num(row[1], f"Node {t} X")),
+                            UNITS.length_base(num(row[2], f"Node {t} Y")),
+                            UNITS.length_base(num(row[3], f"Node {t} Z")),
                             list(old.support) if old else [False] * 6,
                             list(old.spring) if old else [0.0] * 6)
         if not nodes:
@@ -257,10 +282,10 @@ class TablesDialog(QDialog):
             m = materials.setdefault(t, Material(t))
             m.name = row[1] or f"Material {t}"
             m.kind = row[2] if row[2] in ("Elastic", "ElasticPP", "Steel02", "Concrete02") else "Elastic"
-            m.E = num(row[3], f"Material {t} E")
+            m.E = UNITS.stress_base(num(row[3], f"Material {t} E"))
             m.nu = num(row[4], f"Material {t} Nu", 0.3)
-            m.rho = num(row[5], f"Material {t} density")
-            m.fy = num(row[6], f"Material {t} fy")
+            m.rho = UNITS.density_base(num(row[5], f"Material {t} density"))
+            m.fy = UNITS.stress_base(num(row[6], f"Material {t} fy"))
             m.b = num(row[7], f"Material {t} b", 0.01)
         if not materials:
             materials[1] = Material(1, "Steel", "Elastic", 200.0, 0.3, 7.85e-9)
@@ -274,17 +299,17 @@ class TablesDialog(QDialog):
             s = sections.setdefault(t, Section(t))
             s.name = row[1] or f"Section {t}"
             s.shape = row[2] if row[2] in ("Rectangle", "Circle", "Pipe", "Box", "I-Shape", "User") else "Rectangle"
-            s.b = num(row[3], f"Section {t} b", 300)
-            s.h = num(row[4], f"Section {t} h", 600)
-            s.d = num(row[5], f"Section {t} d", 400)
-            s.t = num(row[6], f"Section {t} t", 12)
-            s.tw = num(row[7], f"Section {t} tw", 10)
-            s.tf = num(row[8], f"Section {t} tf", 15)
+            s.b = UNITS.length_base(num(row[3], f"Section {t} b", 300))
+            s.h = UNITS.length_base(num(row[4], f"Section {t} h", 600))
+            s.d = UNITS.length_base(num(row[5], f"Section {t} d", 400))
+            s.t = UNITS.length_base(num(row[6], f"Section {t} t", 12))
+            s.tw = UNITS.length_base(num(row[7], f"Section {t} tw", 10))
+            s.tf = UNITS.length_base(num(row[8], f"Section {t} tf", 15))
             if s.shape == "User":
-                s.A = num(row[9], f"Section {t} A", 1)
-                s.Iy = num(row[10], f"Section {t} Iy", 1)
-                s.Iz = num(row[11], f"Section {t} Iz", 1)
-                s.J = num(row[12], f"Section {t} J", 1)
+                s.A = UNITS.area_base(num(row[9], f"Section {t} A", 1))
+                s.Iy = UNITS.inertia_base(num(row[10], f"Section {t} Iy", 1))
+                s.Iz = UNITS.inertia_base(num(row[11], f"Section {t} Iz", 1))
+                s.J = UNITS.inertia_base(num(row[12], f"Section {t} J", 1))
             else:
                 s.compute()
         if not sections:
@@ -321,7 +346,7 @@ class TablesDialog(QDialog):
             old = base.elements.get(t)
             elements[t] = Element(t, kind, ns, mt, st,
                                   list(old.vecxz) if (old and old.vecxz) else None,
-                                  num(row[8], f"Element {t} thickness", 100.0),
+                                  UNITS.length_base(num(row[8], f"Element {t} thickness", 100.0)),
                                   old.group if old else "")
 
         # ---- cases -----------------------------------------------------
@@ -346,6 +371,8 @@ class TablesDialog(QDialog):
             if row[2] not in cases:
                 errors.append(f"Nodal load {t}: unknown load case '{row[2]}'")
             vals = [num(v, f"Nodal load {t} value") for v in row[3:9]]
+            vals = ([UNITS.force_base(v) for v in vals[:3]] +
+                    [UNITS.moment_base(v) for v in vals[3:]])
             nodal.append(NodalLoad(t, nt, row[2], vals))
 
         # ---- element loads --------------------------------------------
@@ -359,9 +386,14 @@ class TablesDialog(QDialog):
                 errors.append(f"Element load {t}: unknown load case '{row[2]}'")
             typ = row[3].strip().lower()
             kind = "point" if typ.startswith("point") else "uniform"
+            v1 = num(row[5], f"Element load {t} value")
+            v2 = num(row[6], f"Element load {t} w2", 0.0)
+            if kind == "point":
+                v1, v2 = UNITS.force_base(v1), UNITS.force_base(v2)
+            else:
+                v1, v2 = UNITS.dist_base(v1), UNITS.dist_base(v2)
             l = ElementLoad(t, et, row[2], kind, row[4] or "local-z",
-                            num(row[5], f"Element load {t} value"),
-                            num(row[6], f"Element load {t} w2", 0.0),
+                            v1, v2,
                             num(row[7], f"Element load {t} x/L", 0.5),
                             typ.startswith("trap"))
             eleloads.append(l)

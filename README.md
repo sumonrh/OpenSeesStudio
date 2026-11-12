@@ -9,9 +9,19 @@ load combinations, static and modal analysis, and result review.
 
 ## Units
 
-The whole application uses **kN, mm, tonne, s**.
+The model is stored and solved in **kN, mm, tonne, s**. The status bar at the bottom right
+has two selectors that change the units used for input, tables and results without changing
+the stored model:
 
-| Quantity | Unit |
+- **Force:** kN, N, kip, lbs
+- **Length:** m, mm, in, ft
+
+Moments, stresses, densities, section properties and distributed loads follow from the chosen
+pair (for example moment in kN·m, stress in N/m², distributed load in kN/m). Project files,
+Tcl export and the MCP server always use the base units below, so switching the display units
+never changes the analysis.
+
+| Quantity | Base unit |
 |---|---|
 | Length | mm |
 | Force | kN |
@@ -231,6 +241,7 @@ app/
   mainwindow.py   menus, toolbars, docks, workflows
   viewport.py     3D viewport: camera, picking, loads, deformed shapes
   model.py        data model and JSON persistence
+  units.py        display-unit conversion and unit labels
   opsgen.py       OpenSees model builder, analyses, Tcl export, validation
   dialogs.py      node / element / copy / load / combination dialogs
   tables.py       spreadsheet model tables

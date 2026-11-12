@@ -16,6 +16,7 @@ from app import dialogs, mainwindow, results as results_mod  # noqa: E402
 from app.mainwindow import MainWindow  # noqa: E402
 from app.model import Project  # noqa: E402
 from app.tables import TablesDialog  # noqa: E402
+from app.units import UNITS  # noqa: E402
 
 FAILS = []
 
@@ -270,6 +271,97 @@ check("save/load node count", len(loaded.nodes) == len(win.project.nodes))
 check("save/load element count", len(loaded.elements) == len(win.project.elements))
 check("save/load combos", list(loaded.combos) == list(win.project.combos))
 check("save/load self weight", loaded.self_weight == win.project.self_weight)
+
+print("== unit selector ==")
+check("default force unit", win.units_force.currentText() == "kN",
+      f"({win.units_force.currentText()})")
+check("default length unit", win.units_length.currentText() == "mm",
+      f"({win.units_length.currentText()})")
+
+n0 = win.project.nodes[9]
+x0 = n0.x
+win.units_force.setCurrentText("N")
+win.units_length.setCurrentText("m")
+check("unit globals applied", UNITS.force_unit == "N" and UNITS.length_unit == "m")
+check("model stays in base units", abs(win.project.nodes[9].x - x0) < 1e-9,
+      f"({win.project.nodes[9].x})")
+win.viewport.select_nodes([9])
+check("node props converted", abs(win.nd_x.value() - x0 / 1000.0) < 1e-6,
+      f"({win.nd_x.value():.3f} m)")
+
+dlg_u = TablesDialog(win.project)
+row5 = next(r for r in range(dlg_u.page_nodes.table.rowCount())
+            if dlg_u.page_nodes.table.item(r, 0).text() == "9")
+shown_x = float(dlg_u.page_nodes.table.item(row5, 1).text())
+check("tables converted", abs(shown_x - x0 / 1000.0) < 1e-6, f"({shown_x} m)")
+collected = dlg_u._collect()
+check("tables convert back", abs(collected.nodes[9].x - x0) < 1e-3,
+      f"({collected.nodes[9].x:.3f} mm)")
+
+nl = win.project.nodal_loads[0]
+rowl = next(r for r in range(dlg_u.page_nodal.table.rowCount())
+            if dlg_u.page_nodal.table.item(r, 0).text() == str(nl.tag))
+shown_f = float(dlg_u.page_nodal.table.item(rowl, 3).text())
+check("load table converted", abs(shown_f - UNITS.force(nl.values[0])) < 1e-6,
+      f"({shown_f} N)")
+got_nl = next(l for l in collected.nodal_loads if l.tag == nl.tag)
+check("load table converts back", abs(got_nl.values[0] - nl.values[0]) < 1e-3)
+
+sec = next(iter(win.project.sections.values()))
+rows = next(r for r in range(dlg_u.page_sections.table.rowCount())
+            if dlg_u.page_sections.table.item(r, 0).text() == str(sec.tag))
+shown_b = float(dlg_u.page_sections.table.item(rows, 3).text())
+check("section table converted", abs(shown_b - sec.b / 1000.0) < 1e-6,
+      f"({shown_b} m)")
+got_sec = next(s for s in collected.sections.values() if s.tag == sec.tag)
+check("section table converts back", abs(got_sec.b - sec.b) < 1e-3)
+
+win.nd_x.setValue(win.nd_x.value() + 1.0)
+win._apply_node_props()
+check("node props write converted", abs(win.project.nodes[9].x - (x0 + 1000.0)) < 1e-3,
+      f"({win.project.nodes[9].x:.3f} mm)")
+win.undo()
+check("node props edit undone", abs(win.project.nodes[9].x - x0) < 1e-9)
+
+nd = dialogs.NodeDialog(win.project)
+nd.x.setValue(2.0)
+check("node dialog converts", abs(nd.positions()[0][0] - 2000.0) < 1e-9)
+
+ed = dialogs.ElementDialog(win.project, [])
+ed.thickness.setValue(0.05)
+check("element dialog converts", abs(ed.spec()["thickness"] - 50.0) < 1e-9)
+
+md = dialogs.MaterialDialog(win.project)
+mtag = next(iter(md.materials))
+md.E.setValue(2.1e11)
+check("material dialog converts", abs(md.materials[mtag].E - 210.0) < 1e-6,
+      f"({md.materials[mtag].E:.3f} kN/mm²)")
+
+sd = dialogs.SectionDialog(win.project)
+sd.b.setValue(0.5)
+check("section dialog converts", abs(sd.current.b - 500.0) < 1e-6,
+      f"({sd.current.b:.3f} mm)")
+
+UNITS.set("kip", "ft")
+dlg_ft = TablesDialog(win.project)
+p_ft = dlg_ft._collect()
+ft_err = max(abs(p_ft.nodes[t].x - win.project.nodes[t].x)
+             for t in win.project.nodes)
+check("ft table round trip", ft_err < 0.01, f"(max {ft_err:.5f} mm)")
+sec_ft = next(s for s in p_ft.sections.values() if s.tag == sec.tag)
+check("ft section round trip", abs(sec_ft.b - sec.b) < 0.01,
+      f"({sec_ft.b:.4f} mm)")
+
+UNITS.set("kip", "ft")
+check("kip conversion", abs(UNITS.force(1.0) - 0.2248089431) < 1e-9,
+      f"({UNITS.force(1.0):.6f} kip)")
+check("ft conversion", abs(UNITS.length(304.8) - 1.0) < 1e-12)
+m0 = 1000.0
+check("moment round trip", abs(UNITS.moment_base(UNITS.moment(m0)) - m0) < 1e-9)
+
+win.units_force.setCurrentText("kN")
+win.units_length.setCurrentText("mm")
+check("units restored", UNITS.force_unit == "kN" and UNITS.length_unit == "mm")
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

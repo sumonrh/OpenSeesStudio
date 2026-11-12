@@ -19,6 +19,7 @@ from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
 from .results import ResultsDialog
 from .tables import TablesDialog
+from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
 from .viewport import Viewport
 
 APP_NAME = "OpenSees Studio"
@@ -75,6 +76,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.project = default_project()
+        UNITS.set(self.project.settings.get("force_unit", "kN"),
+                  self.project.settings.get("length_unit", "mm"))
         self.history = History(self.project)
         self.static_results: Optional[opsgen.StaticResults] = None
         self.modal_results: Optional[opsgen.ModalResults] = None
@@ -99,7 +102,7 @@ class MainWindow(QMainWindow):
         self.viewport.set_project(self.project, fit=False)
         self.refresh_all()
         self.viewport.fit()
-        self._log("OpenSees Studio ready. Units: kN, mm, tonne, s.")
+        self._log(f"OpenSees Studio ready. Display units: {UNITS.label()}.")
         self._log("Start with Structure > New Nodes (N), then New Elements (E).")
         self._shown = False
 
@@ -432,9 +435,12 @@ class MainWindow(QMainWindow):
         self.nd_title.setStyleSheet(f"font-weight:600; color:{theme.ACCENT_DARK}; font-size:13px;")
         lay1.addWidget(self.nd_title)
         form = QFormLayout()
-        self.nd_x = dialogs.spin(0, -1e9, 1e9, 3, 100.0, "mm")
-        self.nd_y = dialogs.spin(0, -1e9, 1e9, 3, 100.0, "mm")
-        self.nd_z = dialogs.spin(0, -1e9, 1e9, 3, 100.0, "mm")
+        self.nd_x = dialogs.spin(0, -1e9, 1e9, UNITS.length_decimals,
+                                 UNITS.length(100.0), UNITS.length_unit)
+        self.nd_y = dialogs.spin(0, -1e9, 1e9, UNITS.length_decimals,
+                                 UNITS.length(100.0), UNITS.length_unit)
+        self.nd_z = dialogs.spin(0, -1e9, 1e9, UNITS.length_decimals,
+                                 UNITS.length(100.0), UNITS.length_unit)
         form.addRow("X", self.nd_x); form.addRow("Y", self.nd_y); form.addRow("Z", self.nd_z)
         lay1.addLayout(form)
         lay1.addWidget(QLabel("Support"))
@@ -488,13 +494,69 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Ready")
         sb.addWidget(self.status_label, 1)
         self.model_label = QLabel("")
-        self.units_label = QLabel("kN · mm · t · s")
-        self.units_label.setStyleSheet(f"color:{theme.MUTED}; padding: 0 10px;")
         sb.addPermanentWidget(self.model_label)
-        sb.addPermanentWidget(self.units_label)
+
+        def unit_label(text: str) -> QLabel:
+            lab = QLabel(text)
+            lab.setStyleSheet(f"color:{theme.MUTED}; padding-left:10px;")
+            return lab
+
+        self.units_force = QComboBox()
+        self.units_force.addItems(FORCE_UNITS)
+        self.units_force.setCurrentText(UNITS.force_unit)
+        self.units_force.setFixedWidth(74)
+        self.units_force.setFocusPolicy(Qt.NoFocus)
+        self.units_force.setToolTip("Force units used for input and results "
+                                    "(model data stays in kN)")
+        self.units_length = QComboBox()
+        self.units_length.addItems(LENGTH_UNITS)
+        self.units_length.setCurrentText(UNITS.length_unit)
+        self.units_length.setFixedWidth(74)
+        self.units_length.setFocusPolicy(Qt.NoFocus)
+        self.units_length.setToolTip("Length units used for input and results "
+                                     "(model data stays in mm)")
+
+        sb.addPermanentWidget(unit_label("Force"))
+        sb.addPermanentWidget(self.units_force)
+        sb.addPermanentWidget(unit_label("Length"))
+        sb.addPermanentWidget(self.units_length)
+
+        self.units_force.currentTextChanged.connect(self._units_changed)
+        self.units_length.currentTextChanged.connect(self._units_changed)
+
+    def _sync_units(self) -> None:
+        """Adopt the display units stored in the current project."""
+        UNITS.set(str(self.project.settings.get("force_unit", "kN")),
+                  str(self.project.settings.get("length_unit", "mm")))
+        self.project.settings["force_unit"] = UNITS.force_name
+        self.project.settings["length_unit"] = UNITS.length_name
+        for combo, value in ((self.units_force, UNITS.force_name),
+                             (self.units_length, UNITS.length_name)):
+            combo.blockSignals(True)
+            combo.setCurrentText(value)
+            combo.blockSignals(False)
+        self._apply_unit_labels()
+
+    def _apply_unit_labels(self) -> None:
+        for w in (self.nd_x, self.nd_y, self.nd_z):
+            w.setSuffix(" " + UNITS.length_unit)
+            w.setDecimals(UNITS.length_decimals)
+            w.setSingleStep(UNITS.length(100.0))
+
+    def _units_changed(self, *_args) -> None:
+        self.project.settings["force_unit"] = self.units_force.currentText()
+        self.project.settings["length_unit"] = self.units_length.currentText()
+        UNITS.set(self.project.settings["force_unit"],
+                  self.project.settings["length_unit"])
+        self._apply_unit_labels()
+        self._refresh_tree()
+        self._on_selection()
+        self.viewport.update()
+        self._status(f"Display units: {UNITS.label()}")
 
     # ================================================================= refresh
     def refresh_all(self) -> None:
+        self._sync_units()
         self._refresh_tree()
         self._refresh_scenarios()
         self._refresh_props()
@@ -529,7 +591,9 @@ class MainWindow(QMainWindow):
         g_nodes = group("Nodes", "nodes", len(p.nodes))
         for t in list(p.nodes)[:800]:
             n = p.nodes[t]
-            child = QTreeWidgetItem([f"{t}   ({fmt(n.x, 1)}, {fmt(n.y, 1)}, {fmt(n.z, 1)})"])
+            child = QTreeWidgetItem([f"{t}   ({fmt(UNITS.length(n.x), 1)}, "
+                                     f"{fmt(UNITS.length(n.y), 1)}, "
+                                     f"{fmt(UNITS.length(n.z), 1)})"])
             child.setData(0, Qt.UserRole, ("node", t))
             g_nodes.addChild(child)
         g_el = group("Elements", "elements", len(p.elements))
@@ -568,7 +632,9 @@ class MainWindow(QMainWindow):
             if key == "nodes":
                 for t in list(self.project.nodes)[:limit]:
                     n = self.project.nodes[t]
-                    child = QTreeWidgetItem([f"{t}   ({fmt(n.x, 1)}, {fmt(n.y, 1)}, {fmt(n.z, 1)})"])
+                    child = QTreeWidgetItem([f"{t}   ({fmt(UNITS.length(n.x), 1)}, "
+                                             f"{fmt(UNITS.length(n.y), 1)}, "
+                                             f"{fmt(UNITS.length(n.z), 1)})"])
                     child.setData(0, Qt.UserRole, ("node", t))
                     item.addChild(child)
             else:
@@ -652,7 +718,9 @@ class MainWindow(QMainWindow):
                 return
             self.props.setCurrentIndex(1)
             self.nd_title.setText(f"Node {tag}")
-            for w, v in ((self.nd_x, n.x), (self.nd_y, n.y), (self.nd_z, n.z)):
+            for w, v in ((self.nd_x, UNITS.length(n.x)),
+                         (self.nd_y, UNITS.length(n.y)),
+                         (self.nd_z, UNITS.length(n.z))):
                 w.blockSignals(True); w.setValue(v); w.blockSignals(False)
             for cb, b in zip(self.nd_boxes, n.support):
                 cb.blockSignals(True); cb.setChecked(bool(b)); cb.blockSignals(False)
@@ -665,9 +733,11 @@ class MainWindow(QMainWindow):
             self.el_title.setText(f"Element {tag}   ({e.kind})")
             sec = self.project.section_of(e)
             self.el_info.setText(
-                f"Nodes {e.nodes}<br>Length {fmt(self.project.element_length(e), 1)} mm<br>"
-                f"Section A = {fmt(sec.A, 1)} mm², Iy = {fmt(sec.Iy, 1)}, "
-                f"Iz = {fmt(sec.Iz, 1)} mm⁴")
+                f"Nodes {e.nodes}<br>Length {fmt(UNITS.length(self.project.element_length(e)), 1)} "
+                f"{UNITS.length_unit}<br>"
+                f"Section A = {fmt(UNITS.area(sec.A), 1)} {UNITS.area_unit}, "
+                f"Iy = {fmt(UNITS.inertia(sec.Iy), 1)}, "
+                f"Iz = {fmt(UNITS.inertia(sec.Iz), 1)} {UNITS.inertia_unit}")
             self.el_mat.clear(); self.el_sec.clear()
             for m in self.project.materials.values():
                 self.el_mat.addItem(f"{m.tag}  {m.name}", m.tag)
@@ -695,10 +765,13 @@ class MainWindow(QMainWindow):
 
     def _adopt(self, other: Project) -> None:
         p = self.project
+        keep_units = (p.settings.get("force_unit", "kN"),
+                      p.settings.get("length_unit", "mm"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
                      "settings", "title"):
             setattr(p, attr, getattr(other, attr))
+        p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
     def _commit(self, label: str) -> None:
         self.history.push(self.project, label)
@@ -1247,8 +1320,10 @@ class MainWindow(QMainWindow):
         self.viewport.load_scenario = scenario
         self.viewport.set_static_results(res)
         self._apply_scale()
-        self._log(f"Static analysis '{scenario}' complete. Max |u| = {fmt(res.max_disp, 4)} mm")
-        self._status(f"Static analysis complete - max displacement {fmt(res.max_disp, 4)} mm")
+        self._log(f"Static analysis '{scenario}' complete. Max |u| = "
+                  f"{fmt(UNITS.length(res.max_disp), 4)} {UNITS.length_unit}")
+        self._status(f"Static analysis complete - max displacement "
+                     f"{fmt(UNITS.length(res.max_disp), 4)} {UNITS.length_unit}")
         self.a_animate.setChecked(False)
         self._show_results_dialog()
 
@@ -1345,7 +1420,9 @@ class MainWindow(QMainWindow):
         n = self.project.nodes.get(tag)
         if not n:
             return
-        n.x, n.y, n.z = self.nd_x.value(), self.nd_y.value(), self.nd_z.value()
+        n.x, n.y, n.z = (UNITS.length_base(self.nd_x.value()),
+                         UNITS.length_base(self.nd_y.value()),
+                         UNITS.length_base(self.nd_z.value()))
         n.support = [cb.isChecked() for cb in self.nd_boxes]
         self._commit(f"Updated node {tag}")
 
@@ -1395,7 +1472,8 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, f"About {APP_NAME}", (
             f"<h3>{APP_NAME}</h3>"
             "<p>Graphical model generation for OpenSees.</p>"
-            "<p>Units: kN, mm, tonne, s.<br>"
+            "<p>Display units: " + UNITS.label() + ".<br>"
+            "Model data is stored in kN, mm, tonne, s.<br>"
             "Engine: OpenSeesPy 3.8.0<br>"
             "Interface: PySide6 / Qt 6</p>"
             "<p>Features: nodes, beam/truss/shell elements, copy-move-mirror, "

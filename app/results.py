@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog,
 from . import theme
 from .model import Project, fmt
 from .opsgen import ModalResults, StaticResults
+from .units import UNITS
 
 
 def _num(v: float) -> str:
@@ -119,10 +120,14 @@ class ResultsDialog(QDialog):
             ["Scenario", r.scenario],
             ["Nodes", len(self.project.nodes)],
             ["Elements", len(self.project.elements)],
-            ["Max |displacement|", f"{_num(r.max_disp)} mm  (node {peak_node})"],
+            ["Max |displacement|", f"{_num(UNITS.length(r.max_disp))} {UNITS.length_unit}  "
+                                    f"(node {peak_node})"],
         ]
         for i, name in enumerate(("UX", "UY", "UZ", "RX", "RY", "RZ")):
-            rows.append([f"Node {peak_node} {name}", _num(r.displacements.get(peak_node, [0] * 6)[i])])
+            value = r.displacements.get(peak_node, [0] * 6)[i]
+            if i < 3:
+                value = UNITS.length(value)
+            rows.append([f"Node {peak_node} {name}", _num(value)])
         summary = _table(["Item", "Value"], rows)
         self.tabs.addTab(_wrap("Analysis summary", summary), "Summary")
 
@@ -130,8 +135,9 @@ class ResultsDialog(QDialog):
         for tag in sorted(r.displacements):
             d = r.displacements[tag]
             mag = math.sqrt(sum(v * v for v in d[:3]))
-            drows.append([tag, *[_num(v) for v in d], _num(mag)])
-        self.tabs.addTab(_wrap("Nodal displacements (mm, rad)",
+            drows.append([tag] + [_num(UNITS.length(v)) for v in d[:3]] +
+                         [_num(v) for v in d[3:]] + [_num(UNITS.length(mag))])
+        self.tabs.addTab(_wrap(f"Nodal displacements ({UNITS.length_unit}, rad)",
                                _table(["Node", "UX", "UY", "UZ", "RX", "RY", "RZ", "|U|"], drows)),
                          "Displacements")
 
@@ -141,8 +147,10 @@ class ResultsDialog(QDialog):
             if not any(abs(v) > 1e-9 for v in d):
                 continue
             mag = math.sqrt(sum(v * v for v in d[:3]))
-            rrows.append([tag, *[_num(v) for v in d], _num(mag)])
-        self.tabs.addTab(_wrap("Support reactions (kN, kN·mm)",
+            rrows.append([tag] + [_num(UNITS.force(v)) for v in d[:3]] +
+                         [_num(UNITS.moment(v)) for v in d[3:]] +
+                         [_num(UNITS.force(mag))])
+        self.tabs.addTab(_wrap(f"Support reactions ({UNITS.force_unit}, {UNITS.moment_unit})",
                                _table(["Node", "FX", "FY", "FZ", "MX", "MY", "MZ", "|F|"], rrows)),
                          "Reactions")
 
@@ -152,13 +160,17 @@ class ResultsDialog(QDialog):
             kind = r.element_kind.get(tag, "")
             if kind == "truss":
                 if f:
-                    frows.append([tag, "Truss", "axial", _num(f[0]), "", "", "", "", ""])
+                    frows.append([tag, "Truss", "axial", _num(UNITS.force(f[0])),
+                                  "", "", "", "", ""])
             elif len(f) >= 12:
-                frows.append([tag, "Beam", "i", _num(f[0]), _num(f[1]), _num(f[2]),
-                              _num(f[3]), _num(f[4]), _num(f[5])])
-                frows.append(["", "", "j", _num(f[6]), _num(f[7]), _num(f[8]),
-                              _num(f[9]), _num(f[10]), _num(f[11])])
-        self.tabs.addTab(_wrap("Element forces (kN, kN·mm) - i and j ends",
+                frows.append([tag, "Beam", "i",
+                              *[_num(UNITS.force(v)) for v in f[0:3]],
+                              *[_num(UNITS.moment(v)) for v in f[3:6]]])
+                frows.append(["", "", "j",
+                              *[_num(UNITS.force(v)) for v in f[6:9]],
+                              *[_num(UNITS.moment(v)) for v in f[9:12]]])
+        self.tabs.addTab(_wrap(f"Element forces ({UNITS.force_unit}, {UNITS.moment_unit}) - "
+                               "i and j ends",
                                _table(["Elem", "Type", "End", "N", "Vy", "Vz", "T", "My", "Mz"], frows)),
                          "Element Forces")
 
@@ -207,19 +219,38 @@ class ResultsDialog(QDialog):
             w = csv.writer(fh)
             if self.static:
                 w.writerow(["# Static results", self.static.scenario])
-                w.writerow(["Node", "UX", "UY", "UZ", "RX", "RY", "RZ"])
+                w.writerow(["Node", f"UX ({UNITS.length_unit})", f"UY ({UNITS.length_unit})",
+                            f"UZ ({UNITS.length_unit})", "RX (rad)", "RY (rad)", "RZ (rad)"])
                 for tag in sorted(self.static.displacements):
-                    w.writerow([tag] + self.static.displacements[tag])
+                    d = self.static.displacements[tag]
+                    w.writerow([tag] + [UNITS.length(v) for v in d[:3]] + list(d[3:]))
                 w.writerow([])
-                w.writerow(["Node", "FX", "FY", "FZ", "MX", "MY", "MZ"])
+                w.writerow(["Node", f"FX ({UNITS.force_unit})", f"FY ({UNITS.force_unit})",
+                            f"FZ ({UNITS.force_unit})", f"MX ({UNITS.moment_unit})",
+                            f"MY ({UNITS.moment_unit})", f"MZ ({UNITS.moment_unit})"])
                 for tag in sorted(self.static.reactions):
-                    w.writerow([tag] + self.static.reactions[tag])
+                    d = self.static.reactions[tag]
+                    w.writerow([tag] + [UNITS.force(v) for v in d[:3]] +
+                               [UNITS.moment(v) for v in d[3:]])
                 w.writerow([])
-                w.writerow(["Element", "Type", "N1", "Vy1", "Vz1", "T1", "My1", "Mz1",
-                            "N2", "Vy2", "Vz2", "T2", "My2", "Mz2"])
+                w.writerow(["Element", "Type",
+                            f"N1 ({UNITS.force_unit})", f"Vy1 ({UNITS.force_unit})",
+                            f"Vz1 ({UNITS.force_unit})", f"T1 ({UNITS.moment_unit})",
+                            f"My1 ({UNITS.moment_unit})", f"Mz1 ({UNITS.moment_unit})",
+                            f"N2 ({UNITS.force_unit})", f"Vy2 ({UNITS.force_unit})",
+                            f"Vz2 ({UNITS.force_unit})", f"T2 ({UNITS.moment_unit})",
+                            f"My2 ({UNITS.moment_unit})", f"Mz2 ({UNITS.moment_unit})"])
                 for tag in sorted(self.static.element_forces):
-                    w.writerow([tag, self.static.element_kind.get(tag, "")] +
-                               self.static.element_forces[tag])
+                    f = self.static.element_forces[tag]
+                    kind = self.static.element_kind.get(tag, "")
+                    if kind == "truss":
+                        w.writerow([tag, kind, UNITS.force(f[0]) if f else ""] + [""] * 11)
+                        continue
+                    vals = ([UNITS.force(v) for v in f[0:3]] +
+                            [UNITS.moment(v) for v in f[3:6]] +
+                            [UNITS.force(v) for v in f[6:9]] +
+                            [UNITS.moment(v) for v in f[9:12]])
+                    w.writerow([tag, kind] + vals)
             if self.modal:
                 w.writerow(["# Modal results"])
                 w.writerow(["Mode", "Eigenvalue", "Period", "Frequency"])

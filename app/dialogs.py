@@ -21,6 +21,7 @@ from .model import (COMBINATION_KINDS, ELEMENT_KINDS, LOADCASE_KINDS,
                     LOAD_DIRECTIONS, MATERIAL_KINDS, SECTION_SHAPES, Element,
                     LoadCase, LoadCombination, Material, Project, Section,
                     fmt)
+from .units import UNITS
 
 
 # --------------------------------------------------------------------------- #
@@ -111,9 +112,12 @@ class NodeDialog(BaseDialog):
         self.body.addWidget(title_label("Coordinates"))
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
-        self.x = spin(0.0, step=100.0, suffix="mm")
-        self.y = spin(0.0, step=100.0, suffix="mm")
-        self.z = spin(0.0, step=100.0, suffix="mm")
+        self.x = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                        UNITS.length(100.0), UNITS.length_unit)
+        self.y = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                        UNITS.length(100.0), UNITS.length_unit)
+        self.z = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                        UNITS.length(100.0), UNITS.length_unit)
         form.addRow("X", self.x)
         form.addRow("Y", self.y)
         form.addRow("Z", self.z)
@@ -122,9 +126,12 @@ class NodeDialog(BaseDialog):
         self.body.addWidget(title_label("Repeat"))
         grid = QGridLayout()
         self.count = int_spin(1, 1, 500)
-        self.dx = spin(0.0, step=100.0, suffix="mm")
-        self.dy = spin(0.0, step=100.0, suffix="mm")
-        self.dz = spin(0.0, step=100.0, suffix="mm")
+        self.dx = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                         UNITS.length(100.0), UNITS.length_unit)
+        self.dy = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                         UNITS.length(100.0), UNITS.length_unit)
+        self.dz = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                         UNITS.length(100.0), UNITS.length_unit)
         grid.addWidget(QLabel("Number of nodes"), 0, 0)
         grid.addWidget(self.count, 0, 1)
         grid.addWidget(QLabel("ΔX  ΔY  ΔZ  spacing"), 1, 0, 1, 2)
@@ -138,9 +145,9 @@ class NodeDialog(BaseDialog):
 
     def positions(self) -> List[Tuple[float, float, float]]:
         n = self.count.value()
-        return [(self.x.value() + i * self.dx.value(),
-                 self.y.value() + i * self.dy.value(),
-                 self.z.value() + i * self.dz.value()) for i in range(n)]
+        return [(UNITS.length_base(self.x.value() + i * self.dx.value()),
+                 UNITS.length_base(self.y.value() + i * self.dy.value()),
+                 UNITS.length_base(self.z.value() + i * self.dz.value())) for i in range(n)]
 
 
 class ElementDialog(BaseDialog):
@@ -187,7 +194,8 @@ class ElementDialog(BaseDialog):
 
         self.shell_box = QGroupBox("Shell thickness")
         sb = QHBoxLayout(self.shell_box)
-        self.thickness = spin(100.0, 0.001, 1e7, 2, 10.0, "mm")
+        self.thickness = spin(UNITS.length(100.0), UNITS.length(0.001), UNITS.length(1e7),
+                              UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
         sb.addWidget(self.thickness)
         self.body.addWidget(self.shell_box)
         self.shell_box.setVisible(False)
@@ -208,7 +216,7 @@ class ElementDialog(BaseDialog):
         vec = None if self.auto.isChecked() else [self.vx.value(), self.vy.value(), self.vz.value()]
         return {"kind": self.kind.currentData(), "nodes": tags,
                 "mat": self.mat.currentData(), "sec": self.sec.currentData(),
-                "vecxz": vec, "thickness": self.thickness.value()}
+                "vecxz": vec, "thickness": UNITS.length_base(self.thickness.value())}
 
 
 class SupportDialog(BaseDialog):
@@ -268,9 +276,12 @@ class CopyMoveDialog(BaseDialog):
         self.body.addLayout(row0)
         self.body.addWidget(title_label("Translation"))
         grid = QGridLayout()
-        self.dx = spin(1000.0, step=100.0, suffix="mm")
-        self.dy = spin(0.0, step=100.0, suffix="mm")
-        self.dz = spin(0.0, step=100.0, suffix="mm")
+        self.dx = spin(UNITS.length(1000.0), -1e12, 1e12, UNITS.length_decimals,
+                        UNITS.length(100.0), UNITS.length_unit)
+        self.dy = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                         UNITS.length(100.0), UNITS.length_unit)
+        self.dz = spin(0.0, -1e12, 1e12, UNITS.length_decimals,
+                         UNITS.length(100.0), UNITS.length_unit)
         grid.addWidget(QLabel("ΔX"), 0, 0); grid.addWidget(self.dx, 0, 1)
         grid.addWidget(QLabel("ΔY"), 1, 0); grid.addWidget(self.dy, 1, 1)
         grid.addWidget(QLabel("ΔZ"), 2, 0); grid.addWidget(self.dz, 2, 1)
@@ -303,7 +314,9 @@ class CopyMoveDialog(BaseDialog):
         return self.copy_mode.isChecked()
 
     def delta(self):
-        return self.dx.value(), self.dy.value(), self.dz.value()
+        return (UNITS.length_base(self.dx.value()),
+                UNITS.length_base(self.dy.value()),
+                UNITS.length_base(self.dz.value()))
 
 
 class MirrorDialog(BaseDialog):
@@ -358,14 +371,19 @@ class MaterialDialog(BaseDialog):
         self.name = QLineEdit()
         self.kind = QComboBox()
         self.kind.addItems(MATERIAL_KINDS)
-        self.E = spin(200.0, 0, 1e9, 5, 10.0, "kN/mm²")
+        self.E = spin(UNITS.stress(200.0), 0, 1e18, 5, UNITS.stress(10.0),
+                      UNITS.stress_unit)
         self.nu = spin(0.3, 0.0, 0.499, 3, 0.01)
-        self.rho = spin(7.85e-9, 0, 1e-3, 12, 1e-9, "t/mm³")
-        self.fy = spin(0.235, 0, 1e6, 5, 0.01, "kN/mm²")
+        self.rho = spin(UNITS.density(7.85e-9), 0, UNITS.density(1e-3), 12,
+                        UNITS.density(1e-9), UNITS.density_unit)
+        self.fy = spin(UNITS.stress(0.235), 0, 1e18, 5, UNITS.stress(0.01),
+                       UNITS.stress_unit)
         self.b = spin(0.01, 0, 1, 4, 0.005)
-        self.fc = spin(0.030, -1e6, 1e6, 5, 0.005, "kN/mm²")
+        self.fc = spin(UNITS.stress(0.030), -1e18, 1e18, 5, UNITS.stress(0.005),
+                       UNITS.stress_unit)
         self.epsc0 = spin(-0.002, -1, 1, 5, 0.0005)
-        self.fpcu = spin(-0.006, -1e6, 1e6, 5, 0.001, "kN/mm²")
+        self.fpcu = spin(UNITS.stress(-0.006), -1e18, 1e18, 5, UNITS.stress(0.001),
+                         UNITS.stress_unit)
         self.epsU = spin(-0.02, -1, 1, 5, 0.002)
         form.addRow("Name", self.name)
         form.addRow("Type", self.kind)
@@ -380,8 +398,9 @@ class MaterialDialog(BaseDialog):
         form.addRow("εU", self.epsU)
         right.addLayout(form)
         right.addStretch(1)
-        right.addWidget(hint("Units: kN, mm, tonne. E = 200 kN/mm² equals 200 GPa. "
-                             "Density 7.85e-9 t/mm³ is steel. Self weight uses g = 9806.65 mm/s²."))
+        right.addWidget(hint(f"Display units: {UNITS.force_name}, {UNITS.length_name}, "
+                             f"tonne. Model values are stored in kN, mm, tonne. "
+                             f"Self weight uses g = 9806.65 mm/s²."))
         row.addLayout(right, 2)
         self.body.addLayout(row)
 
@@ -414,10 +433,15 @@ class MaterialDialog(BaseDialog):
                 w.blockSignals(True)
             self.name.setText(m.name)
             self.name.blockSignals(False)
+            self.kind.blockSignals(True)
             self.kind.setCurrentText(m.kind)
-            for w, v in ((self.E, m.E), (self.nu, m.nu), (self.rho, m.rho),
-                         (self.fy, m.fy), (self.b, m.b), (self.fc, m.fc),
-                         (self.epsc0, m.epsc0), (self.fpcu, m.fpcu), (self.epsU, m.epsU)):
+            self.kind.blockSignals(False)
+            for w, v in ((self.E, UNITS.stress(m.E)), (self.nu, m.nu),
+                         (self.rho, UNITS.density(m.rho)),
+                         (self.fy, UNITS.stress(m.fy)), (self.b, m.b),
+                         (self.fc, UNITS.stress(m.fc)),
+                         (self.epsc0, m.epsc0), (self.fpcu, UNITS.stress(m.fpcu)),
+                         (self.epsU, m.epsU)):
                 w.blockSignals(True); w.setValue(v); w.blockSignals(False)
             self._sync_fields()
 
@@ -434,14 +458,14 @@ class MaterialDialog(BaseDialog):
         m = self.current
         m.name = self.name.text() or "Material"
         m.kind = self.kind.currentText()
-        m.E = self.E.value()
+        m.E = UNITS.stress_base(self.E.value())
         m.nu = self.nu.value()
-        m.rho = self.rho.value()
-        m.fy = self.fy.value()
+        m.rho = UNITS.density_base(self.rho.value())
+        m.fy = UNITS.stress_base(self.fy.value())
         m.b = self.b.value()
-        m.fc = self.fc.value()
+        m.fc = UNITS.stress_base(self.fc.value())
         m.epsc0 = self.epsc0.value()
-        m.fpcu = self.fpcu.value()
+        m.fpcu = UNITS.stress_base(self.fpcu.value())
         m.epsU = self.epsU.value()
         row = self.list.currentRow()
         if row >= 0:
@@ -494,12 +518,18 @@ class SectionDialog(BaseDialog):
         self.name = QLineEdit()
         self.shape = QComboBox()
         self.shape.addItems(SECTION_SHAPES)
-        self.b = spin(300.0, 0.001, 1e7, 2, 10.0, "mm")
-        self.h = spin(600.0, 0.001, 1e7, 2, 10.0, "mm")
-        self.d = spin(400.0, 0.001, 1e7, 2, 10.0, "mm")
-        self.t = spin(12.0, 0.001, 1e6, 2, 1.0, "mm")
-        self.tw = spin(10.0, 0.001, 1e6, 2, 1.0, "mm")
-        self.tf = spin(15.0, 0.001, 1e6, 2, 1.0, "mm")
+        self.b = spin(UNITS.length(300.0), UNITS.length(0.001), UNITS.length(1e7),
+                      UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
+        self.h = spin(UNITS.length(600.0), UNITS.length(0.001), UNITS.length(1e7),
+                      UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
+        self.d = spin(UNITS.length(400.0), UNITS.length(0.001), UNITS.length(1e7),
+                      UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
+        self.t = spin(UNITS.length(12.0), UNITS.length(0.001), UNITS.length(1e6),
+                      UNITS.length_decimals, UNITS.length(1.0), UNITS.length_unit)
+        self.tw = spin(UNITS.length(10.0), UNITS.length(0.001), UNITS.length(1e6),
+                       UNITS.length_decimals, UNITS.length(1.0), UNITS.length_unit)
+        self.tf = spin(UNITS.length(15.0), UNITS.length(0.001), UNITS.length(1e6),
+                       UNITS.length_decimals, UNITS.length(1.0), UNITS.length_unit)
         form.addRow("Name", self.name)
         form.addRow("Shape", self.shape)
         form.addRow("Width b", self.b)
@@ -546,9 +576,12 @@ class SectionDialog(BaseDialog):
             self.name.blockSignals(True)
             self.name.setText(s.name)
             self.name.blockSignals(False)
+            self.shape.blockSignals(True)
             self.shape.setCurrentText(s.shape)
-            for w, v in ((self.b, s.b), (self.h, s.h), (self.d, s.d), (self.t, s.t),
-                         (self.tw, s.tw), (self.tf, s.tf)):
+            self.shape.blockSignals(False)
+            for w, v in ((self.b, UNITS.length(s.b)), (self.h, UNITS.length(s.h)),
+                         (self.d, UNITS.length(s.d)), (self.t, UNITS.length(s.t)),
+                         (self.tw, UNITS.length(s.tw)), (self.tf, UNITS.length(s.tf))):
                 w.blockSignals(True); w.setValue(v); w.blockSignals(False)
             self._sync()
 
@@ -569,14 +602,18 @@ class SectionDialog(BaseDialog):
         s = self.current
         s.name = self.name.text() or "Section"
         s.shape = self.shape.currentText()
-        s.b, s.h, s.d, s.t = self.b.value(), self.h.value(), self.d.value(), self.t.value()
-        s.tw, s.tf = self.tw.value(), self.tf.value()
+        s.b = UNITS.length_base(self.b.value())
+        s.h = UNITS.length_base(self.h.value())
+        s.d = UNITS.length_base(self.d.value())
+        s.t = UNITS.length_base(self.t.value())
+        s.tw = UNITS.length_base(self.tw.value())
+        s.tf = UNITS.length_base(self.tf.value())
         s.compute()
         self.props.setText(
-            f"A  = {fmt(s.A, 1)} mm²\n"
-            f"Iy = {fmt(s.Iy, 1)} mm⁴\n"
-            f"Iz = {fmt(s.Iz, 1)} mm⁴\n"
-            f"J  = {fmt(s.J, 1)} mm⁴")
+            f"A  = {fmt(UNITS.area(s.A), 1)} {UNITS.area_unit}\n"
+            f"Iy = {fmt(UNITS.inertia(s.Iy), 1)} {UNITS.inertia_unit}\n"
+            f"Iz = {fmt(UNITS.inertia(s.Iz), 1)} {UNITS.inertia_unit}\n"
+            f"J  = {fmt(UNITS.inertia(s.J), 1)} {UNITS.inertia_unit}")
         row = self.list.currentRow()
         if row >= 0:
             self.list.item(row).setText(f"{s.tag}   {s.name}")
@@ -799,9 +836,15 @@ class NodalLoadDialog(BaseDialog):
         grid = QGridLayout()
         self.spins: List[QDoubleSpinBox] = []
         labels = ("FX", "FY", "FZ", "MX", "MY", "MZ")
-        units = ("kN", "kN", "kN", "kN·mm", "kN·mm", "kN·mm")
+        units = (UNITS.force_unit, UNITS.force_unit, UNITS.force_unit,
+                 UNITS.moment_unit, UNITS.moment_unit, UNITS.moment_unit)
         for i, (lab, unit) in enumerate(zip(labels, units)):
-            w = spin(0.0, -1e12, 1e12, 3, 10.0, unit)
+            if i < 3:
+                w = spin(0.0, UNITS.force(-1e12), UNITS.force(1e12), 3,
+                         UNITS.force(10.0), unit)
+            else:
+                w = spin(0.0, UNITS.moment(-1e12), UNITS.moment(1e12), 3,
+                         UNITS.moment(10.0), unit)
             self.spins.append(w)
             grid.addWidget(QLabel(lab), i // 3, (i % 3) * 2)
             grid.addWidget(w, i // 3, (i % 3) * 2 + 1)
@@ -835,7 +878,8 @@ class NodalLoadDialog(BaseDialog):
         self.buttons("Apply")
 
     def values(self) -> List[float]:
-        return [w.value() for w in self.spins]
+        return ([UNITS.force_base(w.value()) for w in self.spins[:3]] +
+                [UNITS.moment_base(w.value()) for w in self.spins[3:]])
 
     def target(self) -> List[int]:
         if self.sel.isChecked():
@@ -858,14 +902,16 @@ class ElementLoadDialog(BaseDialog):
         self.kind = QComboBox()
         self.kind.addItems(["Uniform load", "Trapezoidal load", "Point load"])
         self.direction = QComboBox(); self.direction.addItems(LOAD_DIRECTIONS)
-        self.value = spin(10.0, -1e9, 1e9, 5, 1.0)
-        self.value2 = spin(0.0, -1e9, 1e9, 5, 1.0)
+        self.value = spin(UNITS.dist(10.0), UNITS.dist(-1e9), UNITS.dist(1e9), 5,
+                          UNITS.dist(1.0), UNITS.dist_unit)
+        self.value2 = spin(0.0, UNITS.dist(-1e9), UNITS.dist(1e9), 5,
+                           UNITS.dist(1.0), UNITS.dist_unit)
         self.position = spin(0.5, 0.0, 1.0, 3, 0.05)
         form.addRow("Load case", self.case)
         form.addRow("Type", self.kind)
         form.addRow("Direction", self.direction)
-        form.addRow("w1  [kN/mm]", self.value)
-        form.addRow("w2  [kN/mm]", self.value2)
+        form.addRow("w1 / P", self.value)
+        form.addRow("w2", self.value2)
         form.addRow("Point position x/L", self.position)
         self.body.addLayout(form)
 
@@ -892,22 +938,32 @@ class ElementLoadDialog(BaseDialog):
         self.elem.setEnabled(False)
         self.kind.currentIndexChanged.connect(self._sync)
         self._sync()
-        self.body.addWidget(hint("Uniform load units are force per length (kN/mm) along "
-                                 "the chosen local/global direction. A 10 kN/m load is 0.01 kN/mm."))
+        self.body.addWidget(hint(f"Uniform load units are {UNITS.dist_unit} along the chosen "
+                                 f"local/global direction. A 10 kN/m load is "
+                                 f"{fmt(UNITS.dist(0.01), 5)} {UNITS.dist_unit}."))
         self.buttons("Apply")
 
     def _sync(self) -> None:
         i = self.kind.currentIndex()
+        unit = UNITS.force_unit if i == 2 else UNITS.dist_unit
+        self.value.setSuffix(" " + unit)
+        self.value2.setSuffix(" " + unit)
         self.value2.setEnabled(i == 1)
         self.position.setEnabled(i == 2)
 
     def spec(self) -> dict:
         i = self.kind.currentIndex()
+        if i == 2:
+            value = UNITS.force_base(self.value.value())
+            value2 = UNITS.force_base(self.value2.value())
+        else:
+            value = UNITS.dist_base(self.value.value())
+            value2 = UNITS.dist_base(self.value2.value())
         return {"kind": {0: "uniform", 1: "uniform", 2: "point"}[i],
                 "trapezoid": i == 1,
                 "direction": self.direction.currentText(),
-                "value": self.value.value(),
-                "value2": self.value2.value(),
+                "value": value,
+                "value2": value2,
                 "position": self.position.value()}
 
     def target(self) -> List[int]:
