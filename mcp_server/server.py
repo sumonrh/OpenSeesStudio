@@ -403,8 +403,12 @@ def copy_nodes(tags: List[int], delta: List[float], count: int = 1,
 @server.tool()
 @_locked
 def mirror_nodes(tags: List[int], plane: str = "YZ", copy: bool = True,
-                 include_attached_elements: bool = True) -> dict:
-    """Mirror nodes about a global plane: 'YZ' (flips X), 'XZ' (flips Y), 'XY' (flips Z)."""
+                 include_attached_elements: bool = True,
+                 coordinate: float = 0.0) -> dict:
+    """Mirror nodes about a global plane: 'YZ' (flips X), 'XZ' (flips Y), 'XY' (flips Z).
+
+    coordinate is the plane position along its normal, in mm (0 = through the origin).
+    """
     _require_nodes(tags)
     key = plane.upper().replace(" ", "")
     if key not in PLANES:
@@ -416,7 +420,7 @@ def mirror_nodes(tags: List[int], plane: str = "YZ", copy: bool = True,
 
     def flip(n):
         c = [n.x, n.y, n.z]
-        c[axis] = -c[axis]
+        c[axis] = 2.0 * float(coordinate) - c[axis]
         return c
 
     if not copy:

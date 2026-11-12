@@ -77,6 +77,22 @@ class FakeCopy:
 
 
 class FakeMirror:
+    previewChanged = StubSig()
+
+    def __init__(self, *a, **k):
+        pass
+
+    def exec(self):
+        return 1
+
+    def refresh_preview(self):
+        pass
+
+    def spec(self):
+        return (0, 3000.0, True, True)
+
+
+class FakeSubdivide:
     def __init__(self, *a, **k):
         pass
 
@@ -84,7 +100,7 @@ class FakeMirror:
         return 1
 
     def spec(self):
-        return (0, True, True)
+        return 4
 
 
 class FakeSupport:
@@ -322,6 +338,7 @@ check("copy added attached elements", len(win.project.elements) == e0 + 9,
       f"({len(win.project.elements) - e0} added)")
 
 print("== mirror ==")
+win.viewport.select_nodes(base_nodes)
 n1 = len(win.project.nodes)
 old_mirror = dialogs.MirrorDialog
 dialogs.MirrorDialog = FakeMirror
@@ -329,6 +346,19 @@ win.mirror()
 dialogs.MirrorDialog = old_mirror
 check("mirror added nodes", len(win.project.nodes) == n1 + 8,
       f"({len(win.project.nodes) - n1} added)")
+mirrored = [win.project.nodes[t] for t in win.viewport.sel_nodes]
+check("mirror uses plane coordinate",
+      bool(mirrored) and all(abs(n.x - 6000.0) < 1e-6 for n in mirrored),
+      f"(x={mirrored[0].x if mirrored else 'none'})")
+md = dialogs.MirrorDialog(win)
+md.plane.setCurrentIndex(2)
+md.coordinate.setValue(6.0)
+axis, offset, _, _ = md.spec()
+check("mirror dialog coordinate converted", axis == 0 and abs(offset - 6000.0) < 1e-6)
+win.viewport.set_mirror_plane(0, 6000.0)
+check("mirror plane preview set", win.viewport.mirror_plane == (0, 6000.0))
+win.viewport.clear_mirror_plane()
+check("mirror plane preview cleared", win.viewport.mirror_plane is None)
 
 print("== undo / redo ==")
 win.undo()
@@ -556,6 +586,24 @@ check("deleted case loads removed",
 check("deleted case removed from combinations",
       all(all(case != "WIND" for case, _f in combo.factors)
           for combo in win.project.combos.values()))
+
+print("== element subdivision ==")
+target = next(t for t, e in win.project.elements.items()
+              if e.kind == "beam" and len(e.nodes) == 2)
+n_before, e_before = len(win.project.nodes), len(win.project.elements)
+win.viewport.select_elements([target])
+old_subdivide = dialogs.SubdivideDialog
+dialogs.SubdivideDialog = FakeSubdivide
+win.subdivide()
+dialogs.SubdivideDialog = old_subdivide
+check("subdivide replaced original", target not in win.project.elements)
+check("subdivide created four segments",
+      len(win.project.elements) == e_before - 1 + 4,
+      f"({len(win.project.elements) - e_before:+d} elements)")
+check("subdivide added intermediate nodes",
+      len(win.project.nodes) == n_before + 3,
+      f"({len(win.project.nodes) - n_before:+d} nodes)")
+check("subdivide selects new segments", len(win.viewport.sel_elements) == 4)
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

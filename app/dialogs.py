@@ -6,7 +6,7 @@ import copy
 import math
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFormLayout,
@@ -219,6 +219,43 @@ class ElementDialog(BaseDialog):
                 "vecxz": vec, "thickness": UNITS.length_base(self.thickness.value())}
 
 
+class SubdivideDialog(BaseDialog):
+    def __init__(self, eligible: int, selected: int, parent=None) -> None:
+        super().__init__("Subdivide Elements", parent, 440)
+        self.eligible = eligible
+        self.body.addWidget(title_label("Division"))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Number of divisions per element"))
+        self.divisions = int_spin(2, 2, 200)
+        self.divisions.setMinimumWidth(90)
+        row.addWidget(self.divisions)
+        row.addStretch(1)
+        self.body.addLayout(row)
+        self.summary = QLabel()
+        self.summary.setStyleSheet(f"color:{theme.ACCENT_DARK}; font-weight:600;")
+        self.body.addWidget(self.summary)
+        if selected > eligible:
+            self.body.addWidget(hint(
+                f"{selected - eligible} selected element(s) are not two-node beams or "
+                "trusses and will be left unchanged."))
+        self.body.addWidget(hint(
+            "Each selected element is replaced by equal-length segments. Intermediate "
+            "nodes are created or reused, and element loads are carried onto the new "
+            "segments."))
+        self.divisions.valueChanged.connect(self._update_summary)
+        self._update_summary()
+        self.buttons("Subdivide")
+
+    def _update_summary(self) -> None:
+        n = self.divisions.value()
+        self.summary.setText(
+            f"{self.eligible} element(s) × {n} divisions = "
+            f"{self.eligible * n} element(s)")
+
+    def spec(self) -> int:
+        return self.divisions.value()
+
+
 class SupportDialog(BaseDialog):
     LABELS = ("DX", "DY", "DZ", "RX", "RY", "RZ")
 
@@ -320,12 +357,25 @@ class CopyMoveDialog(BaseDialog):
 
 
 class MirrorDialog(BaseDialog):
+    previewChanged = Signal(int, float)
+
     def __init__(self, parent=None) -> None:
-        super().__init__("Mirror", parent, 400)
+        super().__init__("Mirror", parent, 430)
         self.body.addWidget(title_label("Mirror plane"))
         self.plane = QComboBox()
-        self.plane.addItems(["XZ plane (mirror Y)", "XY plane (mirror Z)", "YZ plane (mirror X)"])
+        self.plane.addItems(["XZ plane (mirror Y)", "XY plane (mirror Z)",
+                             "YZ plane (mirror X)"])
         self.body.addWidget(self.plane)
+        grid = QGridLayout()
+        self.coordinate_label = QLabel("Plane X coordinate")
+        self.coordinate = spin(UNITS.length(0.0), -1e12, 1e12,
+                               UNITS.length_decimals, UNITS.length(100.0),
+                               UNITS.length_unit)
+        grid.addWidget(self.coordinate_label, 0, 0)
+        grid.addWidget(self.coordinate, 0, 1)
+        self.body.addLayout(grid)
+        self.body.addWidget(hint("The plane is normal to the selected global axis. "
+                                 "Its position is previewed in the viewport."))
         self.body.addWidget(title_label("Options"))
         self.copy = QCheckBox("Keep original (copy)")
         self.copy.setChecked(True)
@@ -333,12 +383,28 @@ class MirrorDialog(BaseDialog):
         self.with_elements.setChecked(True)
         self.body.addWidget(self.copy)
         self.body.addWidget(self.with_elements)
-        self.body.addWidget(hint("The mirror plane passes through the global origin."))
+        self.plane.currentIndexChanged.connect(self._sync)
+        self.coordinate.valueChanged.connect(self._sync)
+        self._sync()
         self.buttons("Apply")
 
+    def _axis(self) -> int:
+        return {0: 1, 1: 2, 2: 0}[self.plane.currentIndex()]
+
+    def _sync(self, *_args) -> None:
+        axis = self._axis()
+        self.coordinate_label.setText(f"Plane {('X', 'Y', 'Z')[axis]} coordinate")
+        self.previewChanged.emit(axis, self.offset())
+
+    def offset(self) -> float:
+        return UNITS.length_base(self.coordinate.value())
+
+    def refresh_preview(self) -> None:
+        self._sync()
+
     def spec(self):
-        idx = self.plane.currentIndex()
-        return {0: 1, 1: 2, 2: 0}[idx], self.copy.isChecked(), self.with_elements.isChecked()
+        return (self._axis(), self.offset(), self.copy.isChecked(),
+                self.with_elements.isChecked())
 
 
 # --------------------------------------------------------------------------- #

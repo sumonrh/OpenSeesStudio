@@ -154,6 +154,8 @@ class Viewport(QWidget):
         self.display_cases: Set[str] = set()
         self.load_filter_active = False
 
+        self.mirror_plane: Optional[Tuple[int, float]] = None
+
         self.show_diagrams = False
         self.diagram_results: Optional[StaticResults] = None
         self.diagram_scenario: str = ""
@@ -322,6 +324,14 @@ class Viewport(QWidget):
                 setattr(self, k, bool(v))
         self.update()
 
+    def set_mirror_plane(self, axis: int, coordinate: float) -> None:
+        self.mirror_plane = (axis, coordinate)
+        self.update()
+
+    def clear_mirror_plane(self) -> None:
+        self.mirror_plane = None
+        self.update()
+
     def set_orbit_mode(self, on: bool) -> None:
         """AutoCAD-style 3D orbit: left-drag rotates instead of selecting."""
         self.orbit_mode = bool(on)
@@ -408,6 +418,8 @@ class Viewport(QWidget):
 
         if self.show_grid:
             self._draw_grid(p, w, h)
+        if self.mirror_plane is not None:
+            self._draw_mirror_plane(p, w, h)
 
         cam = self.camera
         proj = {}
@@ -759,6 +771,47 @@ class Viewport(QWidget):
             p.drawText(QPointF(x + 54, y),
                        UNITS.moment_unit if c in MOMENT_COMPONENTS else UNITS.force_unit)
             y += fm.height() + 3
+
+    def _draw_mirror_plane(self, p: QPainter, w: int, h: int) -> None:
+        if self.project is None or not self.project.nodes or self.mirror_plane is None:
+            return
+        axis, coordinate = self.mirror_plane
+        pts = [n.xyz for n in self.project.nodes.values()]
+        mins = [min(pt[i] for pt in pts) for i in range(3)]
+        maxs = [max(pt[i] for pt in pts) for i in range(3)]
+        span = max(max(maxs[i] - mins[i] for i in range(3)), 1.0)
+        pad = span * 0.12
+        others = [i for i in range(3) if i != axis]
+        lo = [mins[i] - pad for i in range(3)]
+        hi = [maxs[i] + pad for i in range(3)]
+        corners = []
+        for a, b in ((lo, lo), (hi, lo), (hi, hi), (lo, hi)):
+            corner = [0.0, 0.0, 0.0]
+            corner[axis] = coordinate
+            corner[others[0]] = a[others[0]]
+            corner[others[1]] = b[others[1]]
+            corners.append(tuple(corner))
+        screen = [self.camera.project(corner, w, h) for corner in corners]
+        if any(s is None for s in screen):
+            return
+        poly = QPolygonF([QPointF(s[0], s[1]) for s in screen])
+        p.setPen(QPen(QColor("#e8622c"), 1.6, Qt.DashLine))
+        p.setBrush(QBrush(QColor(232, 98, 44, 34)))
+        p.drawPolygon(poly)
+        p.setBrush(Qt.NoBrush)
+        label = (f"Mirror plane {('X', 'Y', 'Z')[axis]} = "
+                 f"{fmt(UNITS.length(coordinate), 3)} {UNITS.length_unit}")
+        center = poly.boundingRect().center()
+        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        fm = p.fontMetrics()
+        box = QRectF(center.x() - fm.horizontalAdvance(label) / 2.0 - 7,
+                     center.y() - fm.height() / 2.0 - 3,
+                     fm.horizontalAdvance(label) + 14, fm.height() + 6)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 225)))
+        p.drawRoundedRect(box, 3, 3)
+        p.setPen(QPen(QColor("#b34700")))
+        p.drawText(box, Qt.AlignCenter, label)
 
     def _draw_grid(self, p: QPainter, w: int, h: int) -> None:
         ext = self.camera.distance * math.tan(self.camera.fov / 2) * 1.25

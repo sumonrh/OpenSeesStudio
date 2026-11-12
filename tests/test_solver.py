@@ -97,6 +97,49 @@ for pos in (0.25, 0.75):
     mz = diagram_series(p, r, p.elements[1], "DL", "Mz", loads.get(1, []))
     check(f"point load at {pos:.2f}L base moment", mz[0][1], -10.0 * a)
 
+print("== element subdivision ==")
+p = default_project()
+p.nodes[1] = Node(1, 0, 0, 0)
+p.nodes[2] = Node(2, 1000, 0, 0)
+p.elements[1] = Element(1, "beam", [1, 2], 1, 1, vecxz=[0, 0, 1])
+p.elem_loads = [
+    ElementLoad(1, 1, "DL", "uniform", "Global Z", -0.01, 0.0, 0.5),
+    ElementLoad(2, 1, "DL", "point", "Global Z", -5.0, 0.0, 0.25),
+]
+sub_nodes, sub_elems = p.subdivide_elements([1], 4)
+check("subdivision intermediate nodes", len(sub_nodes), 3)
+check("subdivision new elements", len(sub_elems), 4)
+check("subdivision removes original", 1 if 1 not in p.elements else 0, 1)
+for i, node_tag in enumerate(sub_nodes):
+    check(f"intermediate node {i + 1} position", p.nodes[node_tag].x, 250.0 * (i + 1))
+check("subdivision preserves total length",
+      sum(p.element_length(p.elements[t]) for t in sub_elems), 1000.0)
+uniform = [l for l in p.elem_loads if l.kind == "uniform"]
+point = [l for l in p.elem_loads if l.kind == "point"]
+check("subdivision replicates uniform load", len(uniform), 4)
+check("subdivision keeps uniform intensity", sum(l.value for l in uniform), -0.04)
+check("subdivision keeps one point load", len(point), 1)
+check("subdivision moves point load to its segment",
+      1 if point and point[0].elem == sub_elems[1] else 0, 1)
+check("subdivision converts point-load position",
+      point[0].position if point else -1.0, 0.0)
+
+for label, load in (
+        ("uniform", ElementLoad(1, 1, "DL", "uniform", "local-y", -0.01)),
+        ("point", ElementLoad(1, 1, "DL", "point", "local-y", -10.0, 0.0, 0.25))):
+    p = default_project()
+    p.materials[1].E = 200.0
+    p.nodes[1] = Node(1, 0, 0, 0, support=[True] * 6)
+    p.nodes[2] = Node(2, 4000, 0, 0)
+    p.elements[1] = Element(1, "beam", [1, 2], 1, 1, vecxz=[0, 0, 1])
+    p.cases["DL"] = LoadCase("DL")
+    p.elem_loads = [load]
+    before = opsgen.run_static(p, "DL")
+    p.subdivide_elements([1], 5)
+    after = opsgen.run_static(p, "DL")
+    check(f"subdivision preserves {label}-load displacement",
+          after.displacements[2][1], before.displacements[2][1], 1e-6)
+
 print("== custom section shapes ==")
 s = Section(1, "Hex", "Hexagon", d=400.0)
 s.compute()

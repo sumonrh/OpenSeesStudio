@@ -55,7 +55,10 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Create beams (`elasticBeamColumn`), trusses and 4-node shells (`ShellMITC4`).
 - Chain creation: give a list of nodes and beams/trusses are created between consecutive nodes.
 - Copy / move with a translation and repeat count; attached elements are duplicated.
-- Mirror about the XY, XZ or YZ plane, with or without keeping the original.
+- Subdivide selected beam or truss elements into a user-defined number of equal
+  segments; intermediate nodes and element loads are carried over automatically.
+- Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
+  the original. The plane is previewed in the viewport while the dialog is open.
 - Supports: fixed, pinned, roller Z, or any combination of 6 DOF.
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with a standard steel database and custom shapes. The database

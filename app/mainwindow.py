@@ -162,7 +162,12 @@ class MainWindow(QMainWindow):
         self.a_elements = self._act("New Elements", "element", self.new_elements, "E",
                                     "Create elements between nodes")
         self.a_copy = self._act("Copy / Move", "copy", self.copy_move, "C")
-        self.a_mirror = self._act("Mirror", "mirror", self.mirror, "M")
+        self.a_subdivide = self._act("Subdivide", "subdivide", self.subdivide, "",
+                                     "Split selected beam or truss elements into "
+                                     "equal parts")
+        self.a_mirror = self._act("Mirror", "mirror", self.mirror, "M",
+                                  "Mirror selected nodes and elements about a "
+                                  "coordinate plane")
         self.a_support = self._act("Supports", "support", self.assign_supports, "S")
         self.a_material = self._act("Materials", "material", self.materials, "")
         self.a_section = self._act("Sections", "section", self.sections, "")
@@ -237,8 +242,9 @@ class MainWindow(QMainWindow):
         self.a_quick = self._act("Quick Start", "help", self.quick_start, "F1")
         self.a_about = self._act("About", "about", self.about, "")
 
-        self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_mirror,
-                             self.a_support, self.a_material, self.a_section, self.a_tables,
+        self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_subdivide,
+                             self.a_mirror, self.a_support, self.a_material,
+                             self.a_section, self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings)
@@ -379,6 +385,7 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_elements)
         group = page.add_group("Edit")
         group.add_large(self.a_copy)
+        group.add_large(self.a_subdivide)
         group.add_large(self.a_mirror)
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
@@ -391,6 +398,7 @@ class MainWindow(QMainWindow):
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Elements")
         group.add_large(self.a_elements)
+        group.add_large(self.a_subdivide)
         group.add_column((self.a_delete, self.a_fit_sel))
         group = page.add_group("Modify")
         group.add_large(self.a_copy)
@@ -1556,6 +1564,32 @@ class MainWindow(QMainWindow):
         self._commit(f"Created {len(created)} element(s)")
         self.viewport.select_elements(created)
 
+    def subdivide(self) -> None:
+        selected = sorted(self.viewport.sel_elements)
+        eligible = []
+        for t in selected:
+            e = self.project.elements.get(t)
+            if (e is not None and e.kind in ("beam", "truss")
+                    and len(e.nodes) == 2
+                    and self.project.element_length(e) > 1e-9):
+                eligible.append(t)
+        if not eligible:
+            if selected:
+                self._warn("Subdivision applies to beam and truss elements "
+                           "with two nodes.")
+            else:
+                self._warn("Select the beam or truss elements to subdivide.")
+            return
+        dlg = dialogs.SubdivideDialog(len(eligible), len(selected), self)
+        if not dlg.exec():
+            return
+        divisions = dlg.spec()
+        new_nodes, new_elems = self.project.subdivide_elements(eligible, divisions)
+        self._commit(f"Subdivided {len(eligible)} element(s) into {divisions} parts")
+        self.viewport.select_elements(new_elems)
+        self._status(f"Created {len(new_elems)} element(s) and "
+                     f"{len(new_nodes)} node(s)")
+
     def copy_move(self) -> None:
         node_set = set(self.viewport.sel_nodes)
         for t in self.viewport.sel_elements:
@@ -1624,9 +1658,13 @@ class MainWindow(QMainWindow):
             self._warn("Select nodes and/or elements to mirror.")
             return
         dlg = dialogs.MirrorDialog(self)
-        if not dlg.exec():
+        dlg.previewChanged.connect(self.viewport.set_mirror_plane)
+        dlg.refresh_preview()
+        accepted = dlg.exec()
+        self.viewport.clear_mirror_plane()
+        if not accepted:
             return
-        axis, copy, with_elements = dlg.spec()
+        axis, offset, copy, with_elements = dlg.spec()
         elem_set = set(self.viewport.sel_elements)
         if with_elements:
             for t, e in self.project.elements.items():
@@ -1635,7 +1673,7 @@ class MainWindow(QMainWindow):
 
         def flip(xyz):
             c = list(xyz)
-            c[axis] = -c[axis]
+            c[axis] = 2.0 * offset - c[axis]
             return c
 
         new_nodes = []

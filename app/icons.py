@@ -105,6 +105,18 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.drawEllipse(QPointF(5, 18.5), 2.3, 2.3)
         p.drawEllipse(QPointF(19, 5.5), 2.3, 2.3)
 
+    elif name == "subdivide":
+        _pen(p, "#8ea6bd", 1.8)
+        p.drawLine(QPointF(4, 20), QPointF(20, 4))
+        _pen(p, accent, 1.5)
+        for i in range(1, 4):
+            f = i / 4.0
+            x, y = 4 + 16 * f, 20 - 16 * f
+            p.drawLine(QPointF(x - 1.5, y - 2.4), QPointF(x + 1.5, y + 2.4))
+        _fill(p, INK)
+        p.drawEllipse(QPointF(4, 20), 2.0, 2.0)
+        p.drawEllipse(QPointF(20, 4), 2.0, 2.0)
+
     elif name == "copy":
         _pen(p, "#8ea6bd")
         p.drawRoundedRect(QRectF(3, 3, 11, 11), 1.2, 1.2)

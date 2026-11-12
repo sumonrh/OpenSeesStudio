@@ -471,6 +471,83 @@ class Project:
     def next_load(self) -> int:
         return max([l.tag for l in self.nodal_loads] + [l.tag for l in self.elem_loads] + [0]) + 1
 
+    def subdivide_elements(self, tags: List[int],
+                           divisions: int) -> Tuple[List[int], List[int]]:
+        """Split two-node beam/truss elements into equal-length parts.
+
+        Intermediate nodes are created or reused, and element loads are
+        redistributed onto the new segments.  Returns (new_nodes, new_elements).
+        """
+        if divisions < 2:
+            raise ValueError("divisions must be at least 2")
+        targets = []
+        for tag in tags:
+            e = self.elements.get(tag)
+            if (e is not None and len(e.nodes) == 2
+                    and e.kind in ("beam", "truss")
+                    and all(n in self.nodes for n in e.nodes)
+                    and self.element_length(e) > 1e-9):
+                targets.append(tag)
+
+        coords = {(round(n.x, 3), round(n.y, 3), round(n.z, 3)): tag
+                  for tag, n in self.nodes.items()}
+        new_nodes: List[int] = []
+        new_elements: List[int] = []
+
+        for tag in targets:
+            e = self.elements[tag]
+            p0 = self.node_xyz(e.nodes[0])
+            p1 = self.node_xyz(e.nodes[1])
+            chain = [e.nodes[0]]
+            for i in range(1, divisions):
+                f = i / divisions
+                xyz = tuple(a + (b - a) * f for a, b in zip(p0, p1))
+                key = tuple(round(v, 3) for v in xyz)
+                node_tag = coords.get(key)
+                if node_tag is None:
+                    node_tag = self.next_node()
+                    self.nodes[node_tag] = Node(node_tag, *xyz)
+                    coords[key] = node_tag
+                    new_nodes.append(node_tag)
+                chain.append(node_tag)
+            chain.append(e.nodes[1])
+
+            loads = [loader for loader in self.elem_loads if loader.elem == tag]
+            new_tags: List[int] = []
+            for i in range(divisions):
+                new_tag = self.next_element()
+                self.elements[new_tag] = Element(
+                    new_tag, e.kind, [chain[i], chain[i + 1]], e.mat, e.sec,
+                    list(e.vecxz) if e.vecxz else None, e.thickness, e.group)
+                new_tags.append(new_tag)
+            self.elements.pop(tag, None)
+            self.elem_loads = [loader for loader in self.elem_loads
+                               if loader.elem != tag]
+
+            for load in loads:
+                if load.kind == "point":
+                    pos = min(max(float(load.position), 0.0), 1.0)
+                    idx = min(int(pos * divisions), divisions - 1)
+                    local = pos * divisions - idx
+                    self.elem_loads.append(ElementLoad(
+                        self.next_load(), new_tags[idx], load.case, "point",
+                        load.direction, load.value, load.value2, local, False))
+                    continue
+                trapezoid = bool(load.trapezoid and abs(load.value2) > 0)
+                for i, new_tag in enumerate(new_tags):
+                    start = load.value
+                    end = load.value2
+                    if trapezoid:
+                        f0, f1 = i / divisions, (i + 1) / divisions
+                        start = load.value + (load.value2 - load.value) * f0
+                        end = load.value + (load.value2 - load.value) * f1
+                    self.elem_loads.append(ElementLoad(
+                        self.next_load(), new_tag, load.case, "uniform",
+                        load.direction, start, end, load.position, trapezoid))
+            new_elements.extend(new_tags)
+
+        return new_nodes, new_elements
+
     # ------------------------------------------------------------ queries
     def node_xyz(self, tag: int) -> Tuple[float, float, float]:
         n = self.nodes.get(tag)
