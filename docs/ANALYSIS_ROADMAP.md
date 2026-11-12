@@ -6,7 +6,8 @@
 **Prepared:** 2026-11-12
 
 **Implementation status:** the Results-tab mode selector, node visibility toggle,
-ribbon cleanup and the Pushover tab with `beamWithHinges` lumped hinge models
+ribbon cleanup, per-element hinge assignment table/tree, hysteresis diagram
+sub-dialog and the Pushover tab with `beamWithHinges` lumped hinge models
 (Steel01 / Hysteretic / Takeda-like / FlagShape) are implemented. The remaining
 phases below are still planned.
 

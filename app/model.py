@@ -341,6 +341,32 @@ class Element:
         return e
 
 
+@dataclass
+class HingeAssignment:
+    """Lumped plastic-hinge properties assigned to one element."""
+
+    element: int
+    model: str = "Trilinear"
+    length_ratio: float = 0.10
+    fy: float = 0.235
+    post_yield_ratio: float = 0.02
+    ductility: float = 10.0
+    pinching: float = 0.8
+    damage: float = 0.02
+    beta: float = 0.4
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+    @staticmethod
+    def from_dict(d: dict) -> "HingeAssignment":
+        h = HingeAssignment(int(d["element"]))
+        for k, v in d.items():
+            if hasattr(h, k) and k != "element":
+                setattr(h, k, v)
+        return h
+
+
 LOAD_DIRECTIONS = ("local-y", "local-z", "Global X", "Global Y", "Global Z")
 
 PUSHOVER_DEFAULTS = {
@@ -464,6 +490,7 @@ class Project:
         self.elem_loads: List[ElementLoad] = []
         self.self_weight: Dict[str, float] = {}
         self.combos: Dict[str, LoadCombination] = {}
+        self.hinges: Dict[int, HingeAssignment] = {}
         self.settings: dict = dict(DEFAULT_SETTINGS)
         self.title: str = "Untitled"
         self.path: str = ""
@@ -624,6 +651,7 @@ class Project:
             "elem_loads": [l.to_dict() for l in self.elem_loads],
             "self_weight": self.self_weight,
             "combos": [c.to_dict() for c in self.combos.values()],
+            "hinges": [h.to_dict() for h in self.hinges.values()],
             "settings": self.settings,
         }
 
@@ -640,6 +668,8 @@ class Project:
         p.elem_loads = [ElementLoad.from_dict(x) for x in d.get("elem_loads", [])]
         p.self_weight = {str(k): _f(v) for k, v in d.get("self_weight", {}).items()}
         p.combos = {c.name: c for c in (LoadCombination.from_dict(x) for x in d.get("combos", []))}
+        p.hinges = {h.element: h for h in (HingeAssignment.from_dict(x)
+                                           for x in d.get("hinges", []))}
         p.settings = dict(DEFAULT_SETTINGS)
         p.settings.update(d.get("settings", {}))
         return p

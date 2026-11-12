@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
                                QWidget)
 
 from . import dialogs, icons, opsgen, theme
+from .hinges import HingeTableDialog
+from .hysteresis import MODEL_LABELS
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
 from .pushover import PushoverResultsDialog
@@ -223,6 +225,9 @@ class MainWindow(QMainWindow):
         self.a_pushover = self._act(
             "Pushover", "pushover", self.pushover, "",
             "Run a displacement-controlled pushover with lumped plastic hinges")
+        self.a_hinges = self._act(
+            "Hinge Table", "hinge", self.edit_hinges, "",
+            "Assign and edit lumped plastic hinges on beam elements")
         self.a_pushover_results = self._act(
             "Pushover Results", "results", self.show_pushover_results, "",
             "Show the capacity curve and hinge state")
@@ -263,7 +268,7 @@ class MainWindow(QMainWindow):
 
         self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_subdivide,
                              self.a_mirror, self.a_support, self.a_material,
-                             self.a_section, self.a_tables,
+                             self.a_section, self.a_hinges, self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings)
@@ -394,7 +399,6 @@ class MainWindow(QMainWindow):
         group.add_field("Scale", self.scale_spin)
         group = page.add_group("View mode")
         group.add_large(self.a_extruded)
-        group.add_large(self.a_clean_view)
         group = page.add_group("Panels")
         group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible))
 
@@ -431,14 +435,12 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_section)
         group = page.add_group("Model data")
         group.add_large(self.a_tables)
-        group = page.add_group("Display")
-        group.add_column((self.a_labels, self.a_grid))
 
         page = ribbon.add_tab("Boundary")
         group = page.add_group("Supports")
         group.add_large(self.a_support)
         group = page.add_group("Display")
-        group.add_column((self.a_supports_visible, self.a_labels))
+        group.add_column((self.a_supports_visible,))
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Model data")
@@ -453,7 +455,7 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_eload)
         group.add_large(self.a_sw)
         group = page.add_group("Display")
-        group.add_column((self.a_loads_visible, self.a_labels, self.a_supports_visible))
+        group.add_column((self.a_loads_visible,))
         group = page.add_group("Model data")
         group.add_large(self.a_tables)
 
@@ -471,13 +473,12 @@ class MainWindow(QMainWindow):
         page = ribbon.add_tab("Pushover")
         group = page.add_group("Pushover")
         group.add_large(self.a_pushover)
-        group.add_large(self.a_pushover_results)
+        group = page.add_group("Hinges")
+        group.add_large(self.a_hinges)
         group = page.add_group("Lumped plasticity")
         hinge_note = QLabel("beamWithHinges\nfiber hinges\nSteel01 / Hysteretic / FlagShape")
         hinge_note.setStyleSheet(f"color:{theme.MUTED}; font-size:10px;")
         group.add_widget(hinge_note)
-        group = page.add_group("Display")
-        group.add_column((self.a_deformed, self.a_nodes_visible, self.a_labels))
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -491,9 +492,6 @@ class MainWindow(QMainWindow):
         group = page.add_group("Result display")
         group.add_large(self.a_beam_diagram)
         group.add_large(self.a_deformation)
-        group = page.add_group("Display")
-        group.add_column((self.a_clean_view, self.a_nodes_visible,
-                          self.a_labels, self.a_grid))
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -521,7 +519,8 @@ class MainWindow(QMainWindow):
         quick.setToolButtonStyle(Qt.ToolButtonIconOnly)
         quick.setIconSize(QSize(16, 16))
         for action in (self.a_save, None, self.a_run, self.a_modal, self.a_results,
-                       self.a_check, None, self.a_lock, None, self.a_undo, self.a_redo):
+                       self.a_check, None, self.a_lock, self.a_nodes_visible,
+                       None, self.a_undo, self.a_redo):
             if action is None:
                 quick.addSeparator()
             else:
@@ -538,7 +537,7 @@ class MainWindow(QMainWindow):
         views.setIconSize(QSize(18, 18))
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right,
                        None, self.a_orbit, self.a_labels, self.a_grid, self.a_deformed,
-                       self.a_extruded, None, self.a_fit_sel):
+                       self.a_extruded, self.a_clean_view, None, self.a_fit_sel):
             if action is None:
                 views.addSeparator()
             else:
@@ -619,6 +618,10 @@ class MainWindow(QMainWindow):
         mode = self.mode_combo.itemData(index) or (index + 1)
         self.viewport.set_modal_results(self.modal_results, int(mode))
         self.viewport.show_deformed = True
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
         self.a_deformed.blockSignals(True)
         self.a_deformed.setChecked(True)
         self.a_deformed.blockSignals(False)
@@ -739,10 +742,8 @@ class MainWindow(QMainWindow):
         if not text:
             return
         self.viewport.set_load_scenario(text)
-        self.viewport.show_loads = True
-        self.a_loads_visible.blockSignals(True)
-        self.a_loads_visible.setChecked(True)
-        self.a_loads_visible.blockSignals(False)
+        self.viewport.load_filter_active = False
+        self.viewport.display_cases.clear()
         self.project.settings["last_case"] = text
         if hasattr(self, "results_panel"):
             self.results_panel.set_current_scenario(text)
@@ -1029,6 +1030,8 @@ class MainWindow(QMainWindow):
             if kind in ("material", "section"):
                 item.setToolTip(0, "Double-click: select elements using this. "
                                    "Right-click: delete.")
+            elif kind == "hinge":
+                item.setToolTip(0, "Double-click: open the hinge assignment table.")
             parent.addChild(item)
             return item
 
@@ -1038,6 +1041,13 @@ class MainWindow(QMainWindow):
         g_sec = group("Sections", "sections", len(p.sections))
         for s in p.sections.values():
             add_child(g_sec, f"{s.tag}   {s.name}   ({s.shape})", "section", s.tag)
+        g_hinge = group("Hinges", "hinges", len(p.hinges))
+        for tag in sorted(p.hinges):
+            h = p.hinges[tag]
+            add_child(g_hinge,
+                      f"Elem {tag}   {MODEL_LABELS.get(h.model, h.model)}   "
+                      f"(Lp/L {fmt(h.length_ratio, 3)})",
+                      "hinge", tag)
 
         b = group("Boundary", "boundary")
         g_sup = group("Supports", "supports",
@@ -1087,6 +1097,8 @@ class MainWindow(QMainWindow):
             self.viewport.select_nodes([tag])
         elif key == "element":
             self.viewport.select_elements([tag])
+        elif key == "hinge":
+            self.viewport.select_elements([tag])
 
     def _tree_double(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(0, Qt.UserRole)
@@ -1098,6 +1110,8 @@ class MainWindow(QMainWindow):
                 self._select_elements_using(key, tag)
             elif key == "case":
                 self._select_case_elements(tag)
+            elif key == "hinge":
+                self.edit_hinges()
             return
         if key in ("nodes", "elements"):
             return
@@ -1108,6 +1122,7 @@ class MainWindow(QMainWindow):
             "supports": lambda: self.open_tables(1),
             "materials": self.materials,
             "sections": self.sections,
+            "hinges": self.edit_hinges,
             "cases": self.load_cases,
             "nodal_loads": lambda: self.open_tables(6),
             "element_loads": lambda: self.open_tables(7),
@@ -1367,12 +1382,12 @@ class MainWindow(QMainWindow):
                       p.settings.get("length_unit", "m"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
-                     "settings", "title"):
+                     "hinges", "settings", "title"):
             setattr(p, attr, getattr(other, attr))
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
     def _commit(self, label: str) -> None:
-        if self.static_results or self.modal_results:
+        if self.static_results or self.modal_results or self.pushover_results:
             self._clear_results()
         self.history.push(self.project, label)
         self.refresh_all()
@@ -1441,6 +1456,10 @@ class MainWindow(QMainWindow):
         if self.scenario_combo.findText(res.scenario) >= 0:
             self.scenario_combo.setCurrentText(res.scenario)
         self.viewport.set_static_results(res)
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
         if hasattr(self, "results_panel"):
             self.results_panel.set_current_scenario(res.scenario)
         self.viewport.fit()
@@ -1468,6 +1487,10 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.mode_combo.setCurrentIndex(index)
         self.viewport.set_modal_results(res, mode)
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
         self.viewport.fit()
         self.viewport.start_animation()
         self.a_animate.setChecked(True)
@@ -1831,6 +1854,17 @@ class MainWindow(QMainWindow):
         self.project.sections = dlg.sections
         self._commit("Edited sections")
 
+    def edit_hinges(self) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        dlg = HingeTableDialog(self.project, self,
+                               selected=sorted(self.viewport.sel_elements))
+        if not dlg.exec():
+            return
+        self.project.hinges = dlg.hinges
+        self._commit(f"Edited hinge assignments ({len(dlg.hinges)} element(s))")
+
     # =================================================================== loads
     def load_cases(self) -> None:
         dlg = dialogs.LoadCaseDialog(self.project, self)
@@ -1980,9 +2014,9 @@ class MainWindow(QMainWindow):
         self.results_scenario = scenario
         self.static_cache[scenario] = res
         self.viewport.set_load_scenario(scenario)
-        self.viewport.show_loads = True
+        self.viewport.show_loads = False
         self.a_loads_visible.blockSignals(True)
-        self.a_loads_visible.setChecked(True)
+        self.a_loads_visible.setChecked(False)
         self.a_loads_visible.blockSignals(False)
         self.viewport.set_static_results(res)
         self._apply_scale()
@@ -2037,19 +2071,27 @@ class MainWindow(QMainWindow):
             self._warn("The model has no elements.")
             return
         selected = next(iter(self.viewport.sel_nodes), None)
-        dlg = dialogs.PushoverDialog(self.project, selected, self)
+        dlg = dialogs.PushoverDialog(self.project, selected, self,
+                                     hinge_editor=self.edit_hinges)
         if not dlg.exec():
             return
         cfg = dlg.spec()
         if not cfg.get("lateral_case"):
             self._warn("Select a lateral load case or combination.")
             return
-        self.project.settings["pushover"] = dict(cfg)
+        if not self.project.hinges:
+            self._warn("Assign hinges to at least one beam element in the "
+                       "Hinge Table before running pushover.")
+            return
+        settings = dict(self.project.settings.get("pushover", {}))
+        settings.update(cfg)
+        self.project.settings["pushover"] = settings
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self._status("Running pushover analysis…")
-        self._log(f"Pushover: {cfg['hinge_model']} hinges, gravity "
-                  f"'{cfg['gravity_case'] or 'none'}', lateral "
-                  f"'{cfg['lateral_case']}', target "
+        models = ", ".join(sorted({h.model for h in self.project.hinges.values()}))
+        self._log(f"Pushover: {len(self.project.hinges)} hinge element(s) "
+                  f"[{models}], gravity '{cfg['gravity_case'] or 'none'}', "
+                  f"lateral '{cfg['lateral_case']}', target "
                   f"{fmt(UNITS.length(cfg['target_displacement']), 3)} "
                   f"{UNITS.length_unit}.")
         try:
@@ -2093,6 +2135,10 @@ class MainWindow(QMainWindow):
         self.viewport.set_static_results(self.pushover_results.static_at(index))
         self.viewport.set_load_scenario(self.pushover_results.lateral_case)
         self.viewport.show_deformed = True
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
         self.a_deformed.blockSignals(True)
         self.a_deformed.setChecked(True)
         self.a_deformed.blockSignals(False)
@@ -2164,6 +2210,8 @@ class MainWindow(QMainWindow):
             self.project.nodes.pop(t, None)
         self.project.nodal_loads = [l for l in self.project.nodal_loads if l.node in self.project.nodes]
         self.project.elem_loads = [l for l in self.project.elem_loads if l.elem in self.project.elements]
+        self.project.hinges = {t: h for t, h in self.project.hinges.items()
+                               if t in self.project.elements}
         self.viewport.clear_selection()
         self._clear_results()
         self._commit(f"Deleted {len(nodes)} node(s), {len(elems) + len(removed_el)} element(s)")

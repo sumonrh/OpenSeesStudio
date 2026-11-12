@@ -15,7 +15,7 @@ app = QApplication.instance() or QApplication([])
 
 from app import dialogs, mainwindow, results as results_mod, steelsections  # noqa: E402
 from app.mainwindow import MainWindow  # noqa: E402
-from app.model import Project, Section  # noqa: E402
+from app.model import Project, Section, HingeAssignment  # noqa: E402
 from app.tables import TablesDialog  # noqa: E402
 from app.units import UNITS  # noqa: E402
 
@@ -106,6 +106,10 @@ class FakeSubdivide:
 class FakePushover:
     def __init__(self, project, selected_node=None, *a, **k):
         self.project = project
+        for tag, e in project.elements.items():
+            if e.kind == "beam" and len(e.nodes) >= 2:
+                project.hinges[tag] = HingeAssignment(
+                    tag, "Takeda", 0.1, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
 
     def exec(self):
         return 1
@@ -114,10 +118,7 @@ class FakePushover:
         node = max(self.project.nodes, key=lambda t: self.project.nodes[t].z)
         return {"gravity_case": "DL", "lateral_case": "WIND",
                 "control_node": node, "control_dof": 1,
-                "target_displacement": 20.0, "steps": 4,
-                "hinge_model": "Takeda", "hinge_length_ratio": 0.1,
-                "fy": 0.235, "post_yield_ratio": 0.02, "ductility": 10.0,
-                "pinching": 0.8, "damage": 0.02, "beta": 0.4}
+                "target_displacement": 20.0, "steps": 4}
 
 
 class FakeSupport:
@@ -239,6 +240,12 @@ check("view tab has no deformed button",
 check("view tab has no delete/selection actions",
       all(b.defaultAction() not in (win.a_delete, win.a_sel_all, win.a_deselect)
           for b in view_page.findChildren(QToolButton)))
+check("clean view moved to vertical sidebar",
+      win.a_clean_view in win.quick_view_toolbar.actions()
+      and all(b.defaultAction() is not win.a_clean_view
+              for b in view_page.findChildren(QToolButton)))
+check("nodes action on horizontal toolbar",
+      win.a_nodes_visible in win.quick_toolbar.actions())
 nodes_before = win.viewport.show_nodes
 win.a_nodes_visible.trigger()
 check("node visibility toggle hides nodes", win.viewport.show_nodes != nodes_before)
@@ -250,10 +257,16 @@ check("results tab has diagrams and deformation",
       win.a_beam_diagram in result_actions and win.a_deformation in result_actions)
 check("results tab has mode dropdown and animate",
       win.a_animate in result_actions and not win.mode_combo.isHidden())
+check("nodes action not repeated in results",
+      win.a_nodes_visible not in result_actions)
 pushover_page = win.ribbon._pages[7]
 pushover_actions = [b.defaultAction() for b in pushover_page.findChildren(QToolButton)]
-check("pushover tab has run and results actions",
-      win.a_pushover in pushover_actions and win.a_pushover_results in pushover_actions)
+check("pushover tab has run and hinge actions",
+      win.a_pushover in pushover_actions and win.a_hinges in pushover_actions)
+check("nodes action not repeated in pushover",
+      win.a_nodes_visible not in pushover_actions)
+check("pushover results not repeated in pushover tab",
+      win.a_pushover_results not in pushover_actions)
 check("properties panel action", win.a_props_visible.isChecked())
 win.a_props_visible.trigger()
 check("properties panel collapses", win.props_dock.isHidden())
@@ -316,8 +329,7 @@ check("load case display", win.viewport.load_filter_active
 win._display_load_case("LL", False)
 check("load case undisplay", "LL" not in win.viewport.display_cases)
 win._scenario_changed("DL")
-check("scenario restores normal load display",
-      not win.viewport.load_filter_active and win.viewport.show_loads)
+check("scenario clears load filter", not win.viewport.load_filter_active)
 
 print("== static analysis through the GUI ==")
 mainwindow.ResultsDialog = StubResults
@@ -327,6 +339,8 @@ check("max displacement reasonable", 0.0 < win.static_results.max_disp < 20.0,
       f"({win.static_results.max_disp:.4f} mm)")
 check("viewport shows deformed shape",
       bool(win.viewport._deformed_points()))
+check("analysis hides load diagrams by default",
+      not win.viewport.show_loads and not win.a_loads_visible.isChecked())
 check("analysis switches to results tab", win.ribbon.current_title() == "Results")
 win.a_beam_diagram.trigger()
 check("beam diagrams open", win.viewport.show_diagrams
@@ -676,25 +690,51 @@ if win.pushover_results:
     check("pushover results dialog lists steps",
           pd.step_combo.count() == len(win.pushover_results.steps)
           and pd.plot.results is not None)
+    from app.hinges import HingeTableDialog
+    from app.hysteresis import HysteresisDialog
+    ht = HingeTableDialog(win.project)
+    beam_count = sum(1 for e in win.project.elements.values() if e.kind == "beam")
+    check("hinge table lists all beam elements",
+          ht.table.rowCount() == beam_count, f"({ht.table.rowCount()})")
+    check("hinge table shows assigned model",
+          any(ht.table.cellWidget(r, 2).currentData() == "Takeda"
+              for r in range(ht.table.rowCount())))
+    first_tag = ht.beams[0]
+    ht.table.selectRow(0)
+    ht.bulk_model.setCurrentIndex(ht.bulk_model.findData("Bilinear"))
+    ht._apply_bulk()
+    ht.accept()
+    check("hinge table edits assignment",
+          ht.hinges.get(first_tag) is not None
+          and ht.hinges[first_tag].model == "Bilinear")
+    for model in ("Bilinear", "Trilinear", "Takeda", "Flag"):
+        hd = HysteresisDialog(model, {"fy": 0.235, "post_yield_ratio": 0.02,
+                                      "ductility": 10.0, "pinching": 0.8,
+                                      "damage": 0.02, "beta": 0.4})
+        check(f"{model} hysteresis definitions", hd.table.rowCount() >= 4)
+        hd.close()
     setup = dialogs.PushoverDialog(win.project)
-    def visible_rows(model):
-        setup.hinge_model.setCurrentIndex(setup.hinge_model.findData(model))
-        return {key: setup._hinge_form.isRowVisible(row)
-                for key, row in setup._hinge_rows.items()}
-    bilinear = visible_rows("Bilinear")
-    check("bilinear hides Takeda parameters",
-          not any(bilinear.values()), f"({bilinear})")
-    trilinear = visible_rows("Trilinear")
-    check("trilinear shows only envelope parameters",
-          trilinear == {"ductility": True, "pinching": False,
-                        "damage": False, "beta": False}, f"({trilinear})")
-    takeda = visible_rows("Takeda")
-    check("Takeda shows Takeda parameters", all(takeda.values()), f"({takeda})")
-    flag = visible_rows("Flag")
-    check("flag shows only flag parameters",
-          flag == {"ductility": False, "pinching": False,
-                   "damage": False, "beta": True}, f"({flag})")
+    check("pushover dialog reports hinge assignments",
+          "beam elements have assigned hinges" in setup.hinge_summary.text())
+    check("pushover dialog exposes hysteresis diagram",
+          setup.preview_btn.text().startswith("Hysteresis"))
     setup.close()
+
+    win._refresh_tree()
+    root = win.tree.topLevelItem(0)
+    items = {root.child(i).text(0).split("   ")[0]: root.child(i)
+             for i in range(root.childCount())}
+    hinge_group = items.get("Hinges")
+    check("tree lists hinge types",
+          hinge_group is not None and hinge_group.childCount() > 0
+          and "Takeda" in hinge_group.child(0).text(0))
+    if hinge_group is not None and hinge_group.childCount() > 0:
+        calls = []
+        old_edit_hinges = win.edit_hinges
+        win.edit_hinges = lambda: calls.append(True)
+        win._tree_double(hinge_group.child(0), 0)
+        win.edit_hinges = old_edit_hinges
+        check("double-click hinge opens assignments", bool(calls))
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

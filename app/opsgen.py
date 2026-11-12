@@ -259,7 +259,7 @@ def _add_hinge_section(project: Project, sec: Section, mat: Material,
     fy = max(fy, 1e-6)
     post = max(float(config.get("post_yield_ratio", 0.02)), 0.0)
     ductility = max(float(config.get("ductility", 10.0)), 2.0)
-    model = str(config.get("hinge_model", "Trilinear"))
+    model = str(config.get("model", config.get("hinge_model", "Trilinear")))
     E = max(mat.E, 1e-6)
     ey = fy / E
     e2 = ey * 3.0
@@ -369,10 +369,11 @@ def build(project: Project, scenario: Optional[str] = None,
             ops.geomTransf("Linear", transf_tag, *vx)
             transf_tag += 1
 
-        if pushover is not None:
-            hp = pushover
+        if pushover is not None and e.tag in project.hinges:
+            hinge = project.hinges[e.tag]
+            hp = hinge.to_dict()
             cache_key = (
-                sec.tag, mat.tag, str(hp.get("hinge_model", "Trilinear")),
+                sec.tag, mat.tag, str(hp.get("model", "Trilinear")),
                 round(float(hp.get("fy", mat.fy) or 0.0), 9),
                 round(float(hp.get("post_yield_ratio", 0.02)), 9),
                 round(float(hp.get("ductility", 10.0)), 9),
@@ -394,7 +395,8 @@ def build(project: Project, scenario: Optional[str] = None,
                     hinge_sec = None
             if hinge_sec is not None:
                 length = max(project.element_length(e), 1e-6)
-                ratio = max(0.01, min(0.25, float(hp.get("hinge_length_ratio", 0.1))))
+                ratio = max(0.01, min(0.25, float(
+                    hp.get("length_ratio", 0.1))))
                 lp = min(length * ratio, 0.2 * length)
                 ops.element("beamWithHinges", e.tag, e.nodes[0], e.nodes[1],
                             hinge_sec, lp, hinge_sec, lp,
@@ -711,6 +713,13 @@ def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverRes
     cfg = project.pushover_settings()
     if config:
         cfg.update(config)
+    hinges = {tag: h for tag, h in project.hinges.items()
+              if tag in project.elements
+              and project.elements[tag].kind == "beam"
+              and len(project.elements[tag].nodes) >= 2}
+    if not hinges:
+        raise ValueError("No hinges are assigned. Assign hinges to beam "
+                         "elements in the hinge table before running pushover.")
     lateral = str(cfg.get("lateral_case") or "")
     gravity = str(cfg.get("gravity_case") or "")
     if not lateral:
@@ -768,21 +777,21 @@ def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverRes
     ops.integrator("DisplacementControl", node, dof, du)
     ops.analysis("Static")
 
-    hinge_tags = [tag for tag, e in project.elements.items()
-                  if e.kind == "beam" and len(e.nodes) >= 2]
-    ratio = max(0.01, min(0.25, float(cfg.get("hinge_length_ratio", 0.1))))
-    lp_cache = {tag: min(project.element_length(project.elements[tag]) * ratio,
-                         0.2 * project.element_length(project.elements[tag]))
-                for tag in hinge_tags}
+    hinge_tags = sorted(hinges)
+    lp_cache = {}
+    for tag in hinge_tags:
+        length = project.element_length(project.elements[tag])
+        ratio = max(0.01, min(0.25, float(hinges[tag].length_ratio)))
+        lp_cache[tag] = min(length * ratio, 0.2 * length)
 
     result = PushoverResults(
         gravity_case=gravity, lateral_case=lateral,
         control_node=node, control_dof=dof,
-        hinge_model=str(cfg.get("hinge_model", "Trilinear")))
-    fy = abs(float(cfg.get("fy", 0.235) or 0.235))
+        hinge_model=", ".join(sorted({h.model for h in hinges.values()})))
     for tag in hinge_tags:
         e = project.elements[tag]
         sec = _ensure_section(project.section_of(e))
+        fy = abs(float(hinges[tag].fy or 0.235))
         my = fy * sec.Iy / max(sec.h / 2.0, 1e-6)
         mz = fy * sec.Iz / max(sec.b / 2.0, 1e-6)
         result.hinge_yield[tag] = max(my, mz)

@@ -44,6 +44,7 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Model, Properties and Messages panels can be collapsed and restored from
   **View > Panels**.
 - **Clean View** hides deformation, loads and labels for a plain structural view.
+  It is on the vertical sidebar on the right.
 - **Extruded** mode draws beams and columns with their real section sizes.
 
 ![extruded section view](docs/extruded.png)
@@ -98,12 +99,18 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - **Mode shapes** are available from a dropdown in the **Results** ribbon tab;
   select any mode and use **Animate** without opening the results table.
 - **Pushover** ribbon tab: displacement-controlled nonlinear static analysis with
-  `beamWithHinges` lumped plastic hinges. Hinge models include bilinear (Steel01),
+  `beamWithHinges` lumped plastic hinges. Hinges are assigned **per beam element**
+  in the Hinge Table, so steel and concrete members can use different laws and
+  unassigned members stay elastic. Hinge models include bilinear (Steel01),
   trilinear (Hysteretic), Takeda-like (Hysteretic) and flag-shaped (FlagShape).
+  The dialog provides a hysteresis-diagram sub-dialog with parameter definitions.
   Results include the capacity curve, step table, hinge rotations/moments, hinge
   yielding state and deformed shape per step.
-- **Nodes** can be hidden from the viewport with the node visibility button in the
-  View and Results tabs.
+- The model tree lists assigned hinges by element; double-click the Hinges group
+  or an entry to edit the assignment table.
+- **Nodes** can be hidden from the viewport using the node button in the View tab
+  or the horizontal quick toolbar. Analysis results show the deformed shape only;
+  load diagrams are not forced on after a run.
 - Model check (`F9`) for missing references, zero-length elements, unconnected nodes,
   missing supports and missing loads.
 - Result viewer: displacements, reactions, element forces (N, Vy, Vz, T, My, Mz at both ends),

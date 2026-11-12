@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.model import (Project, Element, Node, NodalLoad, LoadCase, Section,
-                       default_project)
+                       HingeAssignment, default_project)
 from app import opsgen
 
 FAILS = []
@@ -147,11 +147,9 @@ p.nodes[2] = Node(2, 0, 0, 1000)
 p.elements[1] = Element(1, "beam", [1, 2], 1, 2, vecxz=None)
 p.cases["LAT"] = LoadCase("LAT")
 p.nodal_loads.append(NodalLoad(1, 2, "LAT", [10.0, 0, 0, 0, 0, 0]))
+p.hinges[1] = HingeAssignment(1, "Takeda", 0.10, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
 cfg = {"gravity_case": "", "lateral_case": "LAT", "control_node": 2,
-       "control_dof": 1, "target_displacement": 20.0, "steps": 5,
-       "hinge_model": "Takeda", "hinge_length_ratio": 0.1, "fy": 0.235,
-       "post_yield_ratio": 0.02, "ductility": 10.0,
-       "pinching": 0.8, "damage": 0.02, "beta": 0.4}
+       "control_dof": 1, "target_displacement": 20.0, "steps": 5}
 push = opsgen.run_pushover(p, cfg)
 check("pushover step count", len(push.steps), 6)
 check("pushover target displacement", abs(push.steps[-1].displacement), 20.0)
@@ -159,11 +157,24 @@ check("pushover base shear increases",
       1 if push.steps[-1].base_shear > push.steps[0].base_shear + 1.0 else 0, 1)
 check("pushover hinge rotation develops",
       1 if push.max_hinge_rotation(push.steps[-1]) > 0.0 else 0, 1)
+check("only assigned hinge is used", len(push.hinge_yield), 1)
 check("pushover hinges yield",
       sum(1 for tag, moments in push.steps[-1].hinge_moments.items()
           if max(moments) > 0.98 * push.hinge_yield.get(tag, 1e99)), 1)
 check("pushover step state is reusable",
       1 if push.static_at(-1).displacements.get(2) else 0, 1)
+cloned = p.clone()
+check("hinge assignment persists",
+      1 if cloned.hinges.get(1) and cloned.hinges[1].model == "Takeda" else 0, 1)
+
+p2 = p.clone()
+p2.hinges.clear()
+try:
+    opsgen.run_pushover(p2, cfg)
+    check("pushover rejects unassigned model", 0, 1)
+except ValueError as exc:
+    check("pushover rejects unassigned model",
+          1 if "No hinges" in str(exc) else 0, 1)
 
 print("== custom section shapes ==")
 s = Section(1, "Hex", "Hexagon", d=400.0)

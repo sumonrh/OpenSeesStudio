@@ -1490,9 +1490,10 @@ class PushoverDialog(BaseDialog):
     """Setup for a displacement-controlled pushover with lumped hinges."""
 
     def __init__(self, project: Project, selected_node: Optional[int] = None,
-                 parent=None) -> None:
+                 parent=None, hinge_editor=None) -> None:
         super().__init__("Pushover Analysis", parent, 520)
         self.project = project
+        self._hinge_editor = hinge_editor
         cfg = project.pushover_settings()
         self.body.addWidget(title_label("Loading"))
         form = QFormLayout()
@@ -1521,49 +1522,34 @@ class PushoverDialog(BaseDialog):
         self.body.addLayout(form)
 
         self.body.addWidget(title_label("Lumped plastic hinges"))
+        self.hinge_summary = QLabel()
+        self.hinge_summary.setWordWrap(True)
+        self.body.addWidget(self.hinge_summary)
+        hinge_row = QHBoxLayout()
+        self.hinge_table_btn = QPushButton("Hinge Table / Assign…")
+        self.hinge_table_btn.clicked.connect(self._open_hinges)
+        hinge_row.addWidget(self.hinge_table_btn)
+        self.preview_btn = QPushButton("Hysteresis Diagram…")
+        self.preview_btn.clicked.connect(self._show_hysteresis)
+        hinge_row.addWidget(self.preview_btn)
+        hinge_row.addStretch(1)
+        self.body.addLayout(hinge_row)
+
         hform = QFormLayout()
-        self.hinge_model = QComboBox()
+        self.preview_model = QComboBox()
         for label, key in (("Bilinear — Steel01", "Bilinear"),
                            ("Trilinear — Hysteretic", "Trilinear"),
                            ("Takeda-like — Hysteretic", "Takeda"),
                            ("Flag-shaped — FlagShape", "Flag")):
-            self.hinge_model.addItem(label, key)
-        self.hinge_ratio = spin(float(cfg.get("hinge_length_ratio", 0.10)),
-                                0.01, 0.25, 3, 0.01)
-        self.fy = spin(UNITS.stress(float(cfg.get("fy", 0.235))),
-                       0.0, UNITS.stress(10.0), 5, UNITS.stress(0.01),
-                       UNITS.stress_unit)
-        self.post = spin(float(cfg.get("post_yield_ratio", 0.02)),
-                         0.0, 0.5, 4, 0.005)
-        self.ductility = spin(float(cfg.get("ductility", 10.0)),
-                              2.0, 100.0, 2, 1.0)
-        self.pinching = spin(float(cfg.get("pinching", 0.8)),
-                             0.0, 1.0, 3, 0.05)
-        self.damage = spin(float(cfg.get("damage", 0.02)),
-                           0.0, 1.0, 4, 0.005)
-        self.beta = spin(float(cfg.get("beta", 0.4)),
-                         0.0, 1.0, 3, 0.05)
-        hform.addRow("Hinge model", self.hinge_model)
-        hform.addRow("Plastic hinge length / L", self.hinge_ratio)
-        hform.addRow("Yield strength fy", self.fy)
-        hform.addRow("Post-yield stiffness ratio", self.post)
-        self._hinge_rows = {
-            "ductility": hform.rowCount(),
-        }
-        hform.addRow("Ultimate / yield strain", self.ductility)
-        self._hinge_rows["pinching"] = hform.rowCount()
-        hform.addRow("Pinching", self.pinching)
-        self._hinge_rows["damage"] = hform.rowCount()
-        hform.addRow("Damage", self.damage)
-        self._hinge_rows["beta"] = hform.rowCount()
-        hform.addRow("Takeda beta", self.beta)
-        self._hinge_form = hform
+            self.preview_model.addItem(label, key)
+        hform.addRow("Preview hinge model", self.preview_model)
         self.body.addLayout(hform)
         self.body.addWidget(hint(
-            "Beam elements are rebuilt as beamWithHinges elements for this run. "
-            "The hinge sections use a fiber mesh and the selected hysteresis law, "
-            "so hinge rotation is an approximation of the local curvature × plastic "
-            "hinge length. The base model and its elastic results are not changed."))
+            "Hinges are assigned per beam element in the Hinge Table. Unassigned "
+            "elements remain elastic, so steel and concrete members can use "
+            "different hinge laws. The diagram button explains the parameters of "
+            "the selected law; hinge rotation is reported as local curvature × "
+            "plastic hinge length."))
 
         # defaults
         gravity = cfg.get("gravity_case") or ("DL" if "DL" in project.cases else "")
@@ -1594,34 +1580,56 @@ class PushoverDialog(BaseDialog):
                 target = max(0.02 * height, 10.0)
             self.target.setValue(UNITS.length(target))
         self.steps.setValue(int(cfg.get("steps", 20)))
-        self.hinge_ratio.setValue(float(cfg.get("hinge_length_ratio", 0.10)))
-        self.hinge_model.setCurrentIndex(max(
-            0, self.hinge_model.findData(str(cfg.get("hinge_model", "Trilinear")))))
-        self.hinge_model.currentIndexChanged.connect(self._sync)
-        self._sync()
+        assigned = [h for tag, h in project.hinges.items()
+                    if tag in project.elements]
+        preview = assigned[0].model if assigned else str(
+            cfg.get("hinge_model", "Trilinear"))
+        self.preview_model.setCurrentIndex(
+            max(0, self.preview_model.findData(preview)))
+        self._update_hinge_summary()
         self.buttons("Run Pushover")
 
-    def _sync(self, *_args) -> None:
-        model = self.hinge_model.currentData()
-        use_hyst = model in ("Trilinear", "Takeda")
-        for widget, enabled in (
-                (self.pinching, model == "Takeda"),
-                (self.damage, model == "Takeda"),
-                (self.beta, model in ("Takeda", "Flag")),
-                (self.ductility, use_hyst),
-                (self.post, True)):
-            widget.setEnabled(enabled)
-        visible = {
-            "ductility": use_hyst,
-            "pinching": model == "Takeda",
-            "damage": model == "Takeda",
-            "beta": model in ("Takeda", "Flag"),
-        }
-        for key, row in self._hinge_rows.items():
-            self._hinge_form.setRowVisible(row, visible[key])
-        beta_label = self._hinge_form.labelForField(self.beta)
-        if beta_label is not None:
-            beta_label.setText("Flag beta" if model == "Flag" else "Takeda beta")
+    def _update_hinge_summary(self) -> None:
+        n = sum(1 for tag in self.project.hinges
+                if tag in self.project.elements
+                and self.project.elements[tag].kind == "beam")
+        total = sum(1 for e in self.project.elements.values() if e.kind == "beam")
+        if n:
+            self.hinge_summary.setText(
+                f"{n} of {total} beam elements have assigned hinges.")
+            self.hinge_summary.setStyleSheet(f"color:{theme.ACCENT_DARK};")
+        else:
+            self.hinge_summary.setText(
+                "No hinges assigned. Pushover will not run until at least one "
+                "beam element has a hinge.")
+            self.hinge_summary.setStyleSheet("color:#c92a2a; font-weight:600;")
+
+    def _open_hinges(self) -> None:
+        if self._hinge_editor is not None:
+            self._hinge_editor()
+        else:
+            from .hinges import HingeTableDialog
+
+            dlg = HingeTableDialog(self.project, self)
+            if dlg.exec():
+                self.project.hinges = dlg.hinges
+        self._update_hinge_summary()
+
+    def _show_hysteresis(self) -> None:
+        from .hysteresis import HysteresisDialog
+
+        model = self.preview_model.currentData() or "Trilinear"
+        assignment = next(
+            (h for h in self.project.hinges.values()
+             if h.model == model and h.element in self.project.elements),
+            None)
+        params = assignment.to_dict() if assignment else self.project.pushover_settings()
+        element = assignment.element if assignment else next(
+            (tag for tag, e in self.project.elements.items() if e.kind == "beam"),
+            None)
+        E = (self.project.material_of(self.project.elements[element]).E
+             if element is not None else 200.0)
+        HysteresisDialog(model, params, self, initial_stiffness=E).exec()
 
     def spec(self) -> dict:
         return {
@@ -1631,14 +1639,6 @@ class PushoverDialog(BaseDialog):
             "control_dof": self.control_dof.currentData() or 1,
             "target_displacement": UNITS.length_base(self.target.value()),
             "steps": self.steps.value(),
-            "hinge_model": self.hinge_model.currentData() or "Trilinear",
-            "hinge_length_ratio": self.hinge_ratio.value(),
-            "fy": UNITS.stress_base(self.fy.value()),
-            "post_yield_ratio": self.post.value(),
-            "ductility": self.ductility.value(),
-            "pinching": self.pinching.value(),
-            "damage": self.damage.value(),
-            "beta": self.beta.value(),
         }
 
 
