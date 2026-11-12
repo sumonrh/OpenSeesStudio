@@ -343,6 +343,23 @@ class Element:
 
 LOAD_DIRECTIONS = ("local-y", "local-z", "Global X", "Global Y", "Global Z")
 
+PUSHOVER_DEFAULTS = {
+    "gravity_case": "",
+    "lateral_case": "",
+    "control_node": 0,
+    "control_dof": 1,
+    "target_displacement": 100.0,     # mm
+    "steps": 20,
+    "hinge_model": "Trilinear",
+    "hinge_length_ratio": 0.10,
+    "fy": 0.235,                      # kN/mm^2
+    "post_yield_ratio": 0.02,
+    "ductility": 10.0,
+    "pinching": 0.8,
+    "damage": 0.02,
+    "beta": 0.4,
+}
+
 
 @dataclass
 class LoadCase:
@@ -573,6 +590,11 @@ class Project:
 
     def scenario_names(self) -> List[str]:
         return list(self.cases.keys()) + list(self.combos.keys())
+
+    def pushover_settings(self) -> dict:
+        settings = dict(PUSHOVER_DEFAULTS)
+        settings.update(self.settings.get("pushover", {}))
+        return settings
 
     def loads_of_case(self, case: str):
         return ([l for l in self.nodal_loads if l.case == case],

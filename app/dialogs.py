@@ -1486,6 +1486,144 @@ class SelfWeightDialog(BaseDialog):
         self.buttons("Apply")
 
 
+class PushoverDialog(BaseDialog):
+    """Setup for a displacement-controlled pushover with lumped hinges."""
+
+    def __init__(self, project: Project, selected_node: Optional[int] = None,
+                 parent=None) -> None:
+        super().__init__("Pushover Analysis", parent, 520)
+        self.project = project
+        cfg = project.pushover_settings()
+        self.body.addWidget(title_label("Loading"))
+        form = QFormLayout()
+        self.gravity = QComboBox()
+        self.gravity.addItem("(none)", "")
+        for name in project.scenario_names():
+            self.gravity.addItem(name, name)
+        self.lateral = QComboBox()
+        for name in project.scenario_names():
+            self.lateral.addItem(name, name)
+        form.addRow("Gravity case / combo", self.gravity)
+        form.addRow("Lateral case / combo", self.lateral)
+        self.control_node = int_spin(1, 1, max(project.nodes, default=1))
+        self.control_dof = QComboBox()
+        self.control_dof.addItem("UX", 1)
+        self.control_dof.addItem("UY", 2)
+        self.control_dof.addItem("UZ", 3)
+        self.target = spin(UNITS.length(100.0), -UNITS.length(1e8),
+                           UNITS.length(1e8), UNITS.length_decimals,
+                           UNITS.length(5.0), UNITS.length_unit)
+        self.steps = int_spin(20, 2, 5000)
+        form.addRow("Control node", self.control_node)
+        form.addRow("Control DOF", self.control_dof)
+        form.addRow("Target displacement", self.target)
+        form.addRow("Steps", self.steps)
+        self.body.addLayout(form)
+
+        self.body.addWidget(title_label("Lumped plastic hinges"))
+        hform = QFormLayout()
+        self.hinge_model = QComboBox()
+        for label, key in (("Bilinear — Steel01", "Bilinear"),
+                           ("Trilinear — Hysteretic", "Trilinear"),
+                           ("Takeda-like — Hysteretic", "Takeda"),
+                           ("Flag-shaped — FlagShape", "Flag")):
+            self.hinge_model.addItem(label, key)
+        self.hinge_ratio = spin(float(cfg.get("hinge_length_ratio", 0.10)),
+                                0.01, 0.25, 3, 0.01)
+        self.fy = spin(UNITS.stress(float(cfg.get("fy", 0.235))),
+                       0.0, UNITS.stress(10.0), 5, UNITS.stress(0.01),
+                       UNITS.stress_unit)
+        self.post = spin(float(cfg.get("post_yield_ratio", 0.02)),
+                         0.0, 0.5, 4, 0.005)
+        self.ductility = spin(float(cfg.get("ductility", 10.0)),
+                              2.0, 100.0, 2, 1.0)
+        self.pinching = spin(float(cfg.get("pinching", 0.8)),
+                             0.0, 1.0, 3, 0.05)
+        self.damage = spin(float(cfg.get("damage", 0.02)),
+                           0.0, 1.0, 4, 0.005)
+        self.beta = spin(float(cfg.get("beta", 0.4)),
+                         0.0, 1.0, 3, 0.05)
+        hform.addRow("Hinge model", self.hinge_model)
+        hform.addRow("Plastic hinge length / L", self.hinge_ratio)
+        hform.addRow("Yield strength fy", self.fy)
+        hform.addRow("Post-yield stiffness ratio", self.post)
+        hform.addRow("Ultimate / yield strain", self.ductility)
+        hform.addRow("Pinching", self.pinching)
+        hform.addRow("Damage", self.damage)
+        hform.addRow("Takeda beta", self.beta)
+        self.body.addLayout(hform)
+        self.body.addWidget(hint(
+            "Beam elements are rebuilt as beamWithHinges elements for this run. "
+            "The hinge sections use a fiber mesh and the selected hysteresis law, "
+            "so hinge rotation is an approximation of the local curvature × plastic "
+            "hinge length. The base model and its elastic results are not changed."))
+
+        # defaults
+        gravity = cfg.get("gravity_case") or ("DL" if "DL" in project.cases else "")
+        self.gravity.setCurrentIndex(max(0, self.gravity.findData(gravity)))
+        lateral = cfg.get("lateral_case")
+        if not lateral:
+            for preferred in ("WIND", "EQ", "LAT", "LL"):
+                if preferred in project.cases:
+                    lateral = preferred
+                    break
+        if not lateral and project.scenario_names():
+            lateral = project.scenario_names()[0]
+        if lateral:
+            self.lateral.setCurrentIndex(max(0, self.lateral.findData(lateral)))
+        node = selected_node or cfg.get("control_node") or 0
+        if node not in project.nodes:
+            node = max(project.nodes, key=lambda t: project.nodes[t].z,
+                       default=1) if project.nodes else 1
+        self.control_node.setValue(int(node))
+        self.control_dof.setCurrentIndex(max(0, self.control_dof.findData(
+            int(cfg.get("control_dof", 1)))))
+        if project.nodes:
+            zs = [n.z for n in project.nodes.values()]
+            height = max(zs) - min(zs)
+            target = float(project.settings.get("pushover", {}).get(
+                "target_displacement", 0.0) or 0.0)
+            if target <= 0:
+                target = max(0.02 * height, 10.0)
+            self.target.setValue(UNITS.length(target))
+        self.steps.setValue(int(cfg.get("steps", 20)))
+        self.hinge_ratio.setValue(float(cfg.get("hinge_length_ratio", 0.10)))
+        self.hinge_model.setCurrentIndex(max(
+            0, self.hinge_model.findData(str(cfg.get("hinge_model", "Trilinear")))))
+        self.hinge_model.currentIndexChanged.connect(self._sync)
+        self._sync()
+        self.buttons("Run Pushover")
+
+    def _sync(self, *_args) -> None:
+        model = self.hinge_model.currentData()
+        use_hyst = model in ("Trilinear", "Takeda")
+        for widget, enabled in (
+                (self.pinching, model == "Takeda"),
+                (self.damage, model == "Takeda"),
+                (self.beta, model in ("Takeda", "Flag")),
+                (self.ductility, use_hyst),
+                (self.post, True)):
+            widget.setEnabled(enabled)
+
+    def spec(self) -> dict:
+        return {
+            "gravity_case": self.gravity.currentData() or "",
+            "lateral_case": self.lateral.currentData() or "",
+            "control_node": self.control_node.value(),
+            "control_dof": self.control_dof.currentData() or 1,
+            "target_displacement": UNITS.length_base(self.target.value()),
+            "steps": self.steps.value(),
+            "hinge_model": self.hinge_model.currentData() or "Trilinear",
+            "hinge_length_ratio": self.hinge_ratio.value(),
+            "fy": UNITS.stress_base(self.fy.value()),
+            "post_yield_ratio": self.post.value(),
+            "ductility": self.ductility.value(),
+            "pinching": self.pinching.value(),
+            "damage": self.damage.value(),
+            "beta": self.beta.value(),
+        }
+
+
 class AnalysisDialog(BaseDialog):
     def __init__(self, project: Project, parent=None) -> None:
         super().__init__("Analysis Settings", parent, 430)

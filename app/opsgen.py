@@ -92,6 +92,41 @@ class ModalResults:
     log: str = ""
 
 
+@dataclass
+class PushoverStep:
+    step: int = 0
+    displacement: float = 0.0
+    base_shear: float = 0.0
+    displacements: Dict[int, List[float]] = field(default_factory=dict)
+    hinge_rotations: Dict[int, List[float]] = field(default_factory=dict)
+    hinge_moments: Dict[int, List[float]] = field(default_factory=dict)
+
+
+@dataclass
+class PushoverResults:
+    gravity_case: str = ""
+    lateral_case: str = ""
+    control_node: int = 0
+    control_dof: int = 1
+    hinge_model: str = ""
+    steps: List[PushoverStep] = field(default_factory=list)
+    hinge_yield: Dict[int, float] = field(default_factory=dict)
+    log: str = ""
+
+    def static_at(self, index: int = -1) -> StaticResults:
+        step = self.steps[index]
+        return StaticResults(
+            scenario=f"Pushover step {step.step}",
+            displacements={t: list(v) for t, v in step.displacements.items()},
+            max_disp=max((max(abs(v) for v in d) for d in step.displacements.values()),
+                         default=0.0),
+            log=self.log)
+
+    def max_hinge_rotation(self, step: PushoverStep) -> float:
+        return max((abs(v) for vals in step.hinge_rotations.values() for v in vals),
+                   default=0.0)
+
+
 # --------------------------------------------------------------------------- #
 # model construction
 # --------------------------------------------------------------------------- #
@@ -111,9 +146,165 @@ def _ensure_section(s: Section) -> Section:
     return s
 
 
+def _point_in_polygon(y: float, z: float, poly) -> bool:
+    inside = False
+    j = len(poly) - 1
+    for i, (yi, zi) in enumerate(poly):
+        yj, zj = poly[j]
+        if ((zi > z) != (zj > z)) and (y < (yj - yi) * (z - zi) / (zj - zi) + yi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _rect_fibers(y0: float, y1: float, z0: float, z1: float,
+                 ny: int, nz: int):
+    ny = max(2, ny)
+    nz = max(2, nz)
+    dy = (y1 - y0) / ny
+    dz = (z1 - z0) / nz
+    area = abs((y1 - y0) * (z1 - z0)) / (ny * nz)
+    return [(y0 + (i + 0.5) * dy, z0 + (j + 0.5) * dz, area)
+            for i in range(ny) for j in range(nz)]
+
+
+def _section_fiber_mesh(sec: Section):
+    """Return fibers that capture thin walls of standard section shapes."""
+    b = max(float(getattr(sec, "b", 0.0) or 0.0), 1.0)
+    h = max(float(getattr(sec, "h", 0.0) or 0.0), 1.0)
+    t = max(float(getattr(sec, "t", 0.0) or 0.0), 0.0)
+    tw = max(float(getattr(sec, "tw", 0.0) or 0.0), 0.0)
+    tf = max(float(getattr(sec, "tf", 0.0) or 0.0), 0.0)
+    shape = getattr(sec, "shape", "Rectangle")
+    if shape in ("Circle", "Pipe", "Hexagon", "Octagon"):
+        b = h = max(float(getattr(sec, "d", 0.0) or 0.0), 1.0)
+
+    def subdiv(length: float, minimum: float, cap: int = 12) -> int:
+        return max(2, min(cap, int(round(length / max(minimum, 1.0)))))
+
+    fibers = []
+    if shape == "I-Shape":
+        tw = max(min(tw, b), 2.0)
+        tf = max(min(tf, 0.45 * h), 1.0)
+        fibers += _rect_fibers(-b / 2, b / 2, h / 2 - tf, h / 2,
+                               subdiv(b, 40.0), subdiv(tf, 10.0))
+        fibers += _rect_fibers(-tw / 2, tw / 2, -h / 2 + tf, h / 2 - tf,
+                               subdiv(tw, 8.0, 6), subdiv(h - 2 * tf, 40.0, 12))
+        fibers += _rect_fibers(-b / 2, b / 2, -h / 2, -h / 2 + tf,
+                               subdiv(b, 40.0), subdiv(tf, 10.0))
+        return fibers
+    if shape == "Box":
+        t = max(min(t, 0.45 * min(b, h)), 1.0)
+        fibers += _rect_fibers(-b / 2, b / 2, h / 2 - t, h / 2,
+                               subdiv(b, 30.0, 10), subdiv(t, 8.0, 4))
+        fibers += _rect_fibers(-b / 2, b / 2, -h / 2, -h / 2 + t,
+                               subdiv(b, 30.0, 10), subdiv(t, 8.0, 4))
+        fibers += _rect_fibers(-b / 2, -b / 2 + t, -h / 2 + t, h / 2 - t,
+                               subdiv(t, 8.0, 4), subdiv(h - 2 * t, 30.0, 10))
+        fibers += _rect_fibers(b / 2 - t, b / 2, -h / 2 + t, h / 2 - t,
+                               subdiv(t, 8.0, 4), subdiv(h - 2 * t, 30.0, 10))
+        return fibers
+    if shape == "L-Shape":
+        t = max(min(t, 0.45 * min(b, h)), 1.0)
+        fibers += _rect_fibers(-b / 2, b / 2, -h / 2, -h / 2 + t,
+                               subdiv(b, 30.0, 10), subdiv(t, 8.0, 4))
+        fibers += _rect_fibers(-b / 2, -b / 2 + t, -h / 2 + t, h / 2,
+                               subdiv(t, 8.0, 4), subdiv(h - t, 30.0, 10))
+        return fibers
+    if shape == "T-Shape":
+        tw = max(min(tw, b), 2.0)
+        tf = max(min(tf, 0.45 * h), 1.0)
+        fibers += _rect_fibers(-b / 2, b / 2, h / 2 - tf, h / 2,
+                               subdiv(b, 30.0, 10), subdiv(tf, 8.0, 4))
+        fibers += _rect_fibers(-tw / 2, tw / 2, -h / 2, h / 2 - tf,
+                               subdiv(tw, 8.0, 5), subdiv(h - tf, 30.0, 10))
+        return fibers
+
+    outer, inner = sec.outline()
+    if len(outer) < 3:
+        return []
+    ys = [p[0] for p in outer]
+    zs = [p[1] for p in outer]
+    y0, y1, z0, z1 = min(ys), max(ys), min(zs), max(zs)
+    nx = max(8, min(24, int(round(b / 25.0))))
+    ny = max(8, min(24, int(round(h / 25.0))))
+    dy, dz = (y1 - y0) / ny, (z1 - z0) / nx
+    area = abs((y1 - y0) * (z1 - z0)) / (nx * ny)
+    for iy in range(ny):
+        y = y0 + (iy + 0.5) * dy
+        for iz in range(nx):
+            z = z0 + (iz + 0.5) * dz
+            if not _point_in_polygon(y, z, outer):
+                continue
+            if inner and _point_in_polygon(y, z, inner):
+                continue
+            fibers.append((y, z, area))
+    return fibers
+
+
+def _add_hinge_section(project: Project, sec: Section, mat: Material,
+                       config: dict, mat_tag: int, shear_tag: int,
+                       base_sec_tag: int, sec_tag: int,
+                       log: List[str]) -> bool:
+    """Create a fiber hinge section with the selected hysteresis law.
+
+    An elastic shear material is aggregated into the section so that
+    distributed beam loads do not produce an ill-conditioned element.
+    """
+    fibers = _section_fiber_mesh(sec)
+    if not fibers:
+        log.append(f"Section {sec.tag}: no fibers generated for pushover hinge.")
+        return False
+    fy = abs(float(config.get("fy", mat.fy) or mat.fy or 0.235))
+    fy = max(fy, 1e-6)
+    post = max(float(config.get("post_yield_ratio", 0.02)), 0.0)
+    ductility = max(float(config.get("ductility", 10.0)), 2.0)
+    model = str(config.get("hinge_model", "Trilinear"))
+    E = max(mat.E, 1e-6)
+    ey = fy / E
+    e2 = ey * 3.0
+    eu = max(ey * ductility, e2 * 1.5)
+    s2 = fy * (1.0 + post * 3.0)
+    su = fy * (1.0 + post * ductility)
+
+    if model == "Bilinear":
+        ops.uniaxialMaterial("Steel01", mat_tag, fy, E, post)
+    elif model == "Flag":
+        flag_beta = max(0.0, min(1.0, float(config.get("beta", 0.5))))
+        ops.uniaxialMaterial("FlagShape", mat_tag, E, fy, E * post, flag_beta)
+    else:
+        if model == "Takeda":
+            pinch = max(0.0, min(1.0, float(config.get("pinching", 0.8))))
+            damage = max(0.0, float(config.get("damage", 0.02)))
+            beta = max(0.0, float(config.get("beta", 0.4)))
+        else:
+            pinch, damage, beta = 1.0, 0.0, 0.0
+        ops.uniaxialMaterial(
+            "Hysteretic", mat_tag,
+            fy, ey, s2, e2, su, eu,
+            -fy, -ey, -s2, -e2, -su, -eu,
+            pinch, pinch, damage, 0.0, beta)
+
+    ops.section("Fiber", base_sec_tag, "-GJ", max(mat.G * sec.J, 1e-6))
+    for y, z, area in fibers:
+        ops.fiber(y, z, area, mat_tag)
+    shear_stiffness = max(mat.G * sec.A, 1e-6)
+    ops.uniaxialMaterial("Elastic", shear_tag, shear_stiffness)
+    ops.section("Aggregator", sec_tag, shear_tag, "Vy", shear_tag, "Vz",
+                "-section", base_sec_tag)
+    log.append(f"Pushover hinge section {sec_tag}: {len(fibers)} fibers, "
+               f"{model} material {mat_tag}, elastic shear {shear_tag}.")
+    return True
+
+
 def build(project: Project, scenario: Optional[str] = None,
-          verbose: bool = False) -> List[str]:
-    """Build a fresh OpenSees model.  If *scenario* is given, loads are applied."""
+          verbose: bool = False,
+          pushover: Optional[dict] = None) -> List[str]:
+    """Build a fresh OpenSees model.  If *scenario* is given, loads are applied.
+
+    If *pushover* is given, beam elements are built as ``beamWithHinges`` with
+    fiber hinge sections using the selected hysteresis law.
+    """
     log: List[str] = []
 
     nodes = project.nodes
@@ -142,6 +333,9 @@ def build(project: Project, scenario: Optional[str] = None,
     transf_cache: Dict[Tuple[float, float, float], int] = {}
     transf_tag = 1
     shell_sec = 900000
+    hinge_cache: Dict[tuple, int] = {}
+    hinge_mat_tag = 2_000_000
+    hinge_sec_tag = 1_000_000
 
     for e in project.elements.values():
         if len(e.nodes) < 2 or any(t not in nodes for t in e.nodes):
@@ -174,6 +368,40 @@ def build(project: Project, scenario: Optional[str] = None,
             transf_cache[key] = transf_tag
             ops.geomTransf("Linear", transf_tag, *vx)
             transf_tag += 1
+
+        if pushover is not None:
+            hp = pushover
+            cache_key = (
+                sec.tag, mat.tag, str(hp.get("hinge_model", "Trilinear")),
+                round(float(hp.get("fy", mat.fy) or 0.0), 9),
+                round(float(hp.get("post_yield_ratio", 0.02)), 9),
+                round(float(hp.get("ductility", 10.0)), 9),
+                round(float(hp.get("pinching", 0.8)), 9),
+                round(float(hp.get("damage", 0.02)), 9),
+                round(float(hp.get("beta", 0.4)), 9),
+            )
+            hinge_sec = hinge_cache.get(cache_key)
+            if hinge_sec is None:
+                slot = len(hinge_cache)
+                hinge_sec = hinge_sec_tag + slot * 2
+                tag = hinge_mat_tag + slot * 3
+                shear_tag = tag + 1
+                base_sec = hinge_sec + 1
+                if _add_hinge_section(project, sec, mat, hp, tag, shear_tag,
+                                      base_sec, hinge_sec, log):
+                    hinge_cache[cache_key] = hinge_sec
+                else:
+                    hinge_sec = None
+            if hinge_sec is not None:
+                length = max(project.element_length(e), 1e-6)
+                ratio = max(0.01, min(0.25, float(hp.get("hinge_length_ratio", 0.1))))
+                lp = min(length * ratio, 0.2 * length)
+                ops.element("beamWithHinges", e.tag, e.nodes[0], e.nodes[1],
+                            hinge_sec, lp, hinge_sec, lp,
+                            mat.E, sec.A, sec.Iz, sec.Iy, mat.G, sec.J,
+                            transf_cache[key])
+                continue
+
         ops.element("elasticBeamColumn", e.tag, e.nodes[0], e.nodes[1],
                     sec.A, mat.E, mat.G, sec.J, sec.Iy, sec.Iz,
                     transf_cache[key])
@@ -219,13 +447,14 @@ def _scenario_factors(project: Project, scenario: str) -> List[Tuple[str, float]
 
 
 def _apply_scenario(project: Project, scenario: str, log: List[str],
-                    verbose: bool = False) -> None:
+                    verbose: bool = False, ts_base: int = 1,
+                    p_base: int = 1) -> Tuple[int, int]:
     factors = _scenario_factors(project, scenario)
     if not factors:
         raise ValueError(f"Scenario '{scenario}' has no load cases.")
 
-    ts_tag = 1
-    p_tag = 1
+    ts_tag = ts_base
+    p_tag = p_base
     for case_name, factor in factors:
         if abs(factor) < 1e-12:
             continue
@@ -234,6 +463,7 @@ def _apply_scenario(project: Project, scenario: str, log: List[str],
         _apply_case_loads(project, case_name, log, verbose)
         ts_tag += 1
         p_tag += 1
+    return ts_tag, p_tag
 
 
 def _apply_case_loads(project: Project, case: str, log: List[str],
@@ -465,6 +695,143 @@ def run_static(project: Project, scenario: str) -> StaticResults:
     res.max_disp = max((max(abs(v) for v in d) for d in res.displacements.values()),
                        default=0.0)
     return res
+
+
+def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverResults:
+    """Run a displacement-controlled pushover with lumped plastic hinges.
+
+    Beam elements are rebuilt as ``beamWithHinges``; the hinge sections are
+    fiber sections using the selected bilinear, trilinear, Takeda-like or
+    flag-shaped hysteresis law.
+    """
+    errors, _warnings = check_model(project)
+    if errors:
+        raise ValueError("Model check failed:\n• " + "\n• ".join(errors))
+
+    cfg = project.pushover_settings()
+    if config:
+        cfg.update(config)
+    lateral = str(cfg.get("lateral_case") or "")
+    gravity = str(cfg.get("gravity_case") or "")
+    if not lateral:
+        raise ValueError("Select a lateral load case or combination.")
+    node = int(cfg.get("control_node") or 0)
+    if node not in project.nodes:
+        raise ValueError("Select a valid pushover control node.")
+    dof = int(cfg.get("control_dof") or 1)
+    if dof not in (1, 2, 3):
+        raise ValueError("Pushover control DOF must be UX, UY or UZ.")
+    target = float(cfg.get("target_displacement") or 0.0)
+    if abs(target) < 1e-9:
+        raise ValueError("Enter a non-zero target displacement.")
+    steps = max(1, int(cfg.get("steps") or 20))
+
+    log: List[str] = []
+    log += build(project, None, pushover=cfg)
+    ops.wipeAnalysis()
+
+    if gravity:
+        _apply_scenario(project, gravity, log)
+        ops.constraints("Transformation")
+        ops.numberer("RCM")
+        ops.system("BandGen")
+        ops.test("NormDispIncr", 1e-6, 50, 0)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        rc = ops.analyze(1)
+        if rc != 0:
+            raise RuntimeError(
+                f"Gravity analysis '{gravity}' failed (OpenSees return code {rc}).")
+        ops.loadConst("-time", 0.0)
+        log.append(f"Gravity load case '{gravity}' applied and held constant.")
+        ops.wipeAnalysis()
+
+    ts_next, p_next = _apply_scenario(project, lateral, log, ts_base=101, p_base=101)
+    lateral_cases = {c for c, _f in _scenario_factors(project, lateral)}
+    has_control_load = any(
+        l.node == node and abs(l.values[dof - 1]) > 1e-12
+        for l in project.nodal_loads if l.case in lateral_cases)
+    if not has_control_load:
+        control = [0.0] * 6
+        control[dof - 1] = 1.0e-3
+        ops.load(node, *control)
+        log.append(f"Added a 0.001 kN control-direction reference load at "
+                   f"node {node} DOF {dof}.")
+
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("BandGen")
+    ops.test("NormDispIncr", 1e-6, 50, 0)
+    ops.algorithm("Newton")
+    du = target / steps
+    ops.integrator("DisplacementControl", node, dof, du)
+    ops.analysis("Static")
+
+    hinge_tags = [tag for tag, e in project.elements.items()
+                  if e.kind == "beam" and len(e.nodes) >= 2]
+    ratio = max(0.01, min(0.25, float(cfg.get("hinge_length_ratio", 0.1))))
+    lp_cache = {tag: min(project.element_length(project.elements[tag]) * ratio,
+                         0.2 * project.element_length(project.elements[tag]))
+                for tag in hinge_tags}
+
+    result = PushoverResults(
+        gravity_case=gravity, lateral_case=lateral,
+        control_node=node, control_dof=dof,
+        hinge_model=str(cfg.get("hinge_model", "Trilinear")))
+    fy = abs(float(cfg.get("fy", 0.235) or 0.235))
+    for tag in hinge_tags:
+        e = project.elements[tag]
+        sec = _ensure_section(project.section_of(e))
+        my = fy * sec.Iy / max(sec.h / 2.0, 1e-6)
+        mz = fy * sec.Iz / max(sec.b / 2.0, 1e-6)
+        result.hinge_yield[tag] = max(my, mz)
+
+    def record(step_no: int) -> None:
+        ops.reactions()
+        displacement = float(ops.nodeDisp(node, dof))
+        base_shear = -sum(
+            float(ops.nodeReaction(tag, dof))
+            for tag, n in project.nodes.items() if any(n.support))
+        displacements = {
+            tag: [float(ops.nodeDisp(tag, i)) for i in range(1, 7)]
+            for tag in project.nodes
+        }
+        rotations: Dict[int, List[float]] = {}
+        moments: Dict[int, List[float]] = {}
+        for tag in hinge_tags:
+            rot = []
+            mom = []
+            for sec_num in (1, 6):
+                try:
+                    force = ops.eleResponse(tag, "section", sec_num, "force")
+                    deform = ops.eleResponse(tag, "section", sec_num,
+                                             "deformation")
+                except Exception:
+                    force, deform = [], []
+                m = max((abs(float(v)) for v in force[1:3]), default=0.0) \
+                    if force else 0.0
+                k = max((abs(float(v)) for v in deform[1:3]), default=0.0) \
+                    if deform else 0.0
+                mom.append(m)
+                rot.append(k * lp_cache.get(tag, 0.0))
+            rotations[tag] = rot
+            moments[tag] = mom
+        result.steps.append(PushoverStep(
+            step_no, displacement, base_shear, displacements, rotations, moments))
+
+    record(0)
+    for step_no in range(1, steps + 1):
+        rc = ops.analyze(1)
+        if rc != 0:
+            raise RuntimeError(
+                f"Pushover failed at step {step_no} of {steps} "
+                f"(control displacement {result.steps[-1].displacement:.3f} mm, "
+                f"OpenSees return code {rc}).")
+        record(step_no)
+
+    result.log = "\n".join(log)
+    return result
 
 
 def run_modal(project: Project, nmodes: int = 6) -> ModalResults:

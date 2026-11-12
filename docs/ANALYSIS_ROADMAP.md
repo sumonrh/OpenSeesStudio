@@ -5,6 +5,11 @@
 **Current application:** OpenSees Studio 1.0.0  
 **Prepared:** 2026-11-12
 
+**Implementation status:** the Results-tab mode selector, node visibility toggle,
+ribbon cleanup and the Pushover tab with `beamWithHinges` lumped hinge models
+(Steel01 / Hysteretic / Takeda-like / FlagShape) are implemented. The remaining
+phases below are still planned.
+
 Command-level smoke checks against the installed build passed for:
 
 - a fiber-section `forceBeamColumn` cantilever under `DisplacementControl`;

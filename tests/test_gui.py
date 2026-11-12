@@ -103,6 +103,23 @@ class FakeSubdivide:
         return 4
 
 
+class FakePushover:
+    def __init__(self, project, selected_node=None, *a, **k):
+        self.project = project
+
+    def exec(self):
+        return 1
+
+    def spec(self):
+        node = max(self.project.nodes, key=lambda t: self.project.nodes[t].z)
+        return {"gravity_case": "DL", "lateral_case": "WIND",
+                "control_node": node, "control_dof": 1,
+                "target_displacement": 20.0, "steps": 4,
+                "hinge_model": "Takeda", "hinge_length_ratio": 0.1,
+                "fy": 0.235, "post_yield_ratio": 0.02, "ductility": 10.0,
+                "pinching": 0.8, "damage": 0.02, "beta": 0.4}
+
+
 class FakeSupport:
     def __init__(self, project, selected, *a, **k):
         self._target = selected
@@ -193,7 +210,8 @@ check("Shift+left orbits", abs(vp.camera.yaw - yaw2) > 1e-4,
 print("== ribbon ==")
 titles = [win.ribbon.tabs.tabText(i) for i in range(win.ribbon.tabs.count())]
 check("ribbon tabs", titles == ["View", "Structure", "Node/Element", "Properties",
-                                "Boundary", "Load", "Analysis", "Results", "Tools"],
+                                "Boundary", "Load", "Analysis", "Pushover",
+                                "Results", "Tools"],
       f"({titles})")
 check("default ribbon tab", win.ribbon.current_title() == "Structure",
       f"({win.ribbon.current_title()})")
@@ -218,10 +236,24 @@ view_page = win.ribbon._pages[0]
 check("view tab has no deformed button",
       all(b.defaultAction() is not win.a_deformed
           for b in view_page.findChildren(QToolButton)))
-results_page = win.ribbon._pages[7]
+check("view tab has no delete/selection actions",
+      all(b.defaultAction() not in (win.a_delete, win.a_sel_all, win.a_deselect)
+          for b in view_page.findChildren(QToolButton)))
+nodes_before = win.viewport.show_nodes
+win.a_nodes_visible.trigger()
+check("node visibility toggle hides nodes", win.viewport.show_nodes != nodes_before)
+win.a_nodes_visible.trigger()
+check("node visibility toggle restores nodes", win.viewport.show_nodes == nodes_before)
+results_page = win.ribbon._pages[8]
 result_actions = [b.defaultAction() for b in results_page.findChildren(QToolButton)]
 check("results tab has diagrams and deformation",
       win.a_beam_diagram in result_actions and win.a_deformation in result_actions)
+check("results tab has mode dropdown and animate",
+      win.a_animate in result_actions and not win.mode_combo.isHidden())
+pushover_page = win.ribbon._pages[7]
+pushover_actions = [b.defaultAction() for b in pushover_page.findChildren(QToolButton)]
+check("pushover tab has run and results actions",
+      win.a_pushover in pushover_actions and win.a_pushover_results in pushover_actions)
 check("properties panel action", win.a_props_visible.isChecked())
 win.a_props_visible.trigger()
 check("properties panel collapses", win.props_dock.isHidden())
@@ -320,6 +352,17 @@ win.run_modal()
 check("modal results present", win.modal_results is not None and len(win.modal_results.modes) > 0)
 check("first period positive", win.modal_results.modes[0].period > 0,
       f"(T1={win.modal_results.modes[0].period:.4f} s)")
+check("mode dropdown populated",
+      win.mode_combo.isEnabled() and win.mode_combo.count() == len(win.modal_results.modes),
+      f"({win.mode_combo.count()} modes)")
+if win.mode_combo.count() > 1:
+    win.mode_combo.setCurrentIndex(1)
+    check("mode dropdown selects shape", win.viewport.mode_index == 2
+          and win.viewport.show_deformed)
+win.a_animate.trigger()
+check("mode animation starts", win.viewport.is_animating())
+win.a_animate.trigger()
+check("mode animation stops", not win.viewport.is_animating())
 check("modal analysis locks model", win.model_locked and not win.a_nodes.isEnabled())
 win.a_lock.trigger()
 check("model unlocked for editing", not win.model_locked and win.a_nodes.isEnabled())
@@ -604,6 +647,35 @@ check("subdivide added intermediate nodes",
       len(win.project.nodes) == n_before + 3,
       f"({len(win.project.nodes) - n_before:+d} nodes)")
 check("subdivide selects new segments", len(win.viewport.sel_elements) == 4)
+
+print("== pushover module ==")
+win.load_example()
+old_pushover = dialogs.PushoverDialog
+dialogs.PushoverDialog = FakePushover
+old_show_pushover = win.show_pushover_results
+win.show_pushover_results = lambda: None
+try:
+    win.pushover()
+finally:
+    dialogs.PushoverDialog = old_pushover
+    win.show_pushover_results = old_show_pushover
+check("pushover results created",
+      win.pushover_results is not None and len(win.pushover_results.steps) == 5,
+      f"({len(win.pushover_results.steps) if win.pushover_results else 0} steps)")
+if win.pushover_results:
+    check("pushover capacity curve increases",
+          win.pushover_results.steps[-1].base_shear
+          > win.pushover_results.steps[0].base_shear)
+    check("pushover results expose a step state",
+          bool(win.pushover_results.static_at(-1).displacements))
+check("pushover results action enabled", win.a_pushover_results.isEnabled())
+check("pushover locks model", win.model_locked)
+if win.pushover_results:
+    from app.pushover import PushoverResultsDialog
+    pd = PushoverResultsDialog(win.project, win.pushover_results)
+    check("pushover results dialog lists steps",
+          pd.step_combo.count() == len(win.pushover_results.steps)
+          and pd.plot.results is not None)
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

@@ -410,6 +410,20 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         _fill(p, accent)
         p.drawEllipse(QPointF(20.5, 16), 1.7, 1.7)
 
+    elif name == "pushover":
+        _pen(p, "#8ea6bd", 1.2)
+        p.drawLine(QPointF(3, 20.5), QPointF(21, 20.5))
+        p.drawLine(QPointF(3, 3.5), QPointF(3, 20.5))
+        _pen(p, accent, 1.8)
+        path = QPainterPath()
+        path.moveTo(4, 20)
+        path.lineTo(10, 13)
+        path.lineTo(13, 9)
+        path.lineTo(20.5, 6)
+        p.drawPath(path)
+        _fill(p, ORANGE)
+        p.drawEllipse(QPointF(13, 9), 2.0, 2.0)
+
     elif name == "deformed":
         p.setPen(QPen(QColor("#9fb0c4"), 1.3, Qt.DashLine))
         p.drawLine(QPointF(3, 17), QPointF(21, 17))

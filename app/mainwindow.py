@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
 from . import dialogs, icons, opsgen, theme
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
+from .pushover import PushoverResultsDialog
 from .ribbon import Ribbon
 from .results import ResultsDialog
 from .resultsview import ResultsPanel
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self.history = History(self.project)
         self.static_results: Optional[opsgen.StaticResults] = None
         self.modal_results: Optional[opsgen.ModalResults] = None
+        self.pushover_results: Optional[opsgen.PushoverResults] = None
         self.static_cache: Dict[str, opsgen.StaticResults] = {}
         self.results_scenario = ""
         self.model_locked = False
@@ -187,7 +189,6 @@ class MainWindow(QMainWindow):
         self.a_modal = self._act("Modal", "modal", self.run_modal, "F6",
                                  "Run an eigenvalue analysis")
         self.a_results = self._act("Results", "results", self.show_results, "F7")
-        self.a_animate = self._act("Animate", "animate", self.animate_mode, "F8", checkable=True)
         self.a_beam_diagram = self._act(
             "Beam Diagrams", "diagram", self._toggle_beam_diagram, "",
             "Show shear, moment, axial and torsion diagrams for a load case "
@@ -208,6 +209,24 @@ class MainWindow(QMainWindow):
         self.a_deformed = self._act("Deformed", "deformed",
                                     lambda on: self._toggle(deformed=on), "", checkable=True)
         self.a_deformed.setChecked(True)
+        self.a_nodes_visible = self._act("Nodes", "node",
+                                         lambda on: self._toggle(nodes=on), "",
+                                         "Show or hide nodes in the viewport",
+                                         checkable=True)
+        self.a_nodes_visible.setChecked(True)
+        self.mode_combo = QComboBox()
+        self.mode_combo.setMinimumWidth(170)
+        self.mode_combo.setMaximumWidth(260)
+        self.mode_combo.setToolTip("Select a mode shape to display")
+        self.mode_combo.currentIndexChanged.connect(self._mode_selected)
+        self.a_animate = self._act("Animate", "animate", self.animate_mode, "F8", checkable=True)
+        self.a_pushover = self._act(
+            "Pushover", "pushover", self.pushover, "",
+            "Run a displacement-controlled pushover with lumped plastic hinges")
+        self.a_pushover_results = self._act(
+            "Pushover Results", "results", self.show_pushover_results, "",
+            "Show the capacity curve and hinge state")
+        self.a_pushover_results.setEnabled(False)
         self.a_clean_view = self._act("Clean View", "clean", self.clean_view, "",
                                       "Hide deformation, loads and labels")
         self.a_extruded = self._act("Extruded", "extruded",
@@ -250,7 +269,7 @@ class MainWindow(QMainWindow):
                              self.a_settings)
 
     def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None,
-                extruded=None) -> None:
+                extruded=None, nodes=None) -> None:
         kw = {}
         if labels is not None:
             kw["show_labels"] = labels
@@ -264,6 +283,8 @@ class MainWindow(QMainWindow):
             kw["show_supports"] = supports
         if extruded is not None:
             kw["show_extruded"] = extruded
+        if nodes is not None:
+            kw["show_nodes"] = nodes
         self.viewport.set_show(**kw)
 
     def clean_view(self) -> None:
@@ -368,14 +389,12 @@ class MainWindow(QMainWindow):
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right):
             group.add_large(action)
         group = page.add_group("Display")
-        group.add_column((self.a_orbit, self.a_labels, self.a_grid))
+        group.add_column((self.a_orbit, self.a_nodes_visible, self.a_labels, self.a_grid))
         group = page.add_group("Deformed shape")
         group.add_field("Scale", self.scale_spin)
         group = page.add_group("View mode")
         group.add_large(self.a_extruded)
         group.add_large(self.a_clean_view)
-        group = page.add_group("Selection")
-        group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
         group = page.add_group("Panels")
         group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible))
 
@@ -446,18 +465,35 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_modal)
         group = page.add_group("Results")
         group.add_large(self.a_results)
-        group.add_large(self.a_animate)
+        group = page.add_group("Model state")
+        group.add_large(self.a_lock)
+
+        page = ribbon.add_tab("Pushover")
+        group = page.add_group("Pushover")
+        group.add_large(self.a_pushover)
+        group.add_large(self.a_pushover_results)
+        group = page.add_group("Lumped plasticity")
+        hinge_note = QLabel("beamWithHinges\nfiber hinges\nSteel01 / Hysteretic / FlagShape")
+        hinge_note.setStyleSheet(f"color:{theme.MUTED}; font-size:10px;")
+        group.add_widget(hinge_note)
+        group = page.add_group("Display")
+        group.add_column((self.a_deformed, self.a_nodes_visible, self.a_labels))
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
         page = ribbon.add_tab("Results")
         group = page.add_group("Results")
         group.add_large(self.a_results)
+        group.add_large(self.a_pushover_results)
+        group = page.add_group("Mode shapes")
+        group.add_field("Mode", self.mode_combo)
+        group.add_large(self.a_animate)
         group = page.add_group("Result display")
         group.add_large(self.a_beam_diagram)
         group.add_large(self.a_deformation)
         group = page.add_group("Display")
-        group.add_column((self.a_clean_view, self.a_labels, self.a_grid))
+        group.add_column((self.a_clean_view, self.a_nodes_visible,
+                          self.a_labels, self.a_grid))
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -559,7 +595,43 @@ class MainWindow(QMainWindow):
             self.a_deformed.setChecked(False)
             self.a_deformed.blockSignals(False)
 
+    def _refresh_mode_combo(self) -> None:
+        if not hasattr(self, "mode_combo"):
+            return
+        current = self.viewport.mode_index if self.modal_results else 1
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.clear()
+        if self.modal_results and self.modal_results.modes:
+            for m in self.modal_results.modes:
+                self.mode_combo.addItem(
+                    f"Mode {m.mode}   T = {fmt(m.period, 4)} s", m.mode)
+            index = self.mode_combo.findData(current)
+            self.mode_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.mode_combo.setEnabled(True)
+        else:
+            self.mode_combo.addItem("No modal results")
+            self.mode_combo.setEnabled(False)
+        self.mode_combo.blockSignals(False)
+
+    def _mode_selected(self, index: int) -> None:
+        if self.modal_results is None or index < 0:
+            return
+        mode = self.mode_combo.itemData(index) or (index + 1)
+        self.viewport.set_modal_results(self.modal_results, int(mode))
+        self.viewport.show_deformed = True
+        self.a_deformed.blockSignals(True)
+        self.a_deformed.setChecked(True)
+        self.a_deformed.blockSignals(False)
+        if self.a_animate.isChecked():
+            self.viewport.start_animation()
+        else:
+            self.viewport.stop_animation()
+        period = next((m.period for m in self.modal_results.modes
+                       if m.mode == int(mode)), 0.0)
+        self._status(f"Mode {mode}  ·  T = {fmt(period, 4)} s")
+
     def _refresh_results_panel(self) -> None:
+        self._refresh_mode_combo()
         if not hasattr(self, "results_panel"):
             return
         names = self.project.scenario_names()
@@ -1315,8 +1387,7 @@ class MainWindow(QMainWindow):
 
         self.project = demo_frame()
         self.history = History(self.project)
-        self.static_results = None
-        self.modal_results = None
+        self._clear_results()
         self.viewport.set_project(self.project)
         self.refresh_all()
         self.viewport.fit()
@@ -1332,8 +1403,7 @@ class MainWindow(QMainWindow):
             return
         self.project = loaded
         self.history = History(self.project)
-        self.static_results = None
-        self.modal_results = None
+        self._clear_results()
         self.viewport.set_project(self.project)
         self.refresh_all()
         self.viewport.fit()
@@ -1362,6 +1432,9 @@ class MainWindow(QMainWindow):
         res.max_disp = float(payload.get("max_disp", 0.0))
         self.static_results = res
         self.modal_results = None
+        self.pushover_results = None
+        self.a_pushover_results.setEnabled(False)
+        self._refresh_mode_combo()
         self.results_scenario = res.scenario
         self.static_cache[res.scenario] = res
         self.viewport.set_load_scenario(res.scenario)
@@ -1387,7 +1460,13 @@ class MainWindow(QMainWindow):
         res = opsgen.ModalResults(modes=modes, shapes=shapes)
         self.modal_results = res
         self.static_results = None
+        self.pushover_results = None
+        self.a_pushover_results.setEnabled(False)
         mode = int(payload.get("mode", 1))
+        self._refresh_mode_combo()
+        index = self.mode_combo.findData(mode)
+        if index >= 0:
+            self.mode_combo.setCurrentIndex(index)
         self.viewport.set_modal_results(res, mode)
         self.viewport.fit()
         self.viewport.start_animation()
@@ -1403,8 +1482,7 @@ class MainWindow(QMainWindow):
         self.project = default_project()
         self.project.settings = dict(self.project.settings)
         self.history = History(self.project)
-        self.static_results = None
-        self.modal_results = None
+        self._clear_results()
         self.viewport.set_project(self.project)
         self.refresh_all()
         self._set_locked(False)
@@ -1421,8 +1499,7 @@ class MainWindow(QMainWindow):
             return
         self.project = loaded
         self.history = History(self.project)
-        self.static_results = None
-        self.modal_results = None
+        self._clear_results()
         self.viewport.set_project(self.project)
         self.refresh_all()
         self.viewport.fit()
@@ -1492,8 +1569,12 @@ class MainWindow(QMainWindow):
     def _clear_results(self) -> None:
         self.static_results = None
         self.modal_results = None
+        self.pushover_results = None
+        if hasattr(self, "a_pushover_results"):
+            self.a_pushover_results.setEnabled(False)
         self.static_cache.clear()
         self.viewport.clear_results()
+        self._refresh_mode_combo()
         if hasattr(self, "results_panel"):
             for action in (self.a_beam_diagram, self.a_deformation):
                 action.blockSignals(True)
@@ -1894,6 +1975,8 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         self.static_results = res
         self.modal_results = None
+        self.pushover_results = None
+        self.a_pushover_results.setEnabled(False)
         self.results_scenario = scenario
         self.static_cache[scenario] = res
         self.viewport.set_load_scenario(scenario)
@@ -1903,6 +1986,7 @@ class MainWindow(QMainWindow):
         self.a_loads_visible.blockSignals(False)
         self.viewport.set_static_results(res)
         self._apply_scale()
+        self._refresh_mode_combo()
         self._log(f"Static analysis '{scenario}' complete. Max |u| = "
                   f"{fmt(UNITS.length(res.max_disp), 4)} {UNITS.length_unit}")
         self._status(f"Static analysis complete - max displacement "
@@ -1933,13 +2017,92 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         self.modal_results = res
         self.static_results = None
-        self.viewport.set_modal_results(res, 1)
+        self.pushover_results = None
+        self.a_pushover_results.setEnabled(False)
+        self._refresh_mode_combo()
+        if self.mode_combo.count():
+            self.mode_combo.setCurrentIndex(0)
+            self._mode_selected(0)
+        else:
+            self.viewport.set_modal_results(res, 1)
         txt = ", ".join(f"T{m.mode}={fmt(m.period, 4)}s" for m in res.modes[:4])
         self._log(f"Modal analysis complete: {txt}")
         self._status(f"Modal analysis complete - {len(res.modes)} modes")
         self._set_locked(True)
         self.ribbon.set_current("Results")
         self._log("Model locked after analysis. Press Ctrl+L to unlock before editing.")
+
+    def pushover(self) -> None:
+        if not self.project.elements:
+            self._warn("The model has no elements.")
+            return
+        selected = next(iter(self.viewport.sel_nodes), None)
+        dlg = dialogs.PushoverDialog(self.project, selected, self)
+        if not dlg.exec():
+            return
+        cfg = dlg.spec()
+        if not cfg.get("lateral_case"):
+            self._warn("Select a lateral load case or combination.")
+            return
+        self.project.settings["pushover"] = dict(cfg)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._status("Running pushover analysis…")
+        self._log(f"Pushover: {cfg['hinge_model']} hinges, gravity "
+                  f"'{cfg['gravity_case'] or 'none'}', lateral "
+                  f"'{cfg['lateral_case']}', target "
+                  f"{fmt(UNITS.length(cfg['target_displacement']), 3)} "
+                  f"{UNITS.length_unit}.")
+        try:
+            res = opsgen.run_pushover(self.project, cfg)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Pushover failed", str(exc))
+            self._log(f"✖ Pushover analysis failed: {exc}")
+            self._status("Pushover analysis failed")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._clear_results()
+        self.pushover_results = res
+        self.a_pushover_results.setEnabled(True)
+        self._set_locked(True)
+        self.ribbon.set_current("Pushover")
+        last = max(0, len(res.steps) - 1)
+        self._show_pushover_step(last)
+        self._log(f"✔ Pushover complete: {len(res.steps) - 1} steps, "
+                  f"max base shear "
+                  f"{fmt(UNITS.force(max((s.base_shear for s in res.steps), default=0.0)), 3)} "
+                  f"{UNITS.force_unit}.")
+        self._status(f"Pushover complete - {len(res.steps) - 1} steps")
+        self.show_pushover_results()
+
+    def show_pushover_results(self) -> None:
+        if self.pushover_results is None:
+            self._warn("Run a pushover analysis first.")
+            return
+        dlg = PushoverResultsDialog(self.project, self.pushover_results, self)
+        dlg.stepSelected.connect(self._show_pushover_step)
+        dlg.exec()
+
+    def _show_pushover_step(self, index: int) -> None:
+        if self.pushover_results is None:
+            return
+        if not (0 <= index < len(self.pushover_results.steps)):
+            return
+        step = self.pushover_results.steps[index]
+        self.viewport.set_static_results(self.pushover_results.static_at(index))
+        self.viewport.set_load_scenario(self.pushover_results.lateral_case)
+        self.viewport.show_deformed = True
+        self.a_deformed.blockSignals(True)
+        self.a_deformed.setChecked(True)
+        self.a_deformed.blockSignals(False)
+        self._apply_scale()
+        self.viewport.update()
+        self._status(f"Pushover step {step.step}: "
+                     f"u = {fmt(UNITS.length(step.displacement), 3)} "
+                     f"{UNITS.length_unit}, "
+                     f"V = {fmt(UNITS.force(step.base_shear), 3)} "
+                     f"{UNITS.force_unit}")
 
     def _show_results_dialog(self) -> None:
         if not self.static_results and not self.modal_results:
@@ -1965,7 +2128,10 @@ class MainWindow(QMainWindow):
     def _plot_mode(self, mode: int) -> None:
         if not self.modal_results:
             return
-        self.viewport.set_modal_results(self.modal_results, mode)
+        index = self.mode_combo.findData(mode)
+        if index >= 0:
+            self.mode_combo.setCurrentIndex(index)
+        self._mode_selected(max(0, index))
         self.viewport.show_deformed = True
         self.a_deformed.setChecked(True)
         self.viewport.start_animation()
