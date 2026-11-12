@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.model import (Project, Element, Node, NodalLoad, LoadCase, Section,
-                       HingeAssignment, default_project)
+                       HingeDefinition, default_project)
 from app import opsgen
 
 FAILS = []
@@ -147,7 +147,9 @@ p.nodes[2] = Node(2, 0, 0, 1000)
 p.elements[1] = Element(1, "beam", [1, 2], 1, 2, vecxz=None)
 p.cases["LAT"] = LoadCase("LAT")
 p.nodal_loads.append(NodalLoad(1, 2, "LAT", [10.0, 0, 0, 0, 0, 0]))
-p.hinges[1] = HingeAssignment(1, "Takeda", 0.10, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
+p.hinge_defs[1] = HingeDefinition(1, "Hinge 1", "Takeda", 0.10, 0.235,
+                                 0.02, 10.0, 0.8, 0.02, 0.4)
+p.hinge_assignments[1] = 1
 cfg = {"gravity_case": "", "lateral_case": "LAT", "control_node": 2,
        "control_dof": 1, "target_displacement": 20.0, "steps": 5}
 push = opsgen.run_pushover(p, cfg)
@@ -165,10 +167,12 @@ check("pushover step state is reusable",
       1 if push.static_at(-1).displacements.get(2) else 0, 1)
 cloned = p.clone()
 check("hinge assignment persists",
-      1 if cloned.hinges.get(1) and cloned.hinges[1].model == "Takeda" else 0, 1)
+      1 if cloned.hinge_defs.get(1)
+      and cloned.hinge_defs[1].model == "Takeda"
+      and cloned.hinge_assignments.get(1) == 1 else 0, 1)
 
 p2 = p.clone()
-p2.hinges.clear()
+p2.hinge_assignments.clear()
 try:
     opsgen.run_pushover(p2, cfg)
     check("pushover rejects unassigned model", 0, 1)

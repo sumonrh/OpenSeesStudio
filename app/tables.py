@@ -568,5 +568,7 @@ class TablesDialog(QDialog):
         p.nodal_loads = nodal
         p.elem_loads = eleloads
         p.combos = combos
-        p.hinges = {t: h for t, h in p.hinges.items() if t in p.elements}
+        p.hinge_assignments = {
+            e: h for e, h in p.hinge_assignments.items()
+            if e in p.elements and h in p.hinge_defs}
         return p

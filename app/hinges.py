@@ -1,46 +1,271 @@
-"""Per-element lumped plastic-hinge assignment table."""
+"""Hinge definition library and element assignment dialogs."""
 
 from __future__ import annotations
 
 import copy
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
                                QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
-                               QTableWidgetSelectionRange, QVBoxLayout)
+                               QTableWidgetSelectionRange, QTabWidget,
+                               QVBoxLayout, QWidget)
 
 from . import theme
 from .hysteresis import HysteresisDialog, MODEL_LABELS
-from .model import HingeAssignment, Project
+from .model import HingeDefinition, Project
 from .units import UNITS
 
-MODELS = (("None", ""),) + tuple((label, key) for key, label in MODEL_LABELS.items())
+MODELS = ("Bilinear", "Trilinear", "Takeda", "Flag")
 
 
-class HingeTableDialog(QDialog):
-    """Editable table for assigning hinge properties to beam elements."""
+class HingeLibraryDialog(QDialog):
+    """Create and edit reusable hinge definitions, grouped by model type."""
 
-    COLUMNS = ["Element", "Section", "Hinge model", "Lp / L", "fy",
-               "b", "μu", "Pinch", "Damage", "β"]
+    def __init__(self, project: Project, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Hinge Library")
+        self.resize(980, 620)
+        self.project = project
+        self.defs: Dict[int, HingeDefinition] = copy.deepcopy(project.hinge_defs)
+        self.defaults = project.pushover_settings()
+        self.tables: Dict[str, QTableWidget] = {}
+        self.row_defs: Dict[str, List[int]] = {}
+
+        lay = QVBoxLayout(self)
+        title = QLabel("Hinge definitions")
+        title.setStyleSheet(
+            f"font-size: 15px; font-weight: 600; color: {theme.ACCENT_DARK};")
+        lay.addWidget(title)
+        lay.addWidget(QLabel(
+            "Create reusable hinge definitions. Each hinge type has its own tab "
+            "and its own parameter list; a definition can then be assigned to one "
+            "or more beam elements. An empty tab means no hinge of that type exists."))
+
+        self.tabs = QTabWidget()
+        lay.addWidget(self.tabs, 1)
+        for model in MODELS:
+            self._build_tab(model)
+
+        tools = QHBoxLayout()
+        new_btn = QPushButton("New hinge")
+        new_btn.clicked.connect(self._new)
+        dup_btn = QPushButton("Duplicate")
+        dup_btn.clicked.connect(self._duplicate)
+        del_btn = QPushButton("Delete")
+        del_btn.clicked.connect(self._delete)
+        tools.addWidget(new_btn)
+        tools.addWidget(dup_btn)
+        tools.addWidget(del_btn)
+        tools.addStretch(1)
+        diagram_btn = QPushButton("Hysteresis diagram…")
+        diagram_btn.clicked.connect(self._diagram)
+        tools.addWidget(diagram_btn)
+        lay.addLayout(tools)
+
+        bar = QHBoxLayout()
+        bar.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.reject)
+        save = QPushButton("Save")
+        save.setDefault(True)
+        save.clicked.connect(self.accept)
+        bar.addWidget(close)
+        bar.addWidget(save)
+        lay.addLayout(bar)
+
+        self._reload()
+
+    # ------------------------------------------------------------------ build
+    def _columns(self, model: str) -> List[str]:
+        columns = ["Name", "Lp / L", f"fy ({UNITS.stress_unit})", "b"]
+        if model in ("Trilinear", "Takeda"):
+            columns.append("μu")
+        if model == "Takeda":
+            columns += ["Pinch", "Damage", "β"]
+        elif model == "Flag":
+            columns += ["β"]
+        return columns
+
+    def _build_tab(self, model: str) -> None:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(6, 6, 6, 6)
+        table = QTableWidget(0, len(self._columns(model)))
+        table.setHorizontalHeaderLabels(self._columns(model))
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        table.setEditTriggers(QAbstractItemView.DoubleClicked |
+                                      QAbstractItemView.EditKeyPressed)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        table.setColumnWidth(0, 200)
+        table.setColumnWidth(1, 78)
+        table.setColumnWidth(2, 120)
+        table.setColumnWidth(3, 70)
+        self.tables[model] = table
+        lay.addWidget(table, 1)
+        self.tabs.addTab(page, MODEL_LABELS[model])
+
+    def _current_model(self) -> str:
+        index = self.tabs.currentIndex()
+        return MODELS[index] if 0 <= index < len(MODELS) else MODELS[0]
+
+    # ------------------------------------------------------------------ data
+    def _reload(self) -> None:
+        for model, table in self.tables.items():
+            defs = [h for h in sorted(self.defs.values(), key=lambda d: d.tag)
+                    if h.model == model]
+            self.row_defs[model] = [h.tag for h in defs]
+            table.setRowCount(len(defs))
+            for row, h in enumerate(defs):
+                values = [h.name, f"{h.length_ratio:.3f}",
+                          f"{UNITS.stress(h.fy):.5f}",
+                          f"{h.post_yield_ratio:.4f}"]
+                if model in ("Trilinear", "Takeda"):
+                    values.append(f"{h.ductility:.2f}")
+                if model == "Takeda":
+                    values += [f"{h.pinching:.3f}", f"{h.damage:.4f}",
+                               f"{h.beta:.3f}"]
+                elif model == "Flag":
+                    values.append(f"{h.beta:.3f}")
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    if col:
+                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    table.setItem(row, col, item)
+            table.resizeColumnsToContents()
+            table.setColumnWidth(0, max(160, table.columnWidth(0)))
+
+    def _selected_def(self) -> Optional[HingeDefinition]:
+        model = self._current_model()
+        rows = {i.row() for i in self.tables[model].selectedIndexes()}
+        if not rows:
+            return None
+        row = min(rows)
+        tags = self.row_defs.get(model, [])
+        if 0 <= row < len(tags):
+            return self.defs.get(tags[row])
+        return None
+
+    def _new(self) -> None:
+        model = self._current_model()
+        tag = max(self.defs, default=0) + 1
+        defaults = self.defaults
+        h = HingeDefinition(
+            tag, f"{MODEL_LABELS[model].split(' — ')[0]} {tag}",
+            model, float(defaults.get("hinge_length_ratio", 0.10)),
+            float(defaults.get("fy", 0.235)),
+            float(defaults.get("post_yield_ratio", 0.02)),
+            float(defaults.get("ductility", 10.0)),
+            float(defaults.get("pinching", 0.8)),
+            float(defaults.get("damage", 0.02)),
+            float(defaults.get("beta", 0.4)))
+        self.defs[tag] = h
+        self._reload()
+        table = self.tables[model]
+        row = self.row_defs[model].index(tag)
+        table.selectRow(row)
+
+    def _duplicate(self) -> None:
+        source = self._selected_def()
+        if source is None:
+            QMessageBox.information(self, "Hinge library",
+                                    "Select a hinge definition first.")
+            return
+        tag = max(self.defs, default=0) + 1
+        h = copy.deepcopy(source)
+        h.tag = tag
+        h.name = f"{source.name} copy"
+        self.defs[tag] = h
+        self._reload()
+        table = self.tables[h.model]
+        table.selectRow(self.row_defs[h.model].index(tag))
+
+    def _delete(self) -> None:
+        source = self._selected_def()
+        if source is None:
+            return
+        used = sum(1 for hinge in self.project.hinge_assignments.values()
+                   if hinge == source.tag)
+        if used and QMessageBox.question(
+                self, "Delete hinge",
+                f"{source.name} is assigned to {used} element(s). Delete it and "
+                "clear those assignments?") != QMessageBox.Yes:
+            return
+        self.defs.pop(source.tag, None)
+        self._reload()
+
+    def _diagram(self) -> None:
+        h = self._selected_def()
+        if h is None:
+            QMessageBox.information(self, "Hinge library",
+                                    "Select a hinge definition first.")
+            return
+        element = next((tag for tag, hinge in self.project.hinge_assignments.items()
+                        if hinge == h.tag), None)
+        E = (self.project.material_of(self.project.elements[element]).E
+             if element is not None else 200.0)
+        HysteresisDialog(h.model, h.to_dict(), self, initial_stiffness=E).exec()
+
+    def _read_table(self, model: str) -> None:
+        table = self.tables[model]
+        tags = self.row_defs.get(model, [])
+        for row, tag in enumerate(tags):
+            h = self.defs.get(tag)
+            if h is None:
+                continue
+            try:
+                h.name = table.item(row, 0).text().strip() or f"Hinge {tag}"
+                h.length_ratio = max(0.01, min(0.25, float(
+                    table.item(row, 1).text())))
+                h.fy = max(UNITS.stress_base(float(table.item(row, 2).text())),
+                           1e-6)
+                h.post_yield_ratio = max(float(table.item(row, 3).text()), 0.0)
+            except (TypeError, ValueError, AttributeError):
+                raise ValueError(f"Invalid value in {model} hinge '{h.name}'.")
+            col = 4
+            if model in ("Trilinear", "Takeda"):
+                h.ductility = max(float(table.item(row, col).text()), 2.0)
+                col += 1
+            if model == "Takeda":
+                h.pinching = min(max(float(table.item(row, col).text()), 0.0), 1.0)
+                h.damage = max(float(table.item(row, col + 1).text()), 0.0)
+                h.beta = min(max(float(table.item(row, col + 2).text()), 0.0), 1.0)
+            elif model == "Flag":
+                h.beta = min(max(float(table.item(row, col).text()), 0.0), 1.0)
+
+    def accept(self) -> None:
+        try:
+            for model in MODELS:
+                self._read_table(model)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Hinge library", str(exc))
+            return
+        super().accept()
+
+
+class AssignHingesDialog(QDialog):
+    """Assign created hinge definitions to beam elements."""
 
     def __init__(self, project: Project, parent=None,
-                 selected: Optional[list[int]] = None) -> None:
+                 selected: Optional[List[int]] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Hinge Assignments")
-        self.resize(1180, 720)
+        self.setWindowTitle("Assign Hinges")
+        self.resize(820, 680)
         self.project = project
-        self.hinges: Dict[int, HingeAssignment] = copy.deepcopy(project.hinges)
-        self.defaults = project.pushover_settings()
+        self.defs = project.hinge_defs
+        self.assignments: Dict[int, int] = copy.deepcopy(project.hinge_assignments)
         self.beams = sorted(tag for tag, e in project.elements.items()
                             if e.kind == "beam" and len(e.nodes) >= 2)
         self._selected = set(selected or [])
 
         lay = QVBoxLayout(self)
         header = QHBoxLayout()
-        title = QLabel("Lumped plastic hinges")
+        title = QLabel("Assign hinges to elements")
         title.setStyleSheet(
             f"font-size: 15px; font-weight: 600; color: {theme.ACCENT_DARK};")
         header.addWidget(title)
@@ -49,17 +274,19 @@ class HingeTableDialog(QDialog):
         self.count.setStyleSheet(f"color:{theme.MUTED};")
         header.addWidget(self.count)
         lay.addLayout(header)
-        lay.addWidget(QLabel(
-            "Assign a hinge model to each beam element. The hinge acts at both "
-            "element ends; unassigned elements remain elastic during pushover. "
-            "Different steel and concrete members can use different models."))
+        if not self.defs:
+            lay.addWidget(QLabel(
+                "No hinge definitions exist. Create hinges first in the Hinge "
+                "Library, then return here to assign them."))
 
         tools = QHBoxLayout()
         tools.addWidget(QLabel("Set selected rows to"))
-        self.bulk_model = QComboBox()
-        for label, key in MODELS:
-            self.bulk_model.addItem(label, key)
-        tools.addWidget(self.bulk_model)
+        self.bulk = QComboBox()
+        self.bulk.addItem("None", 0)
+        for h in sorted(self.defs.values(), key=lambda d: d.tag):
+            self.bulk.addItem(f"H{h.tag}  {h.name}  ({MODEL_LABELS[h.model]})",
+                              h.tag)
+        tools.addWidget(self.bulk)
         apply_btn = QPushButton("Apply")
         apply_btn.clicked.connect(self._apply_bulk)
         tools.addWidget(apply_btn)
@@ -67,198 +294,83 @@ class HingeTableDialog(QDialog):
         clear_btn.clicked.connect(self._clear_selected)
         tools.addWidget(clear_btn)
         select_btn = QPushButton("Select all")
-        select_btn.clicked.connect(self.table_select_all)
+        select_btn.clicked.connect(lambda: self.table.selectAll())
         tools.addWidget(select_btn)
         tools.addStretch(1)
-        diagram_btn = QPushButton("Hysteresis diagram…")
-        diagram_btn.clicked.connect(self._show_diagram)
-        tools.addWidget(diagram_btn)
         lay.addLayout(tools)
 
-        self.table = QTableWidget(len(self.beams), len(self.COLUMNS))
-        headers = list(self.COLUMNS)
-        headers[4] = f"fy ({UNITS.stress_unit})"
-        self.table.setHorizontalHeaderLabels(headers)
+        self.table = QTableWidget(len(self.beams), 3)
+        self.table.setHorizontalHeaderLabels(["Element", "Section", "Assigned hinge"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.DoubleClicked |
-                                   QAbstractItemView.EditKeyPressed |
-                                   QAbstractItemView.SelectedClicked)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        widths = (70, 190, 190, 78, 110, 80, 70, 78, 84, 70)
-        for i, width in enumerate(widths):
-            self.table.setColumnWidth(i, width)
+        self.table.setColumnWidth(0, 90)
+        self.table.setColumnWidth(1, 240)
         lay.addWidget(self.table, 1)
 
         for row, tag in enumerate(self.beams):
-            self._populate_row(row, tag)
+            e = project.elements[tag]
+            sec = project.section_of(e)
+            self.table.setItem(row, 0, QTableWidgetItem(str(tag)))
+            self.table.setItem(row, 1, QTableWidgetItem(f"{sec.tag}  {sec.name}"))
+            combo = QComboBox()
+            combo.addItem("None", 0)
+            for h in sorted(self.defs.values(), key=lambda d: d.tag):
+                combo.addItem(f"H{h.tag}  {h.name}  ({MODEL_LABELS[h.model]})",
+                              h.tag)
+            combo.setCurrentIndex(max(0, combo.findData(
+                self.assignments.get(tag, 0))))
+            combo.currentIndexChanged.connect(lambda _i: self._update_count())
+            self.table.setCellWidget(row, 2, combo)
             if tag in self._selected:
                 self.table.setRangeSelected(
-                    QTableWidgetSelectionRange(row, 0, row, len(self.COLUMNS) - 1),
-                    True)
+                    QTableWidgetSelectionRange(row, 0, row, 2), True)
 
         bar = QHBoxLayout()
         bar.addStretch(1)
-        cancel = QPushButton("Close")
-        cancel.clicked.connect(self.reject)
+        close = QPushButton("Close")
+        close.clicked.connect(self.reject)
         save = QPushButton("Save")
         save.setDefault(True)
         save.clicked.connect(self.accept)
-        bar.addWidget(cancel)
+        bar.addWidget(close)
         bar.addWidget(save)
         lay.addLayout(bar)
         self._update_count()
 
-    # ------------------------------------------------------------------ rows
-    def _defaults_for(self, tag: int) -> dict:
-        e = self.project.elements[tag]
-        mat = self.project.material_of(e)
-        values = dict(self.defaults)
-        values["fy"] = mat.fy if mat.fy > 0 else values.get("fy", 0.235)
-        values["model"] = values.get("hinge_model", "Trilinear")
-        values["length_ratio"] = values.get("hinge_length_ratio", 0.10)
-        return values
-
-    def _populate_row(self, row: int, tag: int) -> None:
-        e = self.project.elements[tag]
-        sec = self.project.section_of(e)
-        assignment = self.hinges.get(tag)
-        values = self._defaults_for(tag)
-        if assignment:
-            values.update(assignment.to_dict())
-            model = assignment.model
-        else:
-            model = ""
-        item = QTableWidgetItem(str(tag))
-        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(row, 0, item)
-        sec_item = QTableWidgetItem(f"{sec.tag}  {sec.name}")
-        sec_item.setFlags(sec_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(row, 1, sec_item)
-
-        combo = QComboBox()
-        for label, key in MODELS:
-            combo.addItem(label, key)
-        combo.setCurrentIndex(max(0, combo.findData(model)))
-        combo.currentIndexChanged.connect(
-            lambda _idx, r=row: self._row_changed(r))
-        combo.currentIndexChanged.connect(lambda _idx: self._update_count())
-        self.table.setCellWidget(row, 2, combo)
-        numeric = (
-            ("length_ratio", UNITS.length(0.0), 0.10, 3, False),
-            ("fy", UNITS.stress(0.0), 0.235, 5, True),
-            ("post_yield_ratio", 0.0, 0.02, 4, False),
-            ("ductility", 0.0, 10.0, 2, False),
-            ("pinching", 0.0, 0.8, 3, False),
-            ("damage", 0.0, 0.02, 4, False),
-            ("beta", 0.0, 0.4, 3, False),
-        )
-        for col, (key, _zero, fallback, decimals, stress) in enumerate(numeric, start=3):
-            value = float(values.get(key, fallback) or fallback)
-            shown = UNITS.stress(value) if stress else value
-            cell = QTableWidgetItem(f"{shown:.{decimals}f}")
-            cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            if not model:
-                cell.setForeground(Qt.gray)
-            self.table.setItem(row, col, cell)
-        self._row_changed(row)
-
-    def _row_changed(self, row: int) -> None:
-        combo = self.table.cellWidget(row, 2)
-        enabled = bool(combo.currentData()) if combo else False
-        color = QBrush(QColor("#1f3a5f" if enabled else theme.MUTED))
-        for col in range(3, len(self.COLUMNS)):
-            item = self.table.item(row, col)
-            if item is not None:
-                item.setFlags((item.flags() | Qt.ItemIsEditable) if enabled
-                              else (item.flags() & ~Qt.ItemIsEditable))
-                item.setForeground(color)
-
-    def _read_row(self, row: int) -> Optional[HingeAssignment]:
-        tag = self.beams[row]
-        combo = self.table.cellWidget(row, 2)
-        model = combo.currentData() if combo else ""
-        if not model:
-            return None
-        try:
-            length_ratio = float(self.table.item(row, 3).text())
-            fy = UNITS.stress_base(float(self.table.item(row, 4).text()))
-            post = float(self.table.item(row, 5).text())
-            duct = float(self.table.item(row, 6).text())
-            pinch = float(self.table.item(row, 7).text())
-            damage = float(self.table.item(row, 8).text())
-            beta = float(self.table.item(row, 9).text())
-        except (TypeError, ValueError, AttributeError):
-            raise ValueError(f"Invalid hinge value on element {tag}.")
-        return HingeAssignment(
-            tag, model, max(0.01, min(0.25, length_ratio)), max(fy, 1e-6),
-            max(post, 0.0), max(duct, 2.0), min(max(pinch, 0.0), 1.0),
-            max(damage, 0.0), min(max(beta, 0.0), 1.0))
-
-    def _collect(self) -> Dict[int, HingeAssignment]:
-        out = {}
-        for row in range(len(self.beams)):
-            assignment = self._read_row(row)
-            if assignment is not None:
-                out[assignment.element] = assignment
-        return out
-
-    # --------------------------------------------------------------- actions
-    def _selected_rows(self) -> list[int]:
-        return sorted({index.row() for index in self.table.selectedIndexes()})
+    def _selected_rows(self) -> List[int]:
+        return sorted({i.row() for i in self.table.selectedIndexes()})
 
     def _apply_bulk(self) -> None:
         rows = self._selected_rows()
         if not rows:
-            QMessageBox.information(self, "Hinge table",
-                                    "Select one or more rows first.")
+            QMessageBox.information(self, "Assign hinges",
+                                    "Select one or more beam rows first.")
             return
-        model = self.bulk_model.currentData() or ""
+        target = int(self.bulk.currentData() or 0)
         for row in rows:
             combo = self.table.cellWidget(row, 2)
-            combo.setCurrentIndex(max(0, combo.findData(model)))
+            combo.setCurrentIndex(max(0, combo.findData(target)))
         self._update_count()
 
     def _clear_selected(self) -> None:
         for row in self._selected_rows():
             combo = self.table.cellWidget(row, 2)
-            combo.setCurrentIndex(max(0, combo.findData("")))
+            combo.setCurrentIndex(0)
         self._update_count()
-
-    def table_select_all(self) -> None:
-        self.table.selectAll()
-
-    def _show_diagram(self) -> None:
-        rows = self._selected_rows()
-        row = rows[0] if rows else (self.table.currentRow() if self.table.currentRow() >= 0 else 0)
-        try:
-            assignment = self._read_row(row) if self.beams else None
-        except ValueError as exc:
-            QMessageBox.warning(self, "Hinge table", str(exc))
-            return
-        if assignment is None:
-            values = self._defaults_for(self.beams[row]) if self.beams else {}
-            model = "Trilinear"
-            E = self.project.material_of(self.project.elements[self.beams[row]]).E \
-                if self.beams else 200.0
-        else:
-            values = assignment.to_dict()
-            model = assignment.model
-            E = self.project.material_of(
-                self.project.elements[assignment.element]).E
-        HysteresisDialog(model, values, self, initial_stiffness=E).exec()
 
     def _update_count(self) -> None:
         n = sum(1 for row in range(len(self.beams))
                 if self.table.cellWidget(row, 2).currentData())
-        self.count.setText(f"{n} of {len(self.beams)} beam elements have hinges")
+        self.count.setText(f"{n} of {len(self.beams)} beam elements assigned")
 
     def accept(self) -> None:
-        try:
-            self.hinges = self._collect()
-        except ValueError as exc:
-            QMessageBox.warning(self, "Hinge table", str(exc))
-            return
+        out = {}
+        for row, tag in enumerate(self.beams):
+            hinge = int(self.table.cellWidget(row, 2).currentData() or 0)
+            if hinge and hinge in self.defs:
+                out[tag] = hinge
+        self.assignments = out
         super().accept()

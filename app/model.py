@@ -342,10 +342,11 @@ class Element:
 
 
 @dataclass
-class HingeAssignment:
-    """Lumped plastic-hinge properties assigned to one element."""
+class HingeDefinition:
+    """A reusable lumped plastic-hinge property definition."""
 
-    element: int
+    tag: int
+    name: str = "Hinge"
     model: str = "Trilinear"
     length_ratio: float = 0.10
     fy: float = 0.235
@@ -359,10 +360,10 @@ class HingeAssignment:
         return dict(self.__dict__)
 
     @staticmethod
-    def from_dict(d: dict) -> "HingeAssignment":
-        h = HingeAssignment(int(d["element"]))
+    def from_dict(d: dict) -> "HingeDefinition":
+        h = HingeDefinition(int(d["tag"]))
         for k, v in d.items():
-            if hasattr(h, k) and k != "element":
+            if hasattr(h, k) and k != "tag":
                 setattr(h, k, v)
         return h
 
@@ -490,7 +491,8 @@ class Project:
         self.elem_loads: List[ElementLoad] = []
         self.self_weight: Dict[str, float] = {}
         self.combos: Dict[str, LoadCombination] = {}
-        self.hinges: Dict[int, HingeAssignment] = {}
+        self.hinge_defs: Dict[int, HingeDefinition] = {}
+        self.hinge_assignments: Dict[int, int] = {}
         self.settings: dict = dict(DEFAULT_SETTINGS)
         self.title: str = "Untitled"
         self.path: str = ""
@@ -511,6 +513,9 @@ class Project:
 
     def next_section(self) -> int:
         return self._next(self.sections.keys())
+
+    def next_hinge(self) -> int:
+        return self._next(self.hinge_defs.keys())
 
     def next_load(self) -> int:
         return max([l.tag for l in self.nodal_loads] + [l.tag for l in self.elem_loads] + [0]) + 1
@@ -651,7 +656,10 @@ class Project:
             "elem_loads": [l.to_dict() for l in self.elem_loads],
             "self_weight": self.self_weight,
             "combos": [c.to_dict() for c in self.combos.values()],
-            "hinges": [h.to_dict() for h in self.hinges.values()],
+            "hinge_defs": [h.to_dict() for h in self.hinge_defs.values()],
+            "hinge_assignments": [
+                {"element": element, "hinge": hinge}
+                for element, hinge in self.hinge_assignments.items()],
             "settings": self.settings,
         }
 
@@ -668,8 +676,42 @@ class Project:
         p.elem_loads = [ElementLoad.from_dict(x) for x in d.get("elem_loads", [])]
         p.self_weight = {str(k): _f(v) for k, v in d.get("self_weight", {}).items()}
         p.combos = {c.name: c for c in (LoadCombination.from_dict(x) for x in d.get("combos", []))}
-        p.hinges = {h.element: h for h in (HingeAssignment.from_dict(x)
-                                           for x in d.get("hinges", []))}
+        p.hinge_defs = {h.tag: h for h in (
+            HingeDefinition.from_dict(x) for x in d.get("hinge_defs", []))}
+        for item in d.get("hinge_assignments", []):
+            try:
+                element = int(item["element"])
+                hinge = int(item["hinge"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if hinge in p.hinge_defs:
+                p.hinge_assignments[element] = hinge
+        legacy = d.get("hinges", [])
+        if legacy and not p.hinge_defs:
+            grouped = {}
+            for raw in legacy:
+                try:
+                    element = int(raw["element"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                key = (
+                    str(raw.get("model", "Trilinear")),
+                    round(float(raw.get("length_ratio", 0.10)), 9),
+                    round(float(raw.get("fy", 0.235)), 9),
+                    round(float(raw.get("post_yield_ratio", 0.02)), 9),
+                    round(float(raw.get("ductility", 10.0)), 9),
+                    round(float(raw.get("pinching", 0.8)), 9),
+                    round(float(raw.get("damage", 0.02)), 9),
+                    round(float(raw.get("beta", 0.4)), 9),
+                )
+                tag = grouped.get(key)
+                if tag is None:
+                    tag = p.next_hinge()
+                    grouped[key] = tag
+                    p.hinge_defs[tag] = HingeDefinition(
+                        tag, f"Hinge {tag}", key[0], key[1], key[2], key[3],
+                        key[4], key[5], key[6], key[7])
+                p.hinge_assignments[element] = tag
         p.settings = dict(DEFAULT_SETTINGS)
         p.settings.update(d.get("settings", {}))
         return p

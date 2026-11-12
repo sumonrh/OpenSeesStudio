@@ -6,7 +6,7 @@ import os
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
@@ -15,8 +15,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
                                QWidget)
 
 from . import dialogs, icons, opsgen, theme
-from .hinges import HingeTableDialog
-from .hysteresis import MODEL_LABELS
+from .hinges import AssignHingesDialog, HingeLibraryDialog
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
 from .pushover import PushoverResultsDialog
@@ -225,9 +224,12 @@ class MainWindow(QMainWindow):
         self.a_pushover = self._act(
             "Pushover", "pushover", self.pushover, "",
             "Run a displacement-controlled pushover with lumped plastic hinges")
-        self.a_hinges = self._act(
-            "Hinge Table", "hinge", self.edit_hinges, "",
-            "Assign and edit lumped plastic hinges on beam elements")
+        self.a_hinge_defs = self._act(
+            "Define Hinges", "hinge", self.edit_hinge_defs, "",
+            "Create and edit reusable lumped plastic-hinge definitions")
+        self.a_hinge_assign = self._act(
+            "Assign Hinges", "hinge_assign", self.assign_hinges, "",
+            "Assign hinge definitions to selected beam elements")
         self.a_pushover_results = self._act(
             "Pushover Results", "results", self.show_pushover_results, "",
             "Show the capacity curve and hinge state")
@@ -268,7 +270,8 @@ class MainWindow(QMainWindow):
 
         self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_subdivide,
                              self.a_mirror, self.a_support, self.a_material,
-                             self.a_section, self.a_hinges, self.a_tables,
+                             self.a_section, self.a_hinge_defs, self.a_hinge_assign,
+                             self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings)
@@ -474,7 +477,8 @@ class MainWindow(QMainWindow):
         group = page.add_group("Pushover")
         group.add_large(self.a_pushover)
         group = page.add_group("Hinges")
-        group.add_large(self.a_hinges)
+        group.add_large(self.a_hinge_defs)
+        group.add_large(self.a_hinge_assign)
         group = page.add_group("Lumped plasticity")
         hinge_note = QLabel("beamWithHinges\nfiber hinges\nSteel01 / Hysteretic / FlagShape")
         hinge_note.setStyleSheet(f"color:{theme.MUTED}; font-size:10px;")
@@ -1036,18 +1040,37 @@ class MainWindow(QMainWindow):
             return item
 
         g_mat = group("Materials", "materials", len(p.materials))
+        used_materials = {e.mat for e in p.elements.values()}
         for m in p.materials.values():
-            add_child(g_mat, f"{m.tag}   {m.name}   ({m.kind})", "material", m.tag)
+            item = add_child(g_mat, f"{m.tag}   {m.name}   ({m.kind})",
+                             "material", m.tag)
+            if m.tag not in used_materials:
+                item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+                item.setToolTip(0, "Unused material - no element references it.")
         g_sec = group("Sections", "sections", len(p.sections))
+        used_sections = {e.sec for e in p.elements.values()}
         for s in p.sections.values():
-            add_child(g_sec, f"{s.tag}   {s.name}   ({s.shape})", "section", s.tag)
-        g_hinge = group("Hinges", "hinges", len(p.hinges))
-        for tag in sorted(p.hinges):
-            h = p.hinges[tag]
-            add_child(g_hinge,
-                      f"Elem {tag}   {MODEL_LABELS.get(h.model, h.model)}   "
-                      f"(Lp/L {fmt(h.length_ratio, 3)})",
-                      "hinge", tag)
+            item = add_child(g_sec, f"{s.tag}   {s.name}   ({s.shape})",
+                             "section", s.tag)
+            if s.tag not in used_sections:
+                item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+                item.setToolTip(0, "Unused section - no element references it.")
+        g_hinge = group("Hinges", "hinges", len(p.hinge_defs))
+        hinge_use = {}
+        for element, hinge in p.hinge_assignments.items():
+            hinge_use[hinge] = hinge_use.get(hinge, 0) + 1
+        for h in sorted(p.hinge_defs.values(), key=lambda d: d.tag):
+            count = hinge_use.get(h.tag, 0)
+            short = {"Bilinear": "Bilinear", "Trilinear": "Trilinear",
+                     "Takeda": "Takeda-like", "Flag": "Flag"}.get(
+                         h.model, h.model)
+            suffix = f"{count} el." if count else "unassigned"
+            item = add_child(
+                g_hinge, f"H{h.tag}   {h.name}   ({short}, {suffix})",
+                "hinge", h.tag)
+            item.setToolTip(0, "Double-click: edit the hinge library.")
+            if count == 0:
+                item.setForeground(0, QBrush(QColor(theme.ACCENT)))
 
         b = group("Boundary", "boundary")
         g_sup = group("Supports", "supports",
@@ -1071,6 +1094,9 @@ class MainWindow(QMainWindow):
                 font = item.font(0)
                 font.setBold(True)
                 item.setFont(0, font)
+            if n_el == 0 and n_nd == 0 and abs(sw) < 1e-12:
+                item.setForeground(0, QBrush(QColor(theme.ACCENT)))
+                item.setToolTip(0, "Unused load case - it has no loads.")
         g_sw = group("Self Weight", "self_weight", len(p.self_weight), ld)
         for case, factor in p.self_weight.items():
             add_child(g_sw, f"{case}   factor {fmt(factor, 3)}")
@@ -1098,7 +1124,7 @@ class MainWindow(QMainWindow):
         elif key == "element":
             self.viewport.select_elements([tag])
         elif key == "hinge":
-            self.viewport.select_elements([tag])
+            self._select_hinge_elements(tag)
 
     def _tree_double(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(0, Qt.UserRole)
@@ -1111,7 +1137,7 @@ class MainWindow(QMainWindow):
             elif key == "case":
                 self._select_case_elements(tag)
             elif key == "hinge":
-                self.edit_hinges()
+                self.edit_hinge_defs()
             return
         if key in ("nodes", "elements"):
             return
@@ -1122,7 +1148,7 @@ class MainWindow(QMainWindow):
             "supports": lambda: self.open_tables(1),
             "materials": self.materials,
             "sections": self.sections,
-            "hinges": self.edit_hinges,
+            "hinges": self.edit_hinge_defs,
             "cases": self.load_cases,
             "nodal_loads": lambda: self.open_tables(6),
             "element_loads": lambda: self.open_tables(7),
@@ -1146,6 +1172,16 @@ class MainWindow(QMainWindow):
         self.viewport.select_elements(tags)
         self.viewport.fit_selection()
         self._status(f"Selected {len(tags)} element(s) using {label}")
+
+    def _select_hinge_elements(self, tag) -> None:
+        tags = sorted(e for e, hinge in self.project.hinge_assignments.items()
+                      if hinge == tag and e in self.project.elements)
+        if not tags:
+            self._status("This hinge is not assigned to any element")
+            return
+        self.viewport.select_elements(tags)
+        self.viewport.fit_selection()
+        self._status(f"Selected {len(tags)} element(s) using hinge {tag}")
 
     def _tree_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -1382,7 +1418,7 @@ class MainWindow(QMainWindow):
                       p.settings.get("length_unit", "m"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
-                     "hinges", "settings", "title"):
+                     "hinge_defs", "hinge_assignments", "settings", "title"):
             setattr(p, attr, getattr(other, attr))
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
@@ -1854,16 +1890,32 @@ class MainWindow(QMainWindow):
         self.project.sections = dlg.sections
         self._commit("Edited sections")
 
-    def edit_hinges(self) -> None:
+    def edit_hinge_defs(self) -> None:
         if self.model_locked:
             self._status("Model is locked - press Ctrl+L to unlock before editing.")
             return
-        dlg = HingeTableDialog(self.project, self,
-                               selected=sorted(self.viewport.sel_elements))
+        dlg = HingeLibraryDialog(self.project, self)
         if not dlg.exec():
             return
-        self.project.hinges = dlg.hinges
-        self._commit(f"Edited hinge assignments ({len(dlg.hinges)} element(s))")
+        self.project.hinge_defs = dlg.defs
+        self.project.hinge_assignments = {
+            e: h for e, h in self.project.hinge_assignments.items()
+            if h in self.project.hinge_defs}
+        self._commit(f"Edited hinge library ({len(dlg.defs)} definition(s))")
+
+    def assign_hinges(self) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        if not self.project.hinge_defs:
+            self._warn("Create at least one hinge definition first (Define Hinges).")
+            return
+        dlg = AssignHingesDialog(self.project, self,
+                                 selected=sorted(self.viewport.sel_elements))
+        if not dlg.exec():
+            return
+        self.project.hinge_assignments = dlg.assignments
+        self._commit(f"Assigned hinges to {len(dlg.assignments)} element(s)")
 
     # =================================================================== loads
     def load_cases(self) -> None:
@@ -2071,25 +2123,31 @@ class MainWindow(QMainWindow):
             self._warn("The model has no elements.")
             return
         selected = next(iter(self.viewport.sel_nodes), None)
-        dlg = dialogs.PushoverDialog(self.project, selected, self,
-                                     hinge_editor=self.edit_hinges)
+        dlg = dialogs.PushoverDialog(self.project, selected, self)
         if not dlg.exec():
             return
         cfg = dlg.spec()
         if not cfg.get("lateral_case"):
             self._warn("Select a lateral load case or combination.")
             return
-        if not self.project.hinges:
-            self._warn("Assign hinges to at least one beam element in the "
-                       "Hinge Table before running pushover.")
+        assigned = [e for e, h in self.project.hinge_assignments.items()
+                    if h in self.project.hinge_defs
+                    and e in self.project.elements
+                    and self.project.elements[e].kind == "beam"]
+        if not assigned:
+            self._warn("Create hinge definitions and assign them to beam "
+                       "elements before running pushover.")
             return
         settings = dict(self.project.settings.get("pushover", {}))
         settings.update(cfg)
         self.project.settings["pushover"] = settings
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self._status("Running pushover analysis…")
-        models = ", ".join(sorted({h.model for h in self.project.hinges.values()}))
-        self._log(f"Pushover: {len(self.project.hinges)} hinge element(s) "
+        used_defs = {self.project.hinge_assignments[e] for e in assigned}
+        models = ", ".join(sorted({
+            self.project.hinge_defs[t].model for t in used_defs
+            if t in self.project.hinge_defs}))
+        self._log(f"Pushover: {len(assigned)} hinge element(s) "
                   f"[{models}], gravity '{cfg['gravity_case'] or 'none'}', "
                   f"lateral '{cfg['lateral_case']}', target "
                   f"{fmt(UNITS.length(cfg['target_displacement']), 3)} "
@@ -2210,8 +2268,9 @@ class MainWindow(QMainWindow):
             self.project.nodes.pop(t, None)
         self.project.nodal_loads = [l for l in self.project.nodal_loads if l.node in self.project.nodes]
         self.project.elem_loads = [l for l in self.project.elem_loads if l.elem in self.project.elements]
-        self.project.hinges = {t: h for t, h in self.project.hinges.items()
-                               if t in self.project.elements}
+        self.project.hinge_assignments = {
+            t: h for t, h in self.project.hinge_assignments.items()
+            if t in self.project.elements and h in self.project.hinge_defs}
         self.viewport.clear_selection()
         self._clear_results()
         self._commit(f"Deleted {len(nodes)} node(s), {len(elems) + len(removed_el)} element(s)")

@@ -369,40 +369,41 @@ def build(project: Project, scenario: Optional[str] = None,
             ops.geomTransf("Linear", transf_tag, *vx)
             transf_tag += 1
 
-        if pushover is not None and e.tag in project.hinges:
-            hinge = project.hinges[e.tag]
-            hp = hinge.to_dict()
-            cache_key = (
-                sec.tag, mat.tag, str(hp.get("model", "Trilinear")),
-                round(float(hp.get("fy", mat.fy) or 0.0), 9),
-                round(float(hp.get("post_yield_ratio", 0.02)), 9),
-                round(float(hp.get("ductility", 10.0)), 9),
-                round(float(hp.get("pinching", 0.8)), 9),
-                round(float(hp.get("damage", 0.02)), 9),
-                round(float(hp.get("beta", 0.4)), 9),
-            )
-            hinge_sec = hinge_cache.get(cache_key)
-            if hinge_sec is None:
-                slot = len(hinge_cache)
-                hinge_sec = hinge_sec_tag + slot * 2
-                tag = hinge_mat_tag + slot * 3
-                shear_tag = tag + 1
-                base_sec = hinge_sec + 1
-                if _add_hinge_section(project, sec, mat, hp, tag, shear_tag,
-                                      base_sec, hinge_sec, log):
-                    hinge_cache[cache_key] = hinge_sec
-                else:
-                    hinge_sec = None
-            if hinge_sec is not None:
-                length = max(project.element_length(e), 1e-6)
-                ratio = max(0.01, min(0.25, float(
-                    hp.get("length_ratio", 0.1))))
-                lp = min(length * ratio, 0.2 * length)
-                ops.element("beamWithHinges", e.tag, e.nodes[0], e.nodes[1],
-                            hinge_sec, lp, hinge_sec, lp,
-                            mat.E, sec.A, sec.Iz, sec.Iy, mat.G, sec.J,
-                            transf_cache[key])
-                continue
+        if pushover is not None and e.tag in project.hinge_assignments:
+            hinge = project.hinge_defs.get(project.hinge_assignments[e.tag])
+            if hinge is not None:
+                hp = hinge.to_dict()
+                cache_key = (
+                    sec.tag, mat.tag, str(hp.get("model", "Trilinear")),
+                    round(float(hp.get("fy", mat.fy) or 0.0), 9),
+                    round(float(hp.get("post_yield_ratio", 0.02)), 9),
+                    round(float(hp.get("ductility", 10.0)), 9),
+                    round(float(hp.get("pinching", 0.8)), 9),
+                    round(float(hp.get("damage", 0.02)), 9),
+                    round(float(hp.get("beta", 0.4)), 9),
+                )
+                hinge_sec = hinge_cache.get(cache_key)
+                if hinge_sec is None:
+                    slot = len(hinge_cache)
+                    hinge_sec = hinge_sec_tag + slot * 2
+                    tag = hinge_mat_tag + slot * 3
+                    shear_tag = tag + 1
+                    base_sec = hinge_sec + 1
+                    if _add_hinge_section(project, sec, mat, hp, tag, shear_tag,
+                                          base_sec, hinge_sec, log):
+                        hinge_cache[cache_key] = hinge_sec
+                    else:
+                        hinge_sec = None
+                if hinge_sec is not None:
+                    length = max(project.element_length(e), 1e-6)
+                    ratio = max(0.01, min(0.25, float(
+                        hp.get("length_ratio", 0.1))))
+                    lp = min(length * ratio, 0.2 * length)
+                    ops.element("beamWithHinges", e.tag, e.nodes[0], e.nodes[1],
+                                hinge_sec, lp, hinge_sec, lp,
+                                mat.E, sec.A, sec.Iz, sec.Iy, mat.G, sec.J,
+                                transf_cache[key])
+                    continue
 
         ops.element("elasticBeamColumn", e.tag, e.nodes[0], e.nodes[1],
                     sec.A, mat.E, mat.G, sec.J, sec.Iy, sec.Iz,
@@ -713,13 +714,15 @@ def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverRes
     cfg = project.pushover_settings()
     if config:
         cfg.update(config)
-    hinges = {tag: h for tag, h in project.hinges.items()
-              if tag in project.elements
-              and project.elements[tag].kind == "beam"
-              and len(project.elements[tag].nodes) >= 2}
+    hinges = {}
+    for element, def_tag in project.hinge_assignments.items():
+        e = project.elements.get(element)
+        h = project.hinge_defs.get(def_tag)
+        if e is not None and h is not None and e.kind == "beam" and len(e.nodes) >= 2:
+            hinges[element] = h
     if not hinges:
-        raise ValueError("No hinges are assigned. Assign hinges to beam "
-                         "elements in the hinge table before running pushover.")
+        raise ValueError("No hinges are assigned. Create hinge definitions and "
+                         "assign them to beam elements before running pushover.")
     lateral = str(cfg.get("lateral_case") or "")
     gravity = str(cfg.get("gravity_case") or "")
     if not lateral:

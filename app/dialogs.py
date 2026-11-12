@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QVBoxLayout, QWidget)
 
 from . import steelsections, theme
+from .hysteresis import MODEL_LABELS
 from .model import (COMBINATION_KINDS, ELEMENT_KINDS, LOADCASE_KINDS,
                     LOAD_DIRECTIONS, MATERIAL_KINDS, SECTION_SHAPES,
                     SHAPE_LABELS, Element, LoadCase, LoadCombination, Material,
@@ -1490,10 +1491,9 @@ class PushoverDialog(BaseDialog):
     """Setup for a displacement-controlled pushover with lumped hinges."""
 
     def __init__(self, project: Project, selected_node: Optional[int] = None,
-                 parent=None, hinge_editor=None) -> None:
+                 parent=None) -> None:
         super().__init__("Pushover Analysis", parent, 520)
         self.project = project
-        self._hinge_editor = hinge_editor
         cfg = project.pushover_settings()
         self.body.addWidget(title_label("Loading"))
         form = QFormLayout()
@@ -1525,31 +1525,31 @@ class PushoverDialog(BaseDialog):
         self.hinge_summary = QLabel()
         self.hinge_summary.setWordWrap(True)
         self.body.addWidget(self.hinge_summary)
-        hinge_row = QHBoxLayout()
-        self.hinge_table_btn = QPushButton("Hinge Table / Assign…")
-        self.hinge_table_btn.clicked.connect(self._open_hinges)
-        hinge_row.addWidget(self.hinge_table_btn)
-        self.preview_btn = QPushButton("Hysteresis Diagram…")
-        self.preview_btn.clicked.connect(self._show_hysteresis)
-        hinge_row.addWidget(self.preview_btn)
-        hinge_row.addStretch(1)
-        self.body.addLayout(hinge_row)
-
         hform = QFormLayout()
         self.preview_model = QComboBox()
-        for label, key in (("Bilinear — Steel01", "Bilinear"),
-                           ("Trilinear — Hysteretic", "Trilinear"),
-                           ("Takeda-like — Hysteretic", "Takeda"),
-                           ("Flag-shaped — FlagShape", "Flag")):
-            self.preview_model.addItem(label, key)
-        hform.addRow("Preview hinge model", self.preview_model)
+        if project.hinge_defs:
+            for h in sorted(project.hinge_defs.values(), key=lambda d: d.tag):
+                self.preview_model.addItem(
+                    f"H{h.tag}  {h.name}  —  {MODEL_LABELS.get(h.model, h.model)}",
+                    h.tag)
+        else:
+            for label, key in (("Bilinear — Steel01", "Bilinear"),
+                               ("Trilinear — Hysteretic", "Trilinear"),
+                               ("Takeda-like — Hysteretic", "Takeda"),
+                               ("Flag-shaped — FlagShape", "Flag")):
+                self.preview_model.addItem(label, key)
+        hform.addRow("Preview hinge", self.preview_model)
         self.body.addLayout(hform)
+        self.preview_btn = QPushButton("Hysteresis Diagram…")
+        self.preview_btn.clicked.connect(self._show_hysteresis)
+        self.body.addWidget(self.preview_btn)
         self.body.addWidget(hint(
-            "Hinges are assigned per beam element in the Hinge Table. Unassigned "
-            "elements remain elastic, so steel and concrete members can use "
-            "different hinge laws. The diagram button explains the parameters of "
-            "the selected law; hinge rotation is reported as local curvature × "
-            "plastic hinge length."))
+            "Hinge definitions are created in Pushover > Define Hinges and assigned "
+            "to beam elements in Pushover > Assign Hinges. Unassigned elements "
+            "remain elastic, so steel and concrete members can use different "
+            "laws. The diagram button explains the selected definition's "
+            "parameters; hinge rotation is reported as local curvature × plastic "
+            "hinge length."))
 
         # defaults
         gravity = cfg.get("gravity_case") or ("DL" if "DL" in project.cases else "")
@@ -1580,53 +1580,47 @@ class PushoverDialog(BaseDialog):
                 target = max(0.02 * height, 10.0)
             self.target.setValue(UNITS.length(target))
         self.steps.setValue(int(cfg.get("steps", 20)))
-        assigned = [h for tag, h in project.hinges.items()
-                    if tag in project.elements]
-        preview = assigned[0].model if assigned else str(
-            cfg.get("hinge_model", "Trilinear"))
-        self.preview_model.setCurrentIndex(
-            max(0, self.preview_model.findData(preview)))
         self._update_hinge_summary()
         self.buttons("Run Pushover")
 
     def _update_hinge_summary(self) -> None:
-        n = sum(1 for tag in self.project.hinges
-                if tag in self.project.elements
-                and self.project.elements[tag].kind == "beam")
+        n_defs = len(self.project.hinge_defs)
         total = sum(1 for e in self.project.elements.values() if e.kind == "beam")
+        n = sum(1 for e, h in self.project.hinge_assignments.items()
+                if h in self.project.hinge_defs
+                and e in self.project.elements
+                and self.project.elements[e].kind == "beam")
         if n:
             self.hinge_summary.setText(
-                f"{n} of {total} beam elements have assigned hinges.")
+                f"{n_defs} hinge definition(s); {n} of {total} beam elements "
+                "are assigned.")
             self.hinge_summary.setStyleSheet(f"color:{theme.ACCENT_DARK};")
+        elif n_defs:
+            self.hinge_summary.setText(
+                f"{n_defs} hinge definition(s), but none are assigned. "
+                "Use Pushover > Assign Hinges.")
+            self.hinge_summary.setStyleSheet("color:#c92a2a; font-weight:600;")
         else:
             self.hinge_summary.setText(
-                "No hinges assigned. Pushover will not run until at least one "
-                "beam element has a hinge.")
+                "No hinge definitions yet. Use Pushover > Define Hinges, then "
+                "Pushover > Assign Hinges.")
             self.hinge_summary.setStyleSheet("color:#c92a2a; font-weight:600;")
-
-    def _open_hinges(self) -> None:
-        if self._hinge_editor is not None:
-            self._hinge_editor()
-        else:
-            from .hinges import HingeTableDialog
-
-            dlg = HingeTableDialog(self.project, self)
-            if dlg.exec():
-                self.project.hinges = dlg.hinges
-        self._update_hinge_summary()
 
     def _show_hysteresis(self) -> None:
         from .hysteresis import HysteresisDialog
 
-        model = self.preview_model.currentData() or "Trilinear"
-        assignment = next(
-            (h for h in self.project.hinges.values()
-             if h.model == model and h.element in self.project.elements),
-            None)
-        params = assignment.to_dict() if assignment else self.project.pushover_settings()
-        element = assignment.element if assignment else next(
-            (tag for tag, e in self.project.elements.items() if e.kind == "beam"),
-            None)
+        data = self.preview_model.currentData()
+        if isinstance(data, int) and data in self.project.hinge_defs:
+            h = self.project.hinge_defs[data]
+            model = h.model
+            params = h.to_dict()
+            element = next((e for e, hinge in self.project.hinge_assignments.items()
+                            if hinge == data and e in self.project.elements), None)
+        else:
+            model = str(data or "Trilinear")
+            params = self.project.pushover_settings()
+            element = next((tag for tag, e in self.project.elements.items()
+                            if e.kind == "beam"), None)
         E = (self.project.material_of(self.project.elements[element]).E
              if element is not None else 200.0)
         HysteresisDialog(model, params, self, initial_stiffness=E).exec()

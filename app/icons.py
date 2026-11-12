@@ -438,6 +438,17 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         path.arcTo(QRectF(8, 7, 12, 12), 20, 110)
         p.drawPath(path)
 
+    elif name == "hinge_assign":
+        _pen(p, "#8ea6bd", 1.4)
+        p.drawLine(QPointF(2.5, 18), QPointF(11, 18))
+        _pen(p, accent, 1.8)
+        p.drawLine(QPointF(14, 18), QPointF(21.5, 18))
+        _fill(p, ORANGE)
+        p.drawEllipse(QPointF(12.5, 18), 2.2, 2.2)
+        _fill(p, accent)
+        p.drawPolygon(QPolygonF([QPointF(17, 10), QPointF(23, 14),
+                                  QPointF(17, 18)]))
+
     elif name == "deformed":
         p.setPen(QPen(QColor("#9fb0c4"), 1.3, Qt.DashLine))
         p.drawLine(QPointF(3, 17), QPointF(21, 17))

@@ -15,7 +15,7 @@ app = QApplication.instance() or QApplication([])
 
 from app import dialogs, mainwindow, results as results_mod, steelsections  # noqa: E402
 from app.mainwindow import MainWindow  # noqa: E402
-from app.model import Project, Section, HingeAssignment  # noqa: E402
+from app.model import Project, Section, HingeDefinition  # noqa: E402
 from app.tables import TablesDialog  # noqa: E402
 from app.units import UNITS  # noqa: E402
 
@@ -106,10 +106,11 @@ class FakeSubdivide:
 class FakePushover:
     def __init__(self, project, selected_node=None, *a, **k):
         self.project = project
+        project.hinge_defs[1] = HingeDefinition(
+            1, "Hinge 1", "Takeda", 0.1, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
         for tag, e in project.elements.items():
             if e.kind == "beam" and len(e.nodes) >= 2:
-                project.hinges[tag] = HingeAssignment(
-                    tag, "Takeda", 0.1, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
+                project.hinge_assignments[tag] = 1
 
     def exec(self):
         return 1
@@ -262,7 +263,9 @@ check("nodes action not repeated in results",
 pushover_page = win.ribbon._pages[7]
 pushover_actions = [b.defaultAction() for b in pushover_page.findChildren(QToolButton)]
 check("pushover tab has run and hinge actions",
-      win.a_pushover in pushover_actions and win.a_hinges in pushover_actions)
+      win.a_pushover in pushover_actions
+      and win.a_hinge_defs in pushover_actions
+      and win.a_hinge_assign in pushover_actions)
 check("nodes action not repeated in pushover",
       win.a_nodes_visible not in pushover_actions)
 check("pushover results not repeated in pushover tab",
@@ -690,23 +693,38 @@ if win.pushover_results:
     check("pushover results dialog lists steps",
           pd.step_combo.count() == len(win.pushover_results.steps)
           and pd.plot.results is not None)
-    from app.hinges import HingeTableDialog
+    from app.hinges import AssignHingesDialog, HingeLibraryDialog
     from app.hysteresis import HysteresisDialog
-    ht = HingeTableDialog(win.project)
+    hl = HingeLibraryDialog(win.project)
+    check("hinge library has one tab per type", hl.tabs.count() == 4)
+    empty_lib = HingeLibraryDialog(Project())
+    check("empty hinge library is empty",
+          all(t.rowCount() == 0 for t in empty_lib.tables.values()))
+    empty_lib.tabs.setCurrentIndex(2)
+    empty_lib._new()
+    check("new hinge uses current type",
+          empty_lib.tables["Takeda"].rowCount() == 1
+          and empty_lib.tables["Bilinear"].rowCount() == 0)
+    empty_lib.close()
+    check("hinge tabs are grouped by model",
+          hl.tables["Bilinear"].rowCount() == 0
+          and hl.tables["Takeda"].rowCount() == 1)
+    check("hinge tabs keep parameter lists separate",
+          "Pinch" in [hl.tables["Takeda"].horizontalHeaderItem(i).text()
+                      for i in range(hl.tables["Takeda"].columnCount())]
+          and "Pinch" not in [hl.tables["Bilinear"].horizontalHeaderItem(i).text()
+                              for i in range(hl.tables["Bilinear"].columnCount())])
+    hl.close()
+    ah = AssignHingesDialog(win.project)
     beam_count = sum(1 for e in win.project.elements.values() if e.kind == "beam")
-    check("hinge table lists all beam elements",
-          ht.table.rowCount() == beam_count, f"({ht.table.rowCount()})")
-    check("hinge table shows assigned model",
-          any(ht.table.cellWidget(r, 2).currentData() == "Takeda"
-              for r in range(ht.table.rowCount())))
-    first_tag = ht.beams[0]
-    ht.table.selectRow(0)
-    ht.bulk_model.setCurrentIndex(ht.bulk_model.findData("Bilinear"))
-    ht._apply_bulk()
-    ht.accept()
-    check("hinge table edits assignment",
-          ht.hinges.get(first_tag) is not None
-          and ht.hinges[first_tag].model == "Bilinear")
+    check("assign hinges lists all beam elements",
+          ah.table.rowCount() == beam_count, f"({ah.table.rowCount()})")
+    check("assign hinges shows current assignment",
+          all(ah.table.cellWidget(r, 2).currentData() == 1
+              for r in range(ah.table.rowCount())))
+    ah.accept()
+    check("assign hinges collects assignments",
+          len(ah.assignments) == beam_count)
     for model in ("Bilinear", "Trilinear", "Takeda", "Flag"):
         hd = HysteresisDialog(model, {"fy": 0.235, "post_yield_ratio": 0.02,
                                       "ductility": 10.0, "pinching": 0.8,
@@ -714,27 +732,56 @@ if win.pushover_results:
         check(f"{model} hysteresis definitions", hd.table.rowCount() >= 4)
         hd.close()
     setup = dialogs.PushoverDialog(win.project)
-    check("pushover dialog reports hinge assignments",
-          "beam elements have assigned hinges" in setup.hinge_summary.text())
+    check("pushover dialog reports hinge definitions",
+          "hinge definition" in setup.hinge_summary.text())
     check("pushover dialog exposes hysteresis diagram",
           setup.preview_btn.text().startswith("Hysteresis"))
     setup.close()
 
+    # An unassigned definition plus unused material/section/case for color checks.
+    win.project.hinge_defs[2] = HingeDefinition(
+        2, "Unused Hinge", "Bilinear", 0.1, 0.235, 0.02, 10.0, 0.8, 0.02, 0.4)
+    from app.model import LoadCase
+    win.project.cases["EMPTY"] = LoadCase("EMPTY", "Dead")
     win._refresh_tree()
     root = win.tree.topLevelItem(0)
     items = {root.child(i).text(0).split("   ")[0]: root.child(i)
              for i in range(root.childCount())}
     hinge_group = items.get("Hinges")
     check("tree lists hinge types",
-          hinge_group is not None and hinge_group.childCount() > 0
+          hinge_group is not None and hinge_group.childCount() == 2
           and "Takeda" in hinge_group.child(0).text(0))
+    blue = "#0f6fb8"
+    check("unused material is blue",
+          items["Materials"].child(1).foreground(0).color().name() == blue)
+    check("used material is not blue",
+          items["Materials"].child(0).foreground(0).color().name() != blue)
+    check("unused section is blue",
+          items["Sections"].child(0).foreground(0).color().name() == blue)
+    check("used section is not blue",
+          items["Sections"].child(1).foreground(0).color().name() != blue)
+    loads_group = items.get("Loads")
+    load_cases = next((loads_group.child(i) for i in range(loads_group.childCount())
+                       if loads_group.child(i).text(0).startswith("Load Cases")),
+                      None)
+    case_names = [load_cases.child(i).text(0).split("   ")[0]
+                  for i in range(load_cases.childCount())]
+    empty_row = case_names.index("EMPTY")
+    check("unused load case is blue",
+          load_cases.child(empty_row).foreground(0).color().name() == blue)
+    check("used load case is not blue",
+          load_cases.child(0).foreground(0).color().name() != blue)
+    check("unassigned hinge is blue",
+          hinge_group.child(1).foreground(0).color().name() == blue)
+    check("assigned hinge is not blue",
+          hinge_group.child(0).foreground(0).color().name() != blue)
     if hinge_group is not None and hinge_group.childCount() > 0:
         calls = []
-        old_edit_hinges = win.edit_hinges
-        win.edit_hinges = lambda: calls.append(True)
+        old_edit_defs = win.edit_hinge_defs
+        win.edit_hinge_defs = lambda: calls.append(True)
         win._tree_double(hinge_group.child(0), 0)
-        win.edit_hinges = old_edit_hinges
-        check("double-click hinge opens assignments", bool(calls))
+        win.edit_hinge_defs = old_edit_defs
+        check("double-click hinge opens library", bool(calls))
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen
