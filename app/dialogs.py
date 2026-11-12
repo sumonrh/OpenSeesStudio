@@ -1547,10 +1547,17 @@ class PushoverDialog(BaseDialog):
         hform.addRow("Plastic hinge length / L", self.hinge_ratio)
         hform.addRow("Yield strength fy", self.fy)
         hform.addRow("Post-yield stiffness ratio", self.post)
+        self._hinge_rows = {
+            "ductility": hform.rowCount(),
+        }
         hform.addRow("Ultimate / yield strain", self.ductility)
+        self._hinge_rows["pinching"] = hform.rowCount()
         hform.addRow("Pinching", self.pinching)
+        self._hinge_rows["damage"] = hform.rowCount()
         hform.addRow("Damage", self.damage)
+        self._hinge_rows["beta"] = hform.rowCount()
         hform.addRow("Takeda beta", self.beta)
+        self._hinge_form = hform
         self.body.addLayout(hform)
         self.body.addWidget(hint(
             "Beam elements are rebuilt as beamWithHinges elements for this run. "
@@ -1604,6 +1611,17 @@ class PushoverDialog(BaseDialog):
                 (self.ductility, use_hyst),
                 (self.post, True)):
             widget.setEnabled(enabled)
+        visible = {
+            "ductility": use_hyst,
+            "pinching": model == "Takeda",
+            "damage": model == "Takeda",
+            "beta": model in ("Takeda", "Flag"),
+        }
+        for key, row in self._hinge_rows.items():
+            self._hinge_form.setRowVisible(row, visible[key])
+        beta_label = self._hinge_form.labelForField(self.beta)
+        if beta_label is not None:
+            beta_label.setText("Flag beta" if model == "Flag" else "Takeda beta")
 
     def spec(self) -> dict:
         return {

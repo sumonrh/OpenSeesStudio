@@ -676,6 +676,25 @@ if win.pushover_results:
     check("pushover results dialog lists steps",
           pd.step_combo.count() == len(win.pushover_results.steps)
           and pd.plot.results is not None)
+    setup = dialogs.PushoverDialog(win.project)
+    def visible_rows(model):
+        setup.hinge_model.setCurrentIndex(setup.hinge_model.findData(model))
+        return {key: setup._hinge_form.isRowVisible(row)
+                for key, row in setup._hinge_rows.items()}
+    bilinear = visible_rows("Bilinear")
+    check("bilinear hides Takeda parameters",
+          not any(bilinear.values()), f"({bilinear})")
+    trilinear = visible_rows("Trilinear")
+    check("trilinear shows only envelope parameters",
+          trilinear == {"ductility": True, "pinching": False,
+                        "damage": False, "beta": False}, f"({trilinear})")
+    takeda = visible_rows("Takeda")
+    check("Takeda shows Takeda parameters", all(takeda.values()), f"({takeda})")
+    flag = visible_rows("Flag")
+    check("flag shows only flag parameters",
+          flag == {"ductility": False, "pinching": False,
+                   "damage": False, "beta": True}, f"({flag})")
+    setup.close()
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen
