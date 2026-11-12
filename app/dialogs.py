@@ -6,21 +6,21 @@ import copy
 import math
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFormLayout,
                                QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMessageBox, QPushButton, QRadioButton, QSpinBox,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout,
-                               QWidget)
+                               QTableWidget, QTableWidgetItem, QTabWidget,
+                               QVBoxLayout, QWidget)
 
-from . import theme
+from . import steelsections, theme
 from .model import (COMBINATION_KINDS, ELEMENT_KINDS, LOADCASE_KINDS,
-                    LOAD_DIRECTIONS, MATERIAL_KINDS, SECTION_SHAPES, Element,
-                    LoadCase, LoadCombination, Material, Project, Section,
-                    fmt)
+                    LOAD_DIRECTIONS, MATERIAL_KINDS, SECTION_SHAPES,
+                    SHAPE_LABELS, Element, LoadCase, LoadCombination, Material,
+                    Project, Section, fmt)
 from .units import UNITS
 
 
@@ -492,136 +492,559 @@ class MaterialDialog(BaseDialog):
             self.list.setCurrentRow(min(row, len(self.materials) - 1))
 
 
+class SectionPreview(QWidget):
+    """Small scalable drawing of a section outline."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.section: Optional[Section] = None
+        self.setMinimumSize(270, 210)
+
+    def set_section(self, section: Optional[Section]) -> None:
+        self.section = section
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QBrush(QColor("#f8fbfe")))
+        p.setPen(QPen(QColor(theme.BORDER), 1.0))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        sec = self.section
+        if sec is None:
+            p.setPen(QPen(QColor(theme.MUTED)))
+            p.drawText(self.rect(), Qt.AlignCenter, "No section")
+            p.end()
+            return
+        outer, inner = sec.outline()
+        all_pts = list(outer) + list(inner or [])
+        if len(all_pts) < 3:
+            p.end()
+            return
+        ys = [pt[0] for pt in all_pts]
+        zs = [pt[1] for pt in all_pts]
+        y0, y1, z0, z1 = min(ys), max(ys), min(zs), max(zs)
+        w = max(y1 - y0, 1e-6)
+        h = max(z1 - z0, 1e-6)
+        scale = min((self.width() - 46) / w, (self.height() - 46) / h)
+        cy, cz = (y0 + y1) / 2.0, (z0 + z1) / 2.0
+
+        def mapped(points):
+            return QPolygonF([QPointF(self.width() / 2.0 + (y - cy) * scale,
+                                      self.height() / 2.0 - (z - cz) * scale)
+                              for y, z in points])
+
+        origin = QPointF(self.width() / 2.0 - cy * scale,
+                         self.height() / 2.0 + cz * scale)
+        p.setPen(QPen(QColor(theme.ACCENT), 1.0, Qt.DashLine))
+        p.drawLine(QPointF(origin.x(), 12),
+                   QPointF(origin.x(), self.height() - 12))
+        p.drawLine(QPointF(12, origin.y()),
+                   QPointF(self.width() - 12, origin.y()))
+        p.setBrush(QBrush(QColor("#dcebf9")))
+        p.setPen(QPen(QColor(theme.ACCENT_DARK), 1.6))
+        p.drawPolygon(mapped(outer))
+        if inner:
+            p.setBrush(QBrush(QColor("#f8fbfe")))
+            p.drawPolygon(mapped(inner))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(theme.MUTED)))
+        p.setFont(QFont("Segoe UI", 8))
+        p.drawText(QRectF(8, self.height() - 22, self.width() - 16, 18),
+                   Qt.AlignCenter, sec.name or sec.designation or sec.shape)
+        p.end()
+
+
 class SectionDialog(BaseDialog):
     def __init__(self, project: Project, parent=None) -> None:
-        super().__init__("Section Library", parent, 660)
+        super().__init__("Section Library", parent, 1040)
+        self.project = project
         self.sections: Dict[int, Section] = copy.deepcopy(project.sections)
         self.current: Optional[Section] = None
+        self._loading = False
+        self._kind = "i"
+        self._entries: List[tuple] = []
+        self._entry_by_name: Dict[str, tuple] = {}
+        if not self.sections:
+            s = Section(1, "Section 1", "I-Shape",
+                        b=300.0, h=600.0, d=600.0, t=12.0, tw=10.0, tf=15.0)
+            s.compute()
+            self.sections[1] = s
+        self.resize(1180, 760)
 
         row = QHBoxLayout()
         left = QVBoxLayout()
+        title = QLabel("Sections in model")
+        title.setStyleSheet(f"font-weight:600; color:{theme.ACCENT_DARK};")
+        left.addWidget(title)
         self.list = QListWidget()
-        self.list.setMinimumWidth(220)
+        self.list.setMinimumWidth(235)
         self.list.currentRowChanged.connect(self._select)
-        left.addWidget(self.list)
+        left.addWidget(self.list, 1)
         b = QHBoxLayout()
         add = QPushButton("New")
         add.clicked.connect(self._add)
+        dup = QPushButton("Duplicate")
+        dup.clicked.connect(self._duplicate)
         rem = QPushButton("Delete")
         rem.clicked.connect(self._remove)
-        b.addWidget(add); b.addWidget(rem)
+        b.addWidget(add); b.addWidget(dup); b.addWidget(rem)
         left.addLayout(b)
-        row.addLayout(left, 1)
+        left.addWidget(hint("Standard sections keep the published area and inertias. "
+                            "Custom shapes compute properties from their dimensions."))
+        row.addLayout(left, 0)
 
         right = QVBoxLayout()
         form = QFormLayout()
         self.name = QLineEdit()
-        self.shape = QComboBox()
-        self.shape.addItems(SECTION_SHAPES)
-        self.b = spin(UNITS.length(300.0), UNITS.length(0.001), UNITS.length(1e7),
-                      UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
-        self.h = spin(UNITS.length(600.0), UNITS.length(0.001), UNITS.length(1e7),
-                      UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
-        self.d = spin(UNITS.length(400.0), UNITS.length(0.001), UNITS.length(1e7),
-                      UNITS.length_decimals, UNITS.length(10.0), UNITS.length_unit)
-        self.t = spin(UNITS.length(12.0), UNITS.length(0.001), UNITS.length(1e6),
-                      UNITS.length_decimals, UNITS.length(1.0), UNITS.length_unit)
-        self.tw = spin(UNITS.length(10.0), UNITS.length(0.001), UNITS.length(1e6),
-                       UNITS.length_decimals, UNITS.length(1.0), UNITS.length_unit)
-        self.tf = spin(UNITS.length(15.0), UNITS.length(0.001), UNITS.length(1e6),
-                       UNITS.length_decimals, UNITS.length(1.0), UNITS.length_unit)
         form.addRow("Name", self.name)
-        form.addRow("Shape", self.shape)
-        form.addRow("Width b", self.b)
-        form.addRow("Depth h", self.h)
-        form.addRow("Diameter d", self.d)
-        form.addRow("Wall t", self.t)
-        form.addRow("Web tw", self.tw)
-        form.addRow("Flange tf", self.tf)
         right.addLayout(form)
 
+        self.tabs = QTabWidget()
+        self._build_standard_tab()
+        self._build_custom_tab()
+        right.addWidget(self.tabs, 1)
+
+        bottom = QHBoxLayout()
+        self.preview = SectionPreview()
+        bottom.addWidget(self.preview, 1)
+        pbox = QVBoxLayout()
         self.props = QLabel()
         self.props.setStyleSheet(
             f"background:#f4f8fc; border:1px solid {theme.BORDER}; border-radius:4px;"
             "padding:8px; font-family: Consolas;")
-        right.addWidget(self.props)
-        right.addWidget(hint("Section properties are computed automatically for standard "
-                             "shapes; choose 'User' to enter A, Iy, Iz, J directly."))
-        row.addLayout(right, 2)
+        self.props.setAlignment(Qt.AlignTop)
+        pbox.addWidget(self.props, 1)
+        pbox.addWidget(hint("A, Iy, Iz and J are used by the solver. "
+                            "Mass assumes steel density 7.85 t/m³."))
+        bottom.addLayout(pbox, 2)
+        right.addLayout(bottom, 0)
+        row.addLayout(right, 1)
         self.body.addLayout(row)
 
-        self.name.textChanged.connect(self._store)
-        for w in (self.b, self.h, self.d, self.t, self.tw, self.tf):
-            w.valueChanged.connect(self._store)
-        self.shape.currentIndexChanged.connect(self._store)
-        self.shape.currentIndexChanged.connect(self._sync)
-
+        self.name.textChanged.connect(self._name_changed)
+        self._fill_families()
+        self._populate_standard()
         self._reload()
         self.buttons("Save")
 
-    def _reload(self) -> None:
-        self.list.blockSignals(True)
-        self.list.clear()
-        for s in self.sections.values():
-            self.list.addItem(QListWidgetItem(f"{s.tag}   {s.name}"))
-        self.list.blockSignals(False)
-        if self.sections:
-            self.list.setCurrentRow(0)
+    # ------------------------------------------------------------------ setup
+    def _build_standard_tab(self) -> None:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(8, 8, 8, 8)
+        form = QFormLayout()
+        self.db = QComboBox()
+        for key, (label, _families) in steelsections.DATABASES.items():
+            self.db.addItem(label, key)
+        self.family = QComboBox()
+        form.addRow("Database", self.db)
+        form.addRow("Family", self.family)
+        lay.addLayout(form)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search designation, e.g. W12X26 or W310x39")
+        lay.addWidget(self.search)
+        self.standard_table = QTableWidget(0, 9)
+        self.standard_table.setHorizontalHeaderLabels(
+            ["Designation", "d / H (mm)", "b / B (mm)", "tw / t (mm)",
+             "tf (mm)", "A (mm²)", "Ix (mm⁴)", "Iy (mm⁴)", "J (mm⁴)"])
+        self.standard_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.standard_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.standard_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.standard_table.setAlternatingRowColors(True)
+        self.standard_table.verticalHeader().setVisible(False)
+        self.standard_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.standard_table.horizontalHeader().setStretchLastSection(True)
+        for column, width in enumerate((148, 72, 72, 72, 58, 92, 105, 105, 90)):
+            self.standard_table.setColumnWidth(column, width)
+        self.standard_table.itemSelectionChanged.connect(self._standard_selected)
+        lay.addWidget(self.standard_table, 1)
+        self.standard_count = QLabel()
+        self.standard_count.setStyleSheet(f"color:{theme.MUTED};")
+        lay.addWidget(self.standard_count)
+        self.db.currentIndexChanged.connect(self._database_changed)
+        self.family.currentIndexChanged.connect(self._family_changed)
+        self.search.textChanged.connect(self._filter_standard)
+        self.tabs.addTab(page, "Standard Database")
 
-    def _select(self, row: int) -> None:
-        keys = list(self.sections)
-        if 0 <= row < len(keys):
-            self.current = self.sections[keys[row]]
-            s = self.current
+    def _build_custom_tab(self) -> None:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(8, 8, 8, 8)
+        form = QFormLayout()
+        self.shape = QComboBox()
+        for shape in SECTION_SHAPES:
+            self.shape.addItem(SHAPE_LABELS.get(shape, shape), shape)
+        form.addRow("Shape", self.shape)
+        self._dim_labels: Dict[str, QLabel] = {}
+        self._dim_widgets: Dict[str, QDoubleSpinBox] = {}
+        defaults = {"b": 300.0, "h": 600.0, "d": 400.0, "t": 12.0,
+                    "tw": 10.0, "tf": 15.0}
+        for key in ("b", "h", "d", "t", "tw", "tf"):
+            label = QLabel("")
+            widget = spin(UNITS.length(defaults[key]), UNITS.length(0.001),
+                          UNITS.length(1e7), UNITS.length_decimals,
+                          UNITS.length(10.0), UNITS.length_unit)
+            setattr(self, key, widget)
+            self._dim_labels[key] = label
+            self._dim_widgets[key] = widget
+            form.addRow(label, widget)
+        self.A = spin(UNITS.area(1000.0), 0.0, UNITS.area(1e14), 3,
+                      UNITS.area(100.0), UNITS.area_unit)
+        self.Iy = spin(0.0, 0.0, UNITS.inertia(1e20), 3,
+                       UNITS.inertia(1e8), UNITS.inertia_unit)
+        self.Iz = spin(0.0, 0.0, UNITS.inertia(1e20), 3,
+                       UNITS.inertia(1e8), UNITS.inertia_unit)
+        self.J = spin(0.0, 0.0, UNITS.inertia(1e20), 3,
+                      UNITS.inertia(1e8), UNITS.inertia_unit)
+        for key, text, widget in (("A", "Area A", self.A), ("Iy", "Iy", self.Iy),
+                                  ("Iz", "Iz", self.Iz), ("J", "J", self.J)):
+            label = QLabel(text)
+            form.addRow(label, widget)
+            self._dim_labels[key] = label
+            self._dim_widgets[key] = widget
+        lay.addLayout(form)
+        lay.addWidget(hint("Choose a shape and enter its dimensions. Hexagon and octagon "
+                           "use the diameter across corners. User-defined properties use "
+                           "A, Iy, Iz and J directly."))
+        self.shape.currentIndexChanged.connect(self._shape_changed)
+        for widget in (self.b, self.h, self.d, self.t, self.tw, self.tf,
+                       self.A, self.Iy, self.Iz, self.J):
+            widget.valueChanged.connect(self._store)
+        self.tabs.addTab(page, "Custom Shape")
+        self._sync_custom_fields()
+
+    # --------------------------------------------------------------- database
+    def _database_changed(self, *_args) -> None:
+        if self._loading:
+            return
+        self._fill_families()
+        self._populate_standard()
+        if self.standard_table.rowCount():
+            self._loading = True
+            self.standard_table.selectRow(0)
+            self._loading = False
+            self._standard_selected()
+
+    def _fill_families(self, preferred: str = "") -> None:
+        key = self.db.currentData() or "AISC"
+        _label, families = steelsections.DATABASES[key]
+        current = preferred or (self.family.currentData() or "W")
+        self.family.blockSignals(True)
+        self.family.clear()
+        for family in families:
+            self.family.addItem(steelsections.FAMILY_LABELS[family], family)
+        index = self.family.findData(current)
+        self.family.setCurrentIndex(index if index >= 0 else 0)
+        self.family.blockSignals(False)
+
+    def _family_changed(self, *_args) -> None:
+        if self._loading:
+            return
+        self._populate_standard()
+        if self.standard_table.rowCount():
+            self._loading = True
+            self.standard_table.selectRow(0)
+            self._loading = False
+            self._standard_selected()
+
+    def _populate_standard(self) -> None:
+        key = self.db.currentData() or "AISC"
+        family = self.family.currentData() or "W"
+        kind, entries = steelsections.get_sections(key, family)
+        self._kind = kind
+        self._entries = list(entries)
+        self._entry_by_name = {e[0]: e for e in self._entries}
+        self.standard_table.setRowCount(0)
+        self.standard_table.setRowCount(len(entries))
+        for row, item in enumerate(entries):
+            if kind == "i":
+                name, depth, width, tw, tf, area, ix, iy, j = item
+                values = [name, depth, width, tw, tf, area, ix, iy, j]
+            elif kind == "rhs":
+                name, depth, width, t, area, ix, iy, j = item
+                values = [name, depth, width, t, "", area, ix, iy, j]
+            else:
+                name, diameter, t, area, i, j = item
+                values = [name, diameter, "", t, "", area, i, i, j]
+            for column, value in enumerate(values):
+                if column == 0:
+                    cell = QTableWidgetItem(str(value))
+                elif value == "":
+                    cell = QTableWidgetItem("")
+                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                else:
+                    cell = QTableWidgetItem(f"{float(value):.6g}")
+                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.standard_table.setItem(row, column, cell)
+        self.standard_count.setText(f"{len(entries)} sections · {key} {family}")
+        self._filter_standard(self.search.text())
+
+    def _filter_standard(self, text: str) -> None:
+        needle = text.strip().lower()
+        for row in range(self.standard_table.rowCount()):
+            item = self.standard_table.item(row, 0)
+            self.standard_table.setRowHidden(
+                row, bool(needle) and (item is None or needle not in item.text().lower()))
+
+    def _standard_selected(self) -> None:
+        if self._loading:
+            return
+        row = self.standard_table.currentRow()
+        item = self.standard_table.item(row, 0) if row >= 0 else None
+        if item is not None:
+            self._apply_standard(item.text())
+
+    def _apply_standard(self, name: str) -> None:
+        entry = self._entry_by_name.get(name)
+        if entry is None or self.current is None:
+            return
+        s = self.current
+        key = self.db.currentData() or "AISC"
+        family = self.family.currentData() or "W"
+        if self._kind == "i":
+            _n, depth, width, tw, tf, area, ix, iy, j = entry
+            s.shape = "I-Shape"
+            s.b, s.h, s.d = width, depth, depth
+            s.tw, s.tf, s.t = tw, tf, 0.0
+            s.A, s.Iy, s.Iz, s.J = area, ix, iy, j
+        elif self._kind == "rhs":
+            _n, depth, width, t, area, ix, iy, j = entry
+            s.shape = "Box"
+            s.b, s.h, s.d = width, depth, depth
+            s.t, s.tw, s.tf = t, 0.0, 0.0
+            s.A, s.Iy, s.Iz, s.J = area, ix, iy, j
+        else:
+            _n, diameter, t, area, i, j = entry
+            s.shape = "Pipe"
+            s.b = s.h = s.d = diameter
+            s.t, s.tw, s.tf = t, 0.0, 0.0
+            s.A, s.Iy, s.Iz, s.J = area, i, i, j
+        s.catalog = key
+        s.designation = name
+        s.family = family
+        s.cy = s.cz = 0.0
+        s.name = name
+        self._loading = True
+        self.name.setText(s.name)
+        self.shape.setCurrentIndex(max(0, self.shape.findData(s.shape)))
+        self._set_custom_values(s)
+        self._loading = False
+        self._refresh_item()
+        self._update_props()
+
+    # ---------------------------------------------------------------- custom
+    def _shape_changed(self, *_args) -> None:
+        self._sync_custom_fields()
+        if not self._loading:
+            self._store()
+
+    def _sync_custom_fields(self) -> None:
+        shape = self.shape.currentData() or "I-Shape"
+        used = {
+            "Rectangle": {"b", "h"},
+            "Circle": {"d"},
+            "Hexagon": {"d"},
+            "Octagon": {"d"},
+            "Box": {"b", "h", "t"},
+            "Pipe": {"d", "t"},
+            "I-Shape": {"b", "h", "tw", "tf"},
+            "L-Shape": {"b", "h", "t"},
+            "T-Shape": {"b", "h", "tw", "tf"},
+            "User": set(),
+        }.get(shape, {"b", "h"})
+        labels = {
+            "Rectangle": {"b": "Width b", "h": "Depth h"},
+            "Circle": {"d": "Diameter d"},
+            "Hexagon": {"d": "Diameter across corners d"},
+            "Octagon": {"d": "Diameter across corners d"},
+            "Box": {"b": "Width b", "h": "Depth h", "t": "Wall t"},
+            "Pipe": {"d": "Outside diameter d", "t": "Wall t"},
+            "I-Shape": {"b": "Flange width b", "h": "Depth h",
+                        "tw": "Web tw", "tf": "Flange tf"},
+            "L-Shape": {"b": "Leg b", "h": "Leg h", "t": "Thickness t"},
+            "T-Shape": {"b": "Flange width b", "h": "Depth h",
+                        "tw": "Web tw", "tf": "Flange tf"},
+        }.get(shape, {})
+        for key in ("b", "h", "d", "t", "tw", "tf"):
+            label = self._dim_labels[key]
+            widget = self._dim_widgets[key]
+            label.setText(labels.get(key, key))
+            visible = key in used
+            label.setVisible(visible)
+            widget.setVisible(visible)
+        user = shape == "User"
+        for key in ("A", "Iy", "Iz", "J"):
+            self._dim_labels[key].setVisible(user)
+            self._dim_widgets[key].setVisible(user)
+
+    def _set_custom_values(self, s: Section) -> None:
+        for key, widget, value in (
+                ("b", self.b, s.b), ("h", self.h, s.h), ("d", self.d, s.d),
+                ("t", self.t, s.t), ("tw", self.tw, s.tw), ("tf", self.tf, s.tf)):
+            widget.blockSignals(True)
+            widget.setValue(UNITS.length(value))
+            widget.blockSignals(False)
+        for widget, value, conv in ((self.A, s.A, UNITS.area),
+                                    (self.Iy, s.Iy, UNITS.inertia),
+                                    (self.Iz, s.Iz, UNITS.inertia),
+                                    (self.J, s.J, UNITS.inertia)):
+            widget.blockSignals(True)
+            widget.setValue(conv(value))
+            widget.blockSignals(False)
+
+    def _store(self, *_args) -> None:
+        if self._loading or self.current is None:
+            return
+        if self.tabs.currentIndex() != 1:
+            return
+        s = self.current
+        was_standard = s.is_standard
+        old_name = s.name
+        s.shape = self.shape.currentData() or "I-Shape"
+        if was_standard and old_name == s.designation:
+            s.name = SHAPE_LABELS.get(s.shape, s.shape)
             self.name.blockSignals(True)
             self.name.setText(s.name)
             self.name.blockSignals(False)
-            self.shape.blockSignals(True)
-            self.shape.setCurrentText(s.shape)
-            self.shape.blockSignals(False)
-            for w, v in ((self.b, UNITS.length(s.b)), (self.h, UNITS.length(s.h)),
-                         (self.d, UNITS.length(s.d)), (self.t, UNITS.length(s.t)),
-                         (self.tw, UNITS.length(s.tw)), (self.tf, UNITS.length(s.tf))):
-                w.blockSignals(True); w.setValue(v); w.blockSignals(False)
-            self._sync()
+        if s.shape == "User":
+            s.A = UNITS.area_base(self.A.value())
+            s.Iy = UNITS.inertia_base(self.Iy.value())
+            s.Iz = UNITS.inertia_base(self.Iz.value())
+            s.J = UNITS.inertia_base(self.J.value())
+            s.cy = s.cz = 0.0
+        else:
+            s.b = UNITS.length_base(self.b.value())
+            s.h = UNITS.length_base(self.h.value())
+            s.d = UNITS.length_base(self.d.value())
+            s.t = UNITS.length_base(self.t.value())
+            s.tw = UNITS.length_base(self.tw.value())
+            s.tf = UNITS.length_base(self.tf.value())
+            s.compute()
+        s.catalog = "Custom"
+        s.designation = ""
+        s.family = ""
+        self._refresh_item()
+        self._update_props()
 
-    def _sync(self) -> None:
-        shp = self.shape.currentText()
-        for w, on in ((self.b, shp in ("Rectangle", "Box", "I-Shape")),
-                      (self.h, shp in ("Rectangle", "Box", "I-Shape")),
-                      (self.d, shp in ("Circle", "Pipe")),
-                      (self.t, shp in ("Pipe", "Box")),
-                      (self.tw, shp == "I-Shape"),
-                      (self.tf, shp == "I-Shape")):
-            w.setEnabled(on)
-        self._store()
-
-    def _store(self, *args) -> None:
-        if not self.current:
+    def _name_changed(self, text: str) -> None:
+        if self._loading or self.current is None:
             return
-        s = self.current
-        s.name = self.name.text() or "Section"
-        s.shape = self.shape.currentText()
-        s.b = UNITS.length_base(self.b.value())
-        s.h = UNITS.length_base(self.h.value())
-        s.d = UNITS.length_base(self.d.value())
-        s.t = UNITS.length_base(self.t.value())
-        s.tw = UNITS.length_base(self.tw.value())
-        s.tf = UNITS.length_base(self.tf.value())
-        s.compute()
-        self.props.setText(
-            f"A  = {fmt(UNITS.area(s.A), 1)} {UNITS.area_unit}\n"
-            f"Iy = {fmt(UNITS.inertia(s.Iy), 1)} {UNITS.inertia_unit}\n"
-            f"Iz = {fmt(UNITS.inertia(s.Iz), 1)} {UNITS.inertia_unit}\n"
-            f"J  = {fmt(UNITS.inertia(s.J), 1)} {UNITS.inertia_unit}")
+        self.current.name = text.strip() or "Section"
+        self._refresh_item()
+        self._update_props()
+
+    # ----------------------------------------------------------------- common
+    def _reload(self) -> None:
         row = self.list.currentRow()
-        if row >= 0:
-            self.list.item(row).setText(f"{s.tag}   {s.name}")
+        self.list.blockSignals(True)
+        self.list.clear()
+        for s in self.sections.values():
+            item = QListWidgetItem(f"{s.tag}   {s.name}")
+            item.setToolTip(f"{s.shape} · {s.catalog}"
+                            + (f" · {s.designation}" if s.designation else ""))
+            self.list.addItem(item)
+        self.list.blockSignals(False)
+        if not self.sections:
+            self.current = None
+            self._update_props()
+            return
+        target = row if 0 <= row < len(self.sections) else 0
+        self.list.setCurrentRow(target)
+        self._select(target)
+
+    def _select(self, row: int) -> None:
+        keys = list(self.sections)
+        if not (0 <= row < len(keys)):
+            return
+        self._loading = True
+        self.current = self.sections[keys[row]]
+        s = self.current
+        self.name.blockSignals(True)
+        self.name.setText(s.name)
+        self.name.blockSignals(False)
+        if s.is_standard:
+            database = "CISC" if s.catalog.upper().startswith("CISC") else "AISC"
+            index = self.db.findData(database)
+            self.db.blockSignals(True)
+            self.db.setCurrentIndex(index if index >= 0 else 0)
+            self.db.blockSignals(False)
+            family = s.family or ("W" if s.shape == "I-Shape"
+                                  else "HSS Rect" if s.shape == "Box" else "HSS Rnd")
+            self._fill_families(family)
+            self._populate_standard()
+            self.tabs.setCurrentIndex(0)
+            row2 = self._find_designation(s.designation)
+            if row2 >= 0:
+                self.standard_table.selectRow(row2)
+                self.standard_table.scrollToItem(self.standard_table.item(row2, 0))
+            idx = self.shape.findData(s.shape)
+            self.shape.blockSignals(True)
+            self.shape.setCurrentIndex(idx if idx >= 0 else 0)
+            self.shape.blockSignals(False)
+            self._set_custom_values(s)
+            self._sync_custom_fields()
+        else:
+            self.tabs.setCurrentIndex(1)
+            idx = self.shape.findData(s.shape)
+            self.shape.blockSignals(True)
+            self.shape.setCurrentIndex(idx if idx >= 0 else 0)
+            self.shape.blockSignals(False)
+            self._set_custom_values(s)
+            self._sync_custom_fields()
+        self._loading = False
+        self._update_props()
+
+    def _find_designation(self, designation: str) -> int:
+        for row in range(self.standard_table.rowCount()):
+            item = self.standard_table.item(row, 0)
+            if item is not None and item.text() == designation:
+                return row
+        return -1
+
+    def _refresh_item(self) -> None:
+        row = self.list.currentRow()
+        if self.current and 0 <= row < self.list.count():
+            self.list.item(row).setText(f"{self.current.tag}   {self.current.name}")
+            self.list.item(row).setToolTip(
+                f"{self.current.shape} · {self.current.catalog}"
+                + (f" · {self.current.designation}" if self.current.designation else ""))
+
+    def _update_props(self) -> None:
+        s = self.current
+        if s is None:
+            self.props.setText("No section selected")
+            self.preview.set_section(None)
+            return
+        source = (f"{s.catalog} {s.designation}" if s.is_standard
+                  else "Custom dimensions")
+        self.props.setText(
+            f"A  = {fmt(UNITS.area(s.A), 6)} {UNITS.area_unit}\n"
+            f"mass = {fmt(s.mass_per_length, 1)} kg/m\n"
+            f"Iy = {fmt(UNITS.inertia(s.Iy), 3)} {UNITS.inertia_unit}\n"
+            f"Iz = {fmt(UNITS.inertia(s.Iz), 3)} {UNITS.inertia_unit}\n"
+            f"J  = {fmt(UNITS.inertia(s.J), 3)} {UNITS.inertia_unit}\n"
+            f"Source: {source}")
+        self.preview.set_section(s)
 
     def _add(self) -> None:
         tag = max(self.sections, default=0) + 1
-        self.sections[tag] = Section(tag, f"Section {tag}")
-        self.sections[tag].compute()
+        s = Section(tag, f"Section {tag}", "I-Shape",
+                    b=300.0, h=600.0, d=600.0, t=12.0, tw=10.0, tf=15.0)
+        s.compute()
+        self.sections[tag] = s
+        self._reload()
+        self.list.setCurrentRow(len(self.sections) - 1)
+
+    def _duplicate(self) -> None:
+        if self.current is None:
+            return
+        tag = max(self.sections, default=0) + 1
+        s = copy.deepcopy(self.current)
+        s.tag = tag
+        s.name = f"{self.current.name} copy"
+        self.sections[tag] = s
         self._reload()
         self.list.setCurrentRow(len(self.sections) - 1)
 

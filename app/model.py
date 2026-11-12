@@ -100,7 +100,21 @@ class Material:
         return m
 
 
-SECTION_SHAPES = ("Rectangle", "Circle", "Pipe", "Box", "I-Shape", "User")
+SECTION_SHAPES = ("Rectangle", "Circle", "Hexagon", "Octagon", "Box", "Pipe",
+                  "I-Shape", "L-Shape", "T-Shape", "User")
+
+SHAPE_LABELS = {
+    "Rectangle": "Solid rectangle",
+    "Circle": "Solid circle",
+    "Hexagon": "Solid hexagon",
+    "Octagon": "Solid octagon",
+    "Box": "Rectangular hollow",
+    "Pipe": "Circular hollow / pipe",
+    "I-Shape": "I / H section",
+    "L-Shape": "Angle (L)",
+    "T-Shape": "Tee (T)",
+    "User": "User-defined properties",
+}
 
 
 @dataclass
@@ -118,10 +132,25 @@ class Section:
     Iy: float = 0.0
     Iz: float = 0.0
     J: float = 0.0
+    catalog: str = "Custom"
+    designation: str = ""
+    family: str = ""
+    cy: float = 0.0
+    cz: float = 0.0
+
+    @property
+    def is_standard(self) -> bool:
+        return bool(self.designation) and self.catalog not in ("", "Custom")
+
+    @property
+    def mass_per_length(self) -> float:
+        """Approximate steel mass in kg/m (rho = 7.85 t/m3)."""
+        return self.A * 7.85e-3
 
     # ------------------------------------------------------------------ #
     def compute(self) -> None:
         b, h, d, t, tw, tf = self.b, self.h, self.d, self.t, self.tw, self.tf
+        self.cy = self.cz = 0.0
         if self.shape == "Rectangle":
             self.A = b * h
             self.Iy = b * h ** 3 / 12.0
@@ -136,6 +165,13 @@ class Section:
             self.A = math.pi * (d ** 2 - di ** 2) / 4.0
             self.Iy = self.Iz = math.pi * (d ** 4 - di ** 4) / 64.0
             self.J = 2.0 * self.Iy
+        elif self.shape == "Hexagon" or self.shape == "Octagon":
+            n = 6 if self.shape == "Hexagon" else 8
+            pts = _regular_polygon(n, max(d, 1e-6))
+            area, cy, cz, iy, iz = _polygon_props(pts)
+            self.A, self.cy, self.cz = area, cy, cz
+            self.Iy, self.Iz = iy, iz
+            self.J = 0.75 * (iy + iz)
         elif self.shape == "Box":
             bi = max(b - 2 * t, 1e-6)
             hi = max(h - 2 * t, 1e-6)
@@ -149,7 +185,79 @@ class Section:
             self.Iy = (b * h ** 3 - (b - tw) * hw ** 3) / 12.0
             self.Iz = (2 * tf * b ** 3 + hw * tw ** 3) / 12.0
             self.J = (2 * b * tf ** 3 + hw * tw ** 3) / 3.0
+        elif self.shape == "L-Shape":
+            leg_b = max(b, t)
+            leg_h = max(h, t)
+            pts = [(0.0, 0.0), (leg_b, 0.0), (leg_b, t),
+                   (t, t), (t, leg_h), (0.0, leg_h)]
+            area, cy, cz, iy, iz = _polygon_props(pts)
+            self.A, self.cy, self.cz = area, cy, cz
+            self.Iy, self.Iz = iy, iz
+            self.J = (_rect_torsion(max(leg_b, t), min(leg_b, t)) +
+                      _rect_torsion(max(leg_h - t, t), min(leg_h - t, t)))
+        elif self.shape == "T-Shape":
+            flange_t = min(max(tf, 1e-6), h)
+            web_t = min(max(tw, 1e-6), b)
+            web_h = max(h - flange_t, 1e-6)
+            pts = [(-web_t / 2, 0.0), (web_t / 2, 0.0),
+                   (web_t / 2, web_h), (b / 2, web_h),
+                   (b / 2, h), (-b / 2, h),
+                   (-b / 2, web_h), (-web_t / 2, web_h)]
+            area, cy, cz, iy, iz = _polygon_props(pts)
+            self.A, self.cy, self.cz = area, cy, cz
+            self.Iy, self.Iz = iy, iz
+            self.J = (_rect_torsion(max(b, flange_t), min(b, flange_t)) +
+                      _rect_torsion(max(web_h, web_t), min(web_h, web_t)))
         # "User" keeps the values entered by the user
+
+    def outline(self):
+        """Return (outer, inner) section outlines in local (y, z) mm."""
+        b, h, d, t, tw, tf = self.b, self.h, self.d, self.t, self.tw, self.tf
+        if self.shape == "Circle":
+            return [_regular_polygon(24, max(d, 1.0)), None]
+        if self.shape == "Pipe":
+            ro = max(d / 2.0, 0.5)
+            ri = max(ro - t, 0.0)
+            inner = (_regular_polygon(24, 2.0 * ri) if ri > 0.5 else None)
+            return [_regular_polygon(24, max(d, 1.0)), inner]
+        if self.shape == "Hexagon":
+            return [_regular_polygon(6, max(d, 1.0)), None]
+        if self.shape == "Octagon":
+            return [_regular_polygon(8, max(d, 1.0)), None]
+        if self.shape == "I-Shape":
+            tw = min(max(tw, 1.0), b)
+            tf = min(max(tf, 1.0), 0.49 * h)
+            outer = [(-b / 2, h / 2), (b / 2, h / 2), (b / 2, h / 2 - tf),
+                     (tw / 2, h / 2 - tf), (tw / 2, -h / 2 + tf), (b / 2, -h / 2 + tf),
+                     (b / 2, -h / 2), (-b / 2, -h / 2), (-b / 2, -h / 2 + tf),
+                     (-tw / 2, -h / 2 + tf), (-tw / 2, h / 2 - tf), (-b / 2, h / 2 - tf)]
+            return [outer, None]
+        if self.shape == "Box":
+            outer = [(-b / 2, -h / 2), (b / 2, -h / 2), (b / 2, h / 2), (-b / 2, h / 2)]
+            bi, hi = b - 2 * t, h - 2 * t
+            inner = ([(-bi / 2, -hi / 2), (bi / 2, -hi / 2),
+                      (bi / 2, hi / 2), (-bi / 2, hi / 2)] if bi > 1 and hi > 1 else None)
+            return [outer, inner]
+        if self.shape == "L-Shape":
+            leg_b = max(b, t)
+            leg_h = max(h, t)
+            pts = [(0.0, 0.0), (leg_b, 0.0), (leg_b, t),
+                   (t, t), (t, leg_h), (0.0, leg_h)]
+            return [[(y - self.cy, z - self.cz) for y, z in pts], None]
+        if self.shape == "T-Shape":
+            flange_t = min(max(tf, 1e-6), h)
+            web_t = min(max(tw, 1e-6), b)
+            web_h = max(h - flange_t, 1e-6)
+            pts = [(-web_t / 2, 0.0), (web_t / 2, 0.0),
+                   (web_t / 2, web_h), (b / 2, web_h),
+                   (b / 2, h), (-b / 2, h),
+                   (-b / 2, web_h), (-web_t / 2, web_h)]
+            return [[(y - self.cy, z - self.cz) for y, z in pts], None]
+        if self.shape == "User" and self.A > 0:
+            side = math.sqrt(self.A)
+            b = h = max(side, 1.0)
+        return [[(-b / 2, -h / 2), (b / 2, -h / 2),
+                 (b / 2, h / 2), (-b / 2, h / 2)], None]
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -161,6 +269,42 @@ class Section:
             if hasattr(s, k) and k != "tag":
                 setattr(s, k, v)
         return s
+
+
+def _regular_polygon(n: int, diameter: float,
+                     rotation: Optional[float] = None) -> List[Tuple[float, float]]:
+    """Vertices of a regular polygon centred on the origin."""
+    radius = max(diameter, 1e-9) / 2.0
+    start = math.pi / n if rotation is None else rotation
+    return [(radius * math.cos(start + i * 2.0 * math.pi / n),
+             radius * math.sin(start + i * 2.0 * math.pi / n))
+            for i in range(n)]
+
+
+def _polygon_props(points: List[Tuple[float, float]]):
+    """Area, centroid and centroidal second moments of a polygon.
+
+    ``points`` are (y, z) pairs.  Returns (A, cy, cz, Iy, Iz), where Iy is
+    the integral of z^2 and Iz the integral of y^2 over the area.
+    """
+    if len(points) < 3:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+    a2 = cy = cz = iy0 = iz0 = 0.0
+    for (y0, z0), (y1, z1) in zip(points, points[1:] + points[:1]):
+        cross = y0 * z1 - y1 * z0
+        a2 += cross
+        cy += (y0 + y1) * cross
+        cz += (z0 + z1) * cross
+        iy0 += (z0 * z0 + z0 * z1 + z1 * z1) * cross
+        iz0 += (y0 * y0 + y0 * y1 + y1 * y1) * cross
+    area = 0.5 * a2
+    if abs(area) < 1e-12:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+    cy /= 6.0 * area
+    cz /= 6.0 * area
+    iy = iy0 / 12.0 - area * cz * cz
+    iz = iz0 / 12.0 - area * cy * cy
+    return abs(area), cy, cz, abs(iy), abs(iz)
 
 
 def _rect_torsion(a: float, b: float) -> float:

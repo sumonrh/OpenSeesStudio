@@ -48,6 +48,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 
 ![extruded section view](docs/extruded.png)
 
+![standard steel section library](docs/section_dialog.png)
+
 **Structure**
 - Create nodes by coordinates, with repetition and spacing.
 - Create beams (`elasticBeamColumn`), trusses and 4-node shells (`ShellMITC4`).
@@ -56,8 +58,15 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Mirror about the XY, XZ or YZ plane, with or without keeping the original.
 - Supports: fixed, pinned, roller Z, or any combination of 6 DOF.
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
-- Section library with automatic properties for rectangle, circle, pipe, box and I-shape;
-  user sections can supply A, Iy, Iz, J directly.
+- Section library with a standard steel database and custom shapes. The database
+  contains AISC (USA) and CISC (Canada) W, HP, M, S, rectangular/square hollow,
+  round hollow and pipe sections with published dimensions and section properties.
+- Custom shapes: solid rectangle, circle, hexagon, octagon, rectangular hollow,
+  circular hollow/pipe, I/H section, angle (L), tee (T), and user-defined A/Iy/Iz/J.
+  Custom properties are computed from the dimensions; standard database values are
+  kept exactly as published.
+- Section dialog with database/family selection, designation search, live preview,
+  area, mass, Iy, Iz and J.
 - Model tree lists materials, sections, supports, load cases and combinations.
   **Nodes** and **Elements** are table links; clicking them opens their spreadsheet.
   Double-click a material or section to select its elements, right-click to delete it.
@@ -286,7 +295,8 @@ app/
   viewport.py     3D viewport: camera, picking, loads, diagrams, deformed shapes
   beamdiagram.py  member force distribution from end forces and loads
   resultsview.py  beam diagram / deformation sidebar
-  model.py        data model and JSON persistence
+  model.py        data model, section properties and JSON persistence
+  steelsections.py standard AISC and CISC steel section database
   units.py        display-unit conversion and unit labels
   opsgen.py       OpenSees model builder, analyses, Tcl export, validation
   dialogs.py      node / element / copy / load / combination dialogs

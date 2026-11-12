@@ -1234,49 +1234,7 @@ def _nice_step(x: float) -> float:
 
 def _section_profiles(sec) -> list:
     """Return (outer, inner) cross-section outlines in local (y, z) mm."""
-    shape = getattr(sec, "shape", "Rectangle")
-    b = max(float(getattr(sec, "b", 300.0) or 300.0), 1.0)
-    h = max(float(getattr(sec, "h", 600.0) or 600.0), 1.0)
-    d = max(float(getattr(sec, "d", 400.0) or 400.0), 1.0)
-    t = max(float(getattr(sec, "t", 0.0) or 0.0), 0.0)
-    tw = max(float(getattr(sec, "tw", 0.0) or 0.0), 1.0)
-    tf = max(float(getattr(sec, "tf", 0.0) or 0.0), 1.0)
-
-    if shape == "Circle":
-        pts = [(0.5 * d * math.cos(a), 0.5 * d * math.sin(a))
-               for a in [i * 2 * math.pi / 16 for i in range(16)]]
-        return [pts, None]
-
-    if shape == "Pipe":
-        ro = 0.5 * d
-        ri = max(ro - t, 0.0)
-        outer = [(ro * math.cos(a), ro * math.sin(a))
-                 for a in [i * 2 * math.pi / 16 for i in range(16)]]
-        inner = [(ri * math.cos(a), ri * math.sin(a))
-                 for a in [i * 2 * math.pi / 16 for i in range(16)]] if ri > 1 else None
-        return [outer, inner]
-
-    if shape == "I-Shape":
-        tw = min(tw, b)
-        tf = min(tf, 0.49 * h)
-        outer = [(-b / 2, h / 2), (b / 2, h / 2), (b / 2, h / 2 - tf),
-                 (tw / 2, h / 2 - tf), (tw / 2, -h / 2 + tf), (b / 2, -h / 2 + tf),
-                 (b / 2, -h / 2), (-b / 2, -h / 2), (-b / 2, -h / 2 + tf),
-                 (-tw / 2, -h / 2 + tf), (-tw / 2, h / 2 - tf), (-b / 2, h / 2 - tf)]
-        return [outer, None]
-
-    if shape == "Box":
-        outer = [(-b / 2, -h / 2), (b / 2, -h / 2), (b / 2, h / 2), (-b / 2, h / 2)]
-        bi, hi = b - 2 * t, h - 2 * t
-        inner = ([(-bi / 2, -hi / 2), (bi / 2, -hi / 2),
-                  (bi / 2, hi / 2), (-bi / 2, hi / 2)] if bi > 1 and hi > 1 else None)
-        return [outer, inner]
-
-    if shape == "User" and float(getattr(sec, "A", 0.0) or 0.0) > 0:
-        side = math.sqrt(float(sec.A))
-        b = h = max(side, 1.0)
-
-    return [[(-b / 2, -h / 2), (b / 2, -h / 2), (b / 2, h / 2), (-b / 2, h / 2)], None]
+    return sec.outline()
 
 
 def _point_segment_distance(px, py, x0, y0, x1, y1) -> float:

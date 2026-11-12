@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDial
 
 from . import theme
 from .model import (Element, ElementLoad, LoadCase, LoadCombination, Material,
-                    NodalLoad, Node, Project, Section, fmt)
+                    NodalLoad, Node, Project, SECTION_SHAPES, Section, fmt)
 from .units import UNITS
 
 
@@ -420,9 +420,10 @@ class TablesDialog(QDialog):
             t = tag(row[0], "Sections")
             if t in sections:
                 errors.append(f"Sections: duplicate tag {t}")
+            old = base.sections.get(t)
             s = sections.setdefault(t, Section(t))
             s.name = row[1] or f"Section {t}"
-            s.shape = row[2] if row[2] in ("Rectangle", "Circle", "Pipe", "Box", "I-Shape", "User") else "Rectangle"
+            s.shape = row[2] if row[2] in SECTION_SHAPES else "Rectangle"
             s.b = UNITS.length_base(num(row[3], f"Section {t} b", 300))
             s.h = UNITS.length_base(num(row[4], f"Section {t} h", 600))
             s.d = UNITS.length_base(num(row[5], f"Section {t} d", 400))
@@ -434,7 +435,17 @@ class TablesDialog(QDialog):
                 s.Iy = UNITS.inertia_base(num(row[10], f"Section {t} Iy", 1))
                 s.Iz = UNITS.inertia_base(num(row[11], f"Section {t} Iz", 1))
                 s.J = UNITS.inertia_base(num(row[12], f"Section {t} J", 1))
+                s.catalog, s.designation, s.family = "Custom", "", ""
+            elif (old is not None and old.is_standard and old.shape == s.shape
+                  and all(abs(a - b) < 0.01 for a, b in
+                          ((old.b, s.b), (old.h, s.h), (old.d, s.d),
+                           (old.t, s.t), (old.tw, s.tw), (old.tf, s.tf)))):
+                s.A, s.Iy, s.Iz, s.J = old.A, old.Iy, old.Iz, old.J
+                s.catalog, s.designation, s.family = (old.catalog, old.designation,
+                                                      old.family)
+                s.cy, s.cz = old.cy, old.cz
             else:
+                s.catalog, s.designation, s.family = "Custom", "", ""
                 s.compute()
         if not sections:
             s = Section(1, "Section 1", "Rectangle", 300, 600, 400, 12)

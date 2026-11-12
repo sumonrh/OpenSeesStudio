@@ -13,9 +13,9 @@ from PySide6.QtWidgets import (QApplication, QLabel, QTableWidgetSelectionRange,
 
 app = QApplication.instance() or QApplication([])
 
-from app import dialogs, mainwindow, results as results_mod  # noqa: E402
+from app import dialogs, mainwindow, results as results_mod, steelsections  # noqa: E402
 from app.mainwindow import MainWindow  # noqa: E402
-from app.model import Project  # noqa: E402
+from app.model import Project, Section  # noqa: E402
 from app.tables import TablesDialog  # noqa: E402
 from app.units import UNITS  # noqa: E402
 
@@ -474,6 +474,41 @@ sd = dialogs.SectionDialog(win.project)
 sd.b.setValue(0.5)
 check("section dialog converts", abs(sd.current.b - 500.0) < 1e-6,
       f"({sd.current.b:.3f} mm)")
+check("AISC database loaded", len(steelsections.AISC["W"][1]) > 250)
+check("CISC database loaded", len(steelsections.CISC["W"][1]) > 250)
+sd.tabs.setCurrentIndex(0)
+sd.db.setCurrentIndex(sd.db.findData("AISC"))
+sd.family.setCurrentIndex(sd.family.findData("W"))
+row = sd._find_designation("W12X26")
+sd.standard_table.selectRow(row)
+check("AISC W section selected",
+      sd.current.is_standard and sd.current.designation == "W12X26"
+      and abs(sd.current.A - 4940.0) < 1e-6
+      and abs(sd.current.Iy - 84.9e6) < 1e3,
+      f"({sd.current.A:.0f} mm²)")
+sd.db.setCurrentIndex(sd.db.findData("CISC"))
+sd.family.setCurrentIndex(sd.family.findData("W"))
+row = sd._find_designation("W310x39")
+sd.standard_table.selectRow(row)
+check("CISC W section selected",
+      sd.current.designation == "W310x39"
+      and abs(sd.current.A - 4940.0) < 1e-6)
+sd.tabs.setCurrentIndex(1)
+sd.shape.setCurrentIndex(sd.shape.findData("Hexagon"))
+check("custom hexagonal shape", sd.current.shape == "Hexagon"
+      and sd.current.catalog == "Custom" and sd.current.A > 0)
+
+p_std = win.project.clone()
+s_std = Section(999, "W12X26", "I-Shape", b=165.0, h=310.0, d=310.0,
+                t=0.0, tw=5.84, tf=9.65)
+s_std.A, s_std.Iy, s_std.Iz, s_std.J = 4940.0, 84.9e6, 7.2e6, 125000.0
+s_std.catalog, s_std.designation, s_std.family = "AISC", "W12X26", "W"
+p_std.sections[999] = s_std
+td_std = TablesDialog(p_std)
+p_std2 = td_std._collect()
+check("standard section properties survive tables",
+      abs(p_std2.sections[999].A - 4940.0) < 1e-6
+      and abs(p_std2.sections[999].Iy - 84.9e6) < 1.0)
 
 UNITS.set("kip", "ft")
 dlg_ft = TablesDialog(win.project)

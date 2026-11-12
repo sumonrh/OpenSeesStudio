@@ -600,12 +600,14 @@ def add_section(name: str, shape: str = "Rectangle", b: float = 300.0,
                 tw: float = 10.0, tf: float = 15.0,
                 A: float = 0.0, Iy: float = 0.0, Iz: float = 0.0,
                 J: float = 0.0) -> dict:
-    """Add a section. shape = Rectangle | Circle | Pipe | Box | I-Shape | User.
+    """Add a section.
 
-    For User, A/Iy/Iz/J are used as given; other shapes compute them from
-    dimensions (mm, mm^4).
+    shape = Rectangle | Circle | Hexagon | Octagon | Box | Pipe | I-Shape |
+    L-Shape | T-Shape | User.  For User, A/Iy/Iz/J are used as given; other
+    shapes compute them from dimensions (mm, mm^4).
     """
-    if shape not in ("Rectangle", "Circle", "Pipe", "Box", "I-Shape", "User"):
+    if shape not in ("Rectangle", "Circle", "Hexagon", "Octagon", "Box",
+                     "Pipe", "I-Shape", "L-Shape", "T-Shape", "User"):
         raise ValueError("Unsupported section shape.")
     tag = _p().next_section()
     s = Section(tag, name, shape, b, h, d, t, tw, tf, A, Iy, Iz, J)

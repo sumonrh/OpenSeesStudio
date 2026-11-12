@@ -5,7 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.model import Project, Element, Node, NodalLoad, LoadCase, default_project
+from app.model import (Project, Element, Node, NodalLoad, LoadCase, Section,
+                       default_project)
 from app import opsgen
 
 FAILS = []
@@ -95,6 +96,22 @@ for pos in (0.25, 0.75):
     loads = beam_load_records(p, "DL")
     mz = diagram_series(p, r, p.elements[1], "DL", "Mz", loads.get(1, []))
     check(f"point load at {pos:.2f}L base moment", mz[0][1], -10.0 * a)
+
+print("== custom section shapes ==")
+s = Section(1, "Hex", "Hexagon", d=400.0)
+s.compute()
+check("hexagon area", s.A, 3.0 * math.sqrt(3.0) / 2.0 * 200.0 ** 2)
+s = Section(2, "Oct", "Octagon", d=400.0)
+s.compute()
+check("octagon area", s.A, 2.0 * math.sqrt(2.0) * 200.0 ** 2)
+s = Section(3, "Angle", "L-Shape", b=150.0, h=150.0, t=12.0)
+s.compute()
+check("angle area", s.A, 150.0 * 12.0 + 138.0 * 12.0)
+check("angle centroid", s.cy, 41.9375, 1e-4)
+s = Section(4, "Tee", "T-Shape", b=300.0, h=400.0, tw=12.0, tf=20.0)
+s.compute()
+check("tee area", s.A, 300.0 * 20.0 + 380.0 * 12.0)
+check("tee centroid", s.cz, 303.6364, 1e-4)
 
 print("== static: truss axial ==")
 p = default_project()
