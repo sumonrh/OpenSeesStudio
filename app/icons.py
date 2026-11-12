@@ -386,6 +386,18 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
             p.drawLine(QPointF(v, 4), QPointF(v, 20))
             p.drawLine(QPointF(4, v), QPointF(20, v))
 
+    elif name == "diagram":
+        _pen(p, "#8ea6bd", 1.2)
+        p.drawLine(QPointF(3, 20.5), QPointF(21, 20.5))
+        p.drawLine(QPointF(3, 3.5), QPointF(3, 20.5))
+        _pen(p, accent, 1.8)
+        path = QPainterPath()
+        path.moveTo(4, 16)
+        path.cubicTo(8, 3, 15, 3, 20.5, 16)
+        p.drawPath(path)
+        _fill(p, accent)
+        p.drawEllipse(QPointF(20.5, 16), 1.7, 1.7)
+
     elif name == "deformed":
         p.setPen(QPen(QColor("#9fb0c4"), 1.3, Qt.DashLine))
         p.drawLine(QPointF(3, 17), QPointF(21, 17))

@@ -198,6 +198,14 @@ win.ribbon.set_current("Structure")
 check("quick access toolbar", win.a_run in win.quick_toolbar.actions())
 check("quick view toolbar", win.a_fit in win.quick_view_toolbar.actions()
       and win.a_orbit in win.quick_view_toolbar.actions())
+view_page = win.ribbon._pages[0]
+check("view tab has no deformed button",
+      all(b.defaultAction() is not win.a_deformed
+          for b in view_page.findChildren(QToolButton)))
+results_page = win.ribbon._pages[7]
+result_actions = [b.defaultAction() for b in results_page.findChildren(QToolButton)]
+check("results tab has diagrams and deformation",
+      win.a_beam_diagram in result_actions and win.a_deformation in result_actions)
 check("properties panel action", win.a_props_visible.isChecked())
 win.a_props_visible.trigger()
 check("properties panel collapses", win.props_dock.isHidden())
@@ -247,6 +255,21 @@ load_cases_item = next(loads_item.child(i) for i in range(loads_item.childCount(
                        if loads_item.child(i).text(0).startswith("Load Cases"))
 check("tree lists load cases",
       load_cases_item.childCount() == len(win.project.cases))
+check("load tree has no per-element load rows",
+      all(not loads_item.child(i).text(0).startswith(("Nodal Loads", "Element Loads"))
+          for i in range(loads_item.childCount())))
+case0 = load_cases_item.child(0)
+win._tree_double(case0, 0)
+check("double-click case selects loaded elements",
+      len(win.viewport.sel_elements) > 0)
+win._display_load_case("LL", True)
+check("load case display", win.viewport.load_filter_active
+      and "LL" in win.viewport.display_cases and win.viewport.show_loads)
+win._display_load_case("LL", False)
+check("load case undisplay", "LL" not in win.viewport.display_cases)
+win._scenario_changed("DL")
+check("scenario restores normal load display",
+      not win.viewport.load_filter_active and win.viewport.show_loads)
 
 print("== static analysis through the GUI ==")
 mainwindow.ResultsDialog = StubResults
@@ -257,6 +280,14 @@ check("max displacement reasonable", 0.0 < win.static_results.max_disp < 20.0,
 check("viewport shows deformed shape",
       bool(win.viewport._deformed_points()))
 check("analysis switches to results tab", win.ribbon.current_title() == "Results")
+win.a_beam_diagram.trigger()
+check("beam diagrams open", win.viewport.show_diagrams
+      and not win.results_dock.isHidden())
+check("load case results cached", win.results_scenario in win.static_cache)
+win.a_beam_diagram.trigger()
+check("beam diagrams clear", not win.viewport.show_diagrams)
+win.viewport.show_deformed = True
+win.a_deformed.setChecked(True)
 check("model auto-locked after analysis",
       win.model_locked and win.a_lock.isChecked() and not win.a_nodes.isEnabled())
 win.a_lock.trigger()
@@ -335,6 +366,15 @@ check("element load added", any(l.elem == 1 and l.case == "LL"
                                 for l in win.project.elem_loads))
 
 print("== tables dialog round trip ==")
+dlg_case = TablesDialog(win.project, case_filter="LL")
+visible = [r for r in range(dlg_case.page_eleload.table.rowCount())
+           if not dlg_case.page_eleload.table.isRowHidden(r)]
+check("load table filters by case",
+      bool(visible) and all(dlg_case.page_eleload.table.item(r, 2).text() == "LL"
+                            for r in visible))
+check("load table keeps other cases",
+      len(dlg_case._collect().elem_loads) == len(win.project.elem_loads))
+
 dlg = TablesDialog(win.project)
 dlg.page_nodes.table.setRangeSelected(QTableWidgetSelectionRange(0, 0, 0, 3), True)
 dlg.page_nodes.table.copy_selection()
@@ -455,6 +495,32 @@ check("moment round trip", abs(UNITS.moment_base(UNITS.moment(m0)) - m0) < 1e-9)
 win.units_force.setCurrentText("kN")
 win.units_length.setCurrentText("m")
 check("units restored", UNITS.force_unit == "kN" and UNITS.length_unit == "m")
+
+print("== delete a load case ==")
+if win.model_locked:
+    win.a_lock.trigger()
+old_box = mainwindow.QMessageBox
+
+
+class YesBox:
+    Yes = old_box.Yes
+
+    @staticmethod
+    def question(*_args, **_kwargs):
+        return old_box.Yes
+
+
+mainwindow.QMessageBox = YesBox
+try:
+    win._delete_load_case("WIND")
+finally:
+    mainwindow.QMessageBox = old_box
+check("load case deleted", "WIND" not in win.project.cases)
+check("deleted case loads removed",
+      all(load.case != "WIND" for load in win.project.nodal_loads + win.project.elem_loads))
+check("deleted case removed from combinations",
+      all(all(case != "WIND" for case, _f in combo.factors)
+          for combo in win.project.combos.values()))
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

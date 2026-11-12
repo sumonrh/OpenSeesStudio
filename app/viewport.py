@@ -11,11 +11,22 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QLinearGradient, QPainter,
 from PySide6.QtWidgets import QWidget
 
 from . import theme
+from .beamdiagram import (COMPONENTS, MOMENT_COMPONENTS, beam_load_records,
+                          diagram_series, series_extreme)
 from .model import Project, fmt
 from .opsgen import auto_vecxz, local_axes, ModalResults, StaticResults
 from .units import UNITS
 
 Vec3 = Tuple[float, float, float]
+
+DIAGRAM_COLORS = {
+    "Fx": QColor("#2f9e5f"),
+    "Vy": QColor("#0f6fb8"),
+    "Vz": QColor("#7c5cbf"),
+    "Mx": QColor("#e8622c"),
+    "My": QColor("#c92a2a"),
+    "Mz": QColor("#0d9488"),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +151,16 @@ class Viewport(QWidget):
         self.show_deformed = True
         self.deformed_scale: Optional[float] = None
         self.load_scenario: str = ""
+        self.display_cases: Set[str] = set()
+        self.load_filter_active = False
+
+        self.show_diagrams = False
+        self.diagram_results: Optional[StaticResults] = None
+        self.diagram_scenario: str = ""
+        self.diagram_components: Set[str] = {"My", "Mz"}
+        self.diagram_scale: float = 0.0
+        self.diagram_values = False
+        self.diagram_fill = True
 
         self._band: Optional[QRect] = None
         self._press: Optional[QPoint] = None
@@ -178,11 +199,45 @@ class Viewport(QWidget):
         self.static_results = None
         self.mode_index = mode
         self.deformed_scale = None
+        self.diagram_results = None
+        self.show_diagrams = False
+        self.update()
+
+    def set_load_scenario(self, scenario: str) -> None:
+        """Draw the loads of one case or combination."""
+        self.load_scenario = scenario
+        self.display_cases.clear()
+        self.load_filter_active = False
+        self.update()
+
+    def set_display_cases(self, cases: Sequence[str]) -> None:
+        """Draw only the listed load cases (case-by-case Display / Undisplay)."""
+        self.display_cases = set(cases)
+        self.load_filter_active = True
+        self.update()
+
+    def set_diagrams(self, res: Optional[StaticResults], scenario: str = "",
+                     components: Sequence[str] = (), scale: float = 0.0,
+                     values: bool = False, fill: bool = True) -> None:
+        self.diagram_results = res
+        self.diagram_scenario = scenario or (res.scenario if res else "")
+        self.diagram_components = {c for c in components if c in COMPONENTS}
+        self.diagram_scale = max(float(scale), 0.0)
+        self.diagram_values = bool(values)
+        self.diagram_fill = bool(fill)
+        self.show_diagrams = bool(res and self.diagram_components)
+        self.update()
+
+    def clear_diagrams(self) -> None:
+        self.diagram_results = None
+        self.show_diagrams = False
         self.update()
 
     def clear_results(self) -> None:
         self.static_results = None
         self.modal_results = None
+        self.diagram_results = None
+        self.show_diagrams = False
         self.stop_animation()
         self.update()
 
@@ -416,6 +471,10 @@ class Viewport(QWidget):
                 p.setPen(QPen(theme.DEFORMED, 2.8 if e.kind == "beam" else 2.0))
                 p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in pts]))
 
+        # ---- beam force diagrams --------------------------------------
+        if self.show_diagrams and self.diagram_results:
+            self._draw_diagrams(p, w, h)
+
         # ---- loads -----------------------------------------------------
         if self.show_loads:
             self._draw_loads(p, w, h, proj)
@@ -577,6 +636,130 @@ class Viewport(QWidget):
                         p.drawLine(QPointF(ip0[i][0], ip0[i][1]),
                                    QPointF(ip1[i][0], ip1[i][1]))
 
+    def _draw_diagrams(self, p: QPainter, w: int, h: int) -> None:
+        """Draw beam force diagrams for the selected result components."""
+        if not self.project or not self.diagram_results:
+            return
+        comps = [c for c in COMPONENTS if c in self.diagram_components]
+        if not comps:
+            return
+        scenario = self.diagram_scenario or self.diagram_results.scenario
+        loads = beam_load_records(self.project, scenario)
+        cam = self.camera
+        deformed = self._deformed_points() if self.show_deformed else {}
+        pts3 = deformed or {tag: n.xyz for tag, n in self.project.nodes.items()}
+
+        entries = []
+        max_abs = 0.0
+        for tag, e in self.project.elements.items():
+            if e.kind not in ("beam", "truss"):
+                continue
+            base = [pts3.get(t) for t in e.nodes]
+            if any(pt is None for pt in base):
+                continue
+            screen = [cam.project(pt, w, h) for pt in base]
+            if any(s is None for s in screen):
+                continue
+            depth = sum(s[2] for s in screen) / len(screen)
+            for comp in comps:
+                if e.kind == "truss" and comp != "Fx":
+                    continue
+                series = diagram_series(self.project, self.diagram_results, e,
+                                        scenario, comp, loads.get(tag, []))
+                if not series:
+                    continue
+                peak = max(abs(v) for _x, v in series)
+                max_abs = max(max_abs, peak)
+                entries.append((depth, tag, e, comp, series, base))
+        if not entries or max_abs <= 0:
+            return
+
+        (x0, y0, z0), (x1, y1, z1) = self.project.bbox()
+        diag = max(math.dist((x0, y0, z0), (x1, y1, z1)), 1.0)
+        user_scale = self.diagram_scale if self.diagram_scale > 0 else 1.0
+        factor = 0.10 * diag / max_abs * user_scale
+        entries.sort(key=lambda item: -item[0])
+
+        for _depth, tag, e, comp, series, base in entries:
+            color = DIAGRAM_COLORS.get(comp, QColor(theme.ACCENT))
+            axis = None
+            if len(base) >= 2:
+                p0, p1 = base[0], base[1]
+                if math.dist(p0, p1) > 1e-9:
+                    _x, uy, uz = local_axes(p0, p1, e.vecxz or auto_vecxz(p0, p1))
+                    axis = uz if comp in ("Vz", "My") else uy
+            zero, curve = [], []
+            if axis is None:
+                continue
+            for x, value in series:
+                wpt = _lerp(base[0], base[-1], x)
+                s0 = cam.project(wpt, w, h)
+                if s0 is None:
+                    continue
+                wv = _add(wpt, _mul(axis, value * factor))
+                s1 = cam.project(wv, w, h)
+                if s1 is None:
+                    continue
+                zero.append(s0)
+                curve.append(s1)
+            if len(curve) < 2:
+                continue
+
+            poly = QPolygonF([QPointF(s[0], s[1]) for s in zero] +
+                             [QPointF(s[0], s[1]) for s in reversed(curve)])
+            if self.diagram_fill:
+                fill = QColor(color.red(), color.green(), color.blue(), 46)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(fill))
+                p.drawPolygon(poly)
+                p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(color, 2.0))
+            p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in curve]))
+            p.setPen(QPen(color, 0.9, Qt.DashLine))
+            p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in zero]))
+
+            if self.diagram_values and len(entries) <= 120:
+                value, _pos = series_extreme(series)
+                index = min(range(len(series)),
+                            key=lambda i: abs(abs(series[i][1]) - abs(value)))
+                if index < len(curve):
+                    point = curve[index]
+                    txt = fmt(UNITS.moment(value) if comp in MOMENT_COMPONENTS
+                              else UNITS.force(value), 1)
+                    p.setFont(QFont("Segoe UI", 7))
+                    p.setPen(QPen(color))
+                    p.drawText(QPointF(point[0] + 5, point[1] - 5), txt)
+
+        self._draw_diagram_legend(p, w, h, comps, scenario)
+
+    def _draw_diagram_legend(self, p: QPainter, w: int, h: int,
+                             comps: Sequence[str], scenario: str) -> None:
+        p.setFont(QFont("Segoe UI", 8))
+        fm = p.fontMetrics()
+        title = f"Beam diagrams · {scenario}"
+        rows = [title] + [
+            f"{c}   {UNITS.moment_unit if c in MOMENT_COMPONENTS else UNITS.force_unit}"
+            for c in comps]
+        bw = max(fm.horizontalAdvance(s) for s in rows) + 34
+        bh = 10 + len(rows) * (fm.height() + 3) + 4
+        x = w - bw - 12
+        p.setPen(QPen(QColor(theme.BORDER), 1.0))
+        p.setBrush(QBrush(QColor(255, 255, 255, 225)))
+        p.drawRoundedRect(QRectF(x, 10, bw, bh), 4, 4)
+        p.setPen(QPen(QColor(theme.ACCENT_DARK)))
+        p.drawText(QPointF(x + 10, 24), title)
+        y = 24 + fm.height() + 3
+        for c in comps:
+            color = DIAGRAM_COLORS.get(c, QColor(theme.ACCENT))
+            p.setPen(QPen(color, 2.2))
+            p.drawLine(QPointF(x + 10, y - 4), QPointF(x + 26, y - 4))
+            p.setPen(QPen(QColor("#41566e")))
+            p.drawText(QPointF(x + 31, y), c)
+            p.setPen(QPen(QColor(theme.MUTED)))
+            p.drawText(QPointF(x + 54, y),
+                       UNITS.moment_unit if c in MOMENT_COMPONENTS else UNITS.force_unit)
+            y += fm.height() + 3
+
     def _draw_grid(self, p: QPainter, w: int, h: int) -> None:
         ext = self.camera.distance * math.tan(self.camera.fov / 2) * 1.25
         step = _nice_step(ext / 7.0)
@@ -629,7 +812,14 @@ class Viewport(QWidget):
         lines = [f"Nodes {len(self.project.nodes)}   Elements {len(self.project.elements)}"]
         if self.show_extruded:
             lines.append("Extruded sections")
-        if self.static_results:
+        if self.show_loads:
+            cases = self._load_case_factors()
+            if len(cases) > 1:
+                lines.append("Loads: " + ", ".join(cases))
+        if self.show_diagrams and self.diagram_results:
+            comps = "  ".join(c for c in COMPONENTS if c in self.diagram_components)
+            lines.append(f"Diagram: {self.diagram_scenario}    {comps}")
+        if self.static_results and self.show_deformed:
             sc = self._display_scale()
             lines.append(f"Case: {self.static_results.scenario}    Deformed shape ×{sc:,.1f}")
         elif self.modal_results and self.modal_results.modes:
@@ -649,15 +839,93 @@ class Viewport(QWidget):
             y += fm.height() + 2
 
     # --------------------------------------------------------------- loads
+    def _load_case_factors(self) -> Dict[str, float]:
+        if not self.project:
+            return {}
+        if self.load_filter_active:
+            return {c: 1.0 for c in self.project.cases if c in self.display_cases}
+        return {c: float(f) for c, f in _scenario_cases(self.project, self.load_scenario)
+                if c in self.project.cases and abs(f) > 1e-12}
+
     def _draw_loads(self, p: QPainter, w: int, h: int, proj) -> None:
-        if not self.project or not self.load_scenario:
+        if not self.project or not self.show_loads:
             return
         proj_ = self.project
-        case_map = {c: f for c, f in _scenario_cases(proj_, self.load_scenario)}
+        case_map = self._load_case_factors()
         if not case_map:
             return
+        multiple = len(case_map) > 1
+        palette = ("#0f6fb8", "#e8622c", "#2f9e5f", "#7c5cbf", "#c92a2a", "#0d9488")
+        colors = {case: QColor(palette[i % len(palette)] if multiple
+                               else theme.LOAD_COLOR)
+                  for i, case in enumerate(case_map)}
 
-        # nodal loads
+        # ---- gather element loads ------------------------------------
+        element_items = []
+        peak_w = 0.0
+        peak_p = 0.0
+        for el in proj_.elem_loads:
+            if el.case not in case_map:
+                continue
+            e = proj_.elements.get(el.elem)
+            if e is None or len(e.nodes) < 2:
+                continue
+            world_dir = _load_world_dir(proj_, e, el.direction)
+            if world_dir is None:
+                continue
+            fac = case_map[el.case]
+            if el.kind == "point":
+                value = el.value * fac
+                if abs(value) < 1e-15:
+                    continue
+                peak_p = max(peak_p, abs(value))
+                element_items.append((el, e, world_dir, value, 0.0, el.case))
+            else:
+                v1 = el.value * fac
+                v2 = el.value2 * fac if el.trapezoid else v1
+                if abs(v1) < 1e-15 and abs(v2) < 1e-15:
+                    continue
+                peak_w = max(peak_w, abs(v1), abs(v2))
+                element_items.append((el, e, world_dir, v1, v2, el.case))
+
+        labels = len(element_items) <= 80
+        for el, e, world_dir, v1, v2, case in element_items:
+            pts = [proj.get(t) for t in e.nodes[:2]]
+            if any(s is None for s in pts):
+                continue
+            color = colors.get(case, QColor(theme.LOAD_COLOR))
+            prefix = f"{case}: " if multiple else ""
+            p0 = proj_.node_xyz(e.nodes[0])
+            p1 = proj_.node_xyz(e.nodes[1])
+            if el.kind == "point":
+                sd = self._screen_dir(world_dir, v1)
+                if sd is None:
+                    continue
+                base = self.camera.project(_lerp(p0, p1, min(max(el.position, 0.0), 1.0)),
+                                           w, h)
+                if base is None:
+                    continue
+                ln = 18.0 + 26.0 * abs(v1) / max(peak_p, 1e-9)
+                tail = (base[0] - sd[0] * ln, base[1] - sd[1] * ln)
+                p.setPen(QPen(color, 1.8))
+                p.drawLine(QPointF(*tail), QPointF(base[0], base[1]))
+                self._head(p, base[0], base[1], sd[0], sd[1], 5.0, color)
+                if labels:
+                    p.setFont(QFont("Segoe UI", 7))
+                    p.setPen(QPen(color.darker(130)))
+                    p.drawText(QPointF(tail[0] + 4, tail[1] - 4),
+                               f"{prefix}P = {fmt(UNITS.force(v1), 1)} {UNITS.force_unit} "
+                               f"(x/L {el.position:.2f})")
+            else:
+                a = proj.get(e.nodes[0])
+                b = proj.get(e.nodes[-1])
+                if a is None or b is None:
+                    continue
+                self._draw_udl(p, a, b, world_dir, v1, v2,
+                               colors.get(case, QColor(theme.LOAD_COLOR)),
+                               prefix, labels)
+
+        # ---- nodal loads ---------------------------------------------
         arrows = []
         peak_f = 0.0
         for nl in proj_.nodal_loads:
@@ -667,119 +935,100 @@ class Viewport(QWidget):
             mag = math.sqrt(sum(v * v for v in f[:3]))
             peak_f = max(peak_f, mag)
             if mag > 0:
-                arrows.append((nl.node, f))
-        if peak_f > 0:
-            for node, f in arrows:
-                s = proj.get(node)
-                if not s:
-                    continue
-                sx, sy = s[0], s[1]
-                mag = math.sqrt(sum(v * v for v in f[:3]))
-                length = 26 + 26 * (mag / peak_f)
-                _eye, _f, r, u = self.camera.basis()
-                d = (f[0], f[1], f[2])
-                vx = _dot(d, r)
-                vy = -_dot(d, u)
-                norm = math.hypot(vx, vy)
-                if norm < 1e-9:
-                    continue
-                vx, vy = vx / norm, vy / norm
-                x0 = sx - vx * length
-                y0 = sy - vy * length
-                p.setPen(QPen(theme.LOAD_COLOR, 1.8))
-                p.drawLine(QPointF(x0, y0), QPointF(sx, sy))
-                self._head(p, sx, sy, vx, vy, 6.0, theme.LOAD_COLOR)
+                arrows.append((nl, f, mag, nl.case))
+        for nl, f, mag, case in arrows:
+            s = proj.get(nl.node)
+            if s is None:
+                continue
+            color = colors.get(case, QColor(theme.LOAD_COLOR))
+            sd = self._screen_dir((f[0], f[1], f[2]), 1.0)
+            if sd is None:
+                p.setPen(QPen(color, 1.6))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(QPointF(s[0], s[1]), 6, 6)
+                continue
+            length = 22.0 + 26.0 * (mag / max(peak_f, 1e-9))
+            tail = (s[0] - sd[0] * length, s[1] - sd[1] * length)
+            p.setPen(QPen(color, 1.8))
+            p.drawLine(QPointF(*tail), QPointF(s[0], s[1]))
+            self._head(p, s[0], s[1], sd[0], sd[1], 6.0, color)
+            if labels:
                 p.setFont(QFont("Segoe UI", 7))
-                p.setPen(QPen(QColor(theme.ACCENT_DARK)))
-                p.drawText(QPointF(x0 - 2, y0 - 4), fmt(UNITS.force(mag), 1))
-            # moments
-            for nl in proj_.nodal_loads:
-                if nl.case not in case_map:
-                    continue
-                f = [v * case_map[nl.case] for v in nl.values]
-                if max(abs(v) for v in f[3:]) > 0:
-                    s = proj.get(nl.node)
-                    if not s:
-                        continue
-                    p.setPen(QPen(theme.LOAD_COLOR, 1.5))
-                    p.setBrush(Qt.NoBrush)
-                    p.drawArc(QRectF(s[0] - 9, s[1] - 9, 18, 18), 30 * 16, 300 * 16)
-                    self._head(p, s[0] + 7, s[1] - 5, 1, -1, 4.5, theme.LOAD_COLOR)
+                p.setPen(QPen(color.darker(130)))
+                prefix = f"{case}: " if multiple else ""
+                p.drawText(QPointF(tail[0] + 4, tail[1] - 4),
+                           f"{prefix}{fmt(UNITS.force(mag), 1)} {UNITS.force_unit}")
 
-        # element loads
-        for el in proj_.elem_loads:
-            if el.case not in case_map:
+        # ---- nodal moments -------------------------------------------
+        for nl in proj_.nodal_loads:
+            if nl.case not in case_map:
                 continue
-            e = proj_.elements.get(el.elem)
-            if not e or len(e.nodes) < 2:
+            f = [v * case_map[nl.case] for v in nl.values]
+            if max(abs(v) for v in f[3:]) <= 0:
                 continue
-            pts = [proj.get(t) for t in e.nodes[:2]]
-            if any(s is None for s in pts):
+            s = proj.get(nl.node)
+            if s is None:
                 continue
-            fac = case_map[el.case]
-            p0 = proj_.node_xyz(e.nodes[0])
-            p1 = proj_.node_xyz(e.nodes[1])
-            if el.kind == "point":
-                world_dir = _load_world_dir(proj_, e, el.direction)
-                if world_dir is None:
-                    continue
-                base = _lerp(p0, p1, el.position)
-                s = self.camera.project(base, w, h)
-                if not s:
-                    continue
-                _eye, _f, r, u = self.camera.basis()
-                vx = _dot(world_dir, r)
-                vy = -_dot(world_dir, u)
-                norm = math.hypot(vx, vy)
-                if norm < 1e-9:
-                    continue
-                vx, vy = vx / norm, vy / norm
-                ln = 30.0
-                p.setPen(QPen(theme.LOAD_COLOR, 1.8))
-                p.drawLine(QPointF(s[0] - vx * ln, s[1] - vy * ln), QPointF(s[0], s[1]))
-                self._head(p, s[0], s[1], vx, vy, 5.0, theme.LOAD_COLOR)
-                p.setFont(QFont("Segoe UI", 7))
-                p.setPen(QPen(QColor(theme.ACCENT_DARK)))
-                p.drawText(QPointF(s[0] + 6, s[1] - 6), fmt(UNITS.force(el.value * fac), 1))
-            else:
-                world_dir = _load_world_dir(proj_, e, el.direction)
-                if world_dir is None:
-                    continue
-                self._dist_arrows(p, proj_, e, proj_, world_dir, el.value * fac, None,
-                                  trapezoid=el.trapezoid, value2=el.value2 * fac)
+            color = colors.get(nl.case, QColor(theme.LOAD_COLOR))
+            p.setPen(QPen(color, 1.5))
+            p.setBrush(Qt.NoBrush)
+            p.drawArc(QRectF(s[0] - 9, s[1] - 9, 18, 18), 30 * 16, 300 * 16)
+            self._head(p, s[0] + 7, s[1] - 5, 1, -1, 4.5, color)
 
-    def _dist_arrows(self, p, proj_, e, proj, world_dir, value, anchor,
-                     trapezoid=False, value2=0.0) -> None:
-        n = 5
-        p0 = proj_.node_xyz(e.nodes[0])
-        p1 = proj_.node_xyz(e.nodes[1])
-        scale = 0.06 * max(math.dist(p0, p1), 1.0)
+    def _screen_dir(self, world_dir, signed_value: float):
         _eye, _f, r, u = self.camera.basis()
         vx = _dot(world_dir, r)
         vy = -_dot(world_dir, u)
         norm = math.hypot(vx, vy)
-        if norm < 1e-9:
-            return
-        vx, vy = vx / norm, vy / norm
-        color = QColor(15, 111, 184, 150)
+        if norm < 1e-7:
+            return None
+        sign = -1.0 if signed_value < 0 else 1.0
+        return vx / norm * sign, vy / norm * sign
+
+    def _draw_udl(self, p, a, b, world_dir, v1: float, v2: float,
+                  color: QColor, prefix: str, show_label: bool) -> None:
+        """Draw a uniform or trapezoidal beam load with a proper envelope."""
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        px_len = math.hypot(dx, dy)
+        n = max(3, min(12, int(px_len / 38.0) + 1))
+        peak = max(abs(v1), abs(v2), 1e-9)
+        tails = []
+        bases = []
         for i in range(n):
-            xL = (i + 0.5) / n
-            wv = value + (value2 - value) * xL if trapezoid else value
-            base = _add(p0, _mul(_sub(p1, p0), xL))
-            s = self.camera.project(base, self.width(), self.height())
-            if not s:
+            t = (i + 0.5) / n
+            value = v1 + (v2 - v1) * t
+            sd = self._screen_dir(world_dir, value)
+            if sd is None:
                 continue
-            ln = min(scale * abs(wv) / max(abs(value), abs(value2), 1e-9) * 1.5, 26)
-            x0, y0 = s[0] - vx * ln, s[1] - vy * ln
+            bx, by = a[0] + dx * t, a[1] + dy * t
+            ln = 12.0 + 24.0 * abs(value) / peak
+            tx, ty = bx - sd[0] * ln, by - sd[1] * ln
+            tails.append((tx, ty))
+            bases.append((bx, by))
             p.setPen(QPen(color, 1.1))
-            p.drawLine(QPointF(x0, y0), QPointF(s[0], s[1]))
-            self._head(p, s[0], s[1], vx, vy, 3.4, color)
-        # connecting line
-        a = self.camera.project(p0, self.width(), self.height())
-        b = self.camera.project(p1, self.width(), self.height())
-        if a and b:
-            p.setPen(QPen(QColor(15, 111, 184, 90), 1.0, Qt.DotLine))
-            p.drawLine(QPointF(a[0], a[1]), QPointF(b[0], b[1]))
+            p.drawLine(QPointF(tx, ty), QPointF(bx, by))
+            self._head(p, bx, by, sd[0], sd[1], 3.8, color)
+        if len(tails) < 2:
+            return
+        p.setPen(QPen(color, 1.2))
+        p.drawPolyline(QPolygonF([QPointF(x, y) for x, y in tails]))
+        fill = QColor(color.red(), color.green(), color.blue(), 22)
+        poly = QPolygonF([QPointF(x, y) for x, y in tails] +
+                         [QPointF(x, y) for x, y in reversed(bases)])
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(fill))
+        p.drawPolygon(poly)
+        p.setBrush(Qt.NoBrush)
+        if show_label:
+            mid = tails[len(tails) // 2]
+            if abs(v1 - v2) < 1e-9:
+                text = f"{prefix}w = {fmt(UNITS.dist(v1), 2)} {UNITS.dist_unit}"
+            else:
+                text = (f"{prefix}w = {fmt(UNITS.dist(v1), 2)} → "
+                        f"{fmt(UNITS.dist(v2), 2)} {UNITS.dist_unit}")
+            p.setFont(QFont("Segoe UI", 7))
+            p.setPen(QPen(color.darker(130)))
+            p.drawText(QPointF(mid[0] + 4, mid[1] - 15), text)
 
     @staticmethod
     def _head(p, x, y, vx, vy, size, color) -> None:

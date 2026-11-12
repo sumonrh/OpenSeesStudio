@@ -6,10 +6,10 @@ from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QHBoxLayout,
-                               QHeaderView, QLabel, QMessageBox, QPushButton,
-                               QTableWidget, QTableWidgetItem, QTabWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog,
+                               QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+                               QPushButton, QTableWidget, QTableWidgetItem,
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from . import theme
 from .model import (Element, ElementLoad, LoadCase, LoadCombination, Material,
@@ -184,7 +184,7 @@ class TablePage(QWidget):
 
 # --------------------------------------------------------------------------- #
 class TablesDialog(QDialog):
-    def __init__(self, project: Project, parent=None) -> None:
+    def __init__(self, project: Project, parent=None, case_filter: str = "") -> None:
         super().__init__(parent)
         self.setWindowTitle("Model Tables")
         self.resize(1120, 680)
@@ -193,9 +193,27 @@ class TablesDialog(QDialog):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Load case filter"))
+        self.case_filter = QComboBox()
+        self.case_filter.addItem("All cases", "")
+        for case in project.cases:
+            self.case_filter.addItem(case, case)
+        self.case_filter.setMinimumWidth(170)
+        self.case_filter.currentIndexChanged.connect(self._filter_changed)
+        top.addWidget(self.case_filter)
+        top.addStretch(1)
+        lay.addLayout(top)
         self.tabs = QTabWidget()
         lay.addWidget(self.tabs, 1)
         self._build_pages()
+
+        index = self.case_filter.findData(case_filter)
+        if index >= 0:
+            self.case_filter.blockSignals(True)
+            self.case_filter.setCurrentIndex(index)
+            self.case_filter.blockSignals(False)
+        self._filter_changed()
 
         bar = QHBoxLayout()
         info = QLabel(f"Display units: {UNITS.force_name} · {UNITS.length_name}. "
@@ -265,13 +283,18 @@ class TablesDialog(QDialog):
                                        [fmt(v, 6) for v in
                                         [u.moment(x) for x in l.values[3:]]]
              for l in p.nodal_loads],
-            {0: 60, 2: 100})
+            {0: 60, 2: 100},
+            new_row=lambda t: [self._next_load_tag(), next(iter(p.nodes), 1),
+                               self._default_case(), "0", "0", "0", "0", "0", "0"])
         self.page_eleload = TablePage(
             ["Tag", "Element", "Case", "Type", "Direction", "w1 / P", "w2", "x/L"],
             [[l.tag, l.elem, l.case, "Trapezoid" if l.trapezoid else l.kind.capitalize(),
               l.direction, *[fmt(v, 5) for v in _load_values(l)], fmt(l.position, 3)]
              for l in p.elem_loads],
-            {2: 100, 3: 90, 4: 100})
+            {2: 100, 3: 90, 4: 100},
+            new_row=lambda t: [self._next_load_tag(), next(iter(p.elements), 1),
+                               self._default_case(), "Uniform", "local-z",
+                               "0", "0", "0.5"])
         self.page_combos = TablePage(
             ["Name", "Type", "Factors (case:factor, ...)"],
             [[c.name, c.kind, ", ".join(f"{n}:{fmt(f, 3)}" for n, f in c.factors)]
@@ -284,6 +307,31 @@ class TablesDialog(QDialog):
                             ("Nodal Loads", self.page_nodal), ("Element Loads", self.page_eleload),
                             ("Combinations", self.page_combos)):
             self.tabs.addTab(page, title)
+
+    def _filter_changed(self, *_args) -> None:
+        case = self.case_filter.currentData()
+        for page in (self.page_nodal, self.page_eleload):
+            for row in range(page.table.rowCount()):
+                item = page.table.item(row, 2)
+                hidden = bool(case) and (item is None or item.text().strip() != case)
+                page.table.setRowHidden(row, hidden)
+
+    def _default_case(self) -> str:
+        return self.case_filter.currentData() or next(iter(self.project.cases), "DL")
+
+    def _next_load_tag(self) -> int:
+        tags = [load.tag for load in self.project.nodal_loads]
+        tags += [load.tag for load in self.project.elem_loads]
+        for page in (self.page_nodal, self.page_eleload):
+            for row in range(page.table.rowCount()):
+                item = page.table.item(row, 0)
+                if item is None:
+                    continue
+                try:
+                    tags.append(int(float(item.text())))
+                except (TypeError, ValueError):
+                    pass
+        return max(tags, default=0) + 1
 
     def _reload(self) -> None:
         while self.tabs.count():

@@ -147,9 +147,11 @@ def main(argv=None) -> int:
         scenario = win.scenario_combo.currentText()
         res = opsgen.run_static(win.project, scenario)
         win.static_results = res
+        win.static_cache[scenario] = res
         win.results_scenario = scenario
-        win.viewport.load_scenario = scenario
+        win.viewport.set_load_scenario(scenario)
         win.viewport.set_static_results(res)
+        win.results_panel.set_current_scenario(scenario)
         win.viewport.fit()
         win._log(f"Static analysis '{scenario}' complete. Max |u| = {res.max_disp:.4f} mm")
 

@@ -51,6 +51,51 @@ fy, dy = cantilever("Y", "weak")
 check("base moment My under Z load", abs(fz[4]), 10.0 * 4000, 1e-6)
 check("base moment Mz under Y load", abs(fy[5]), 10.0 * 4000, 1e-6)
 
+print("== beam diagrams ==")
+from app.beamdiagram import beam_load_records, diagram_series
+from app.model import ElementLoad
+
+p = default_project()
+p.materials[1].E = 200.0
+p.materials[1].rho = 7.85e-9
+s = p.sections[1]
+s.shape, s.b, s.h = "Rectangle", 300.0, 600.0
+s.compute()
+p.nodes[1] = Node(1, 0, 0, 0, support=[True] * 6)
+p.nodes[2] = Node(2, 4000, 0, 0)
+p.elements[1] = Element(1, "beam", [1, 2], 1, 1, vecxz=[0, 0, 1])
+p.cases["DL"] = LoadCase("DL")
+p.elem_loads.append(ElementLoad(1, 1, "DL", "uniform", "local-y", -0.01))
+r = opsgen.run_static(p, "DL")
+loads = beam_load_records(p, "DL")
+vy = diagram_series(p, r, p.elements[1], "DL", "Vy", loads.get(1, []))
+mz = diagram_series(p, r, p.elements[1], "DL", "Mz", loads.get(1, []))
+check("diagram shear at fixed end", vy[0][1], -40.0, 1e-9)
+check("diagram shear at free end", vy[-1][1], 0.0, 1e-9)
+check("diagram moment at fixed end", mz[0][1], -0.01 * 4000 ** 2 / 2, 1e-9)
+check("diagram moment at free end", mz[-1][1], 0.0, 1e-9)
+
+print("== point load location ==")
+for pos in (0.25, 0.75):
+    p = default_project()
+    p.materials[1].E = 200.0
+    s = p.sections[1]
+    s.shape, s.b, s.h = "Rectangle", 300.0, 600.0
+    s.compute()
+    p.nodes[1] = Node(1, 0, 0, 0, support=[True] * 6)
+    p.nodes[2] = Node(2, 4000, 0, 0)
+    p.elements[1] = Element(1, "beam", [1, 2], 1, 1, vecxz=[0, 0, 1])
+    p.cases["DL"] = LoadCase("DL")
+    p.elem_loads.append(ElementLoad(1, 1, "DL", "point", "local-y", -10.0,
+                                    0.0, pos))
+    r = opsgen.run_static(p, "DL")
+    a = pos * 4000.0
+    want = -10.0 * a ** 2 * (3 * 4000.0 - a) / (6 * 200.0 * s.Iz)
+    check(f"point load at {pos:.2f}L deflection", r.displacements[2][1], want)
+    loads = beam_load_records(p, "DL")
+    mz = diagram_series(p, r, p.elements[1], "DL", "Mz", loads.get(1, []))
+    check(f"point load at {pos:.2f}L base moment", mz[0][1], -10.0 * a)
+
 print("== static: truss axial ==")
 p = default_project()
 p.nodes[1] = Node(1, 0, 0, 0, support=[True] * 6)

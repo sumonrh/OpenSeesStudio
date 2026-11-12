@@ -58,11 +58,15 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with automatic properties for rectangle, circle, pipe, box and I-shape;
   user sections can supply A, Iy, Iz, J directly.
-- Model tree lists materials, sections, supports, load cases, loads and combinations.
+- Model tree lists materials, sections, supports, load cases and combinations.
   **Nodes** and **Elements** are table links; clicking them opens their spreadsheet.
   Double-click a material or section to select its elements, right-click to delete it.
+- Load cases appear once per case (not once per load). Double-click a case to select
+  the loaded elements; right-click for **Display**, **Undisplay**, **Table** and
+  **Delete** from a case context menu.
 - Spreadsheet **Tables** editor for every entity, with validation and Excel-compatible
-  copy/paste (Ctrl+C / Ctrl+V).
+  copy/paste (Ctrl+C / Ctrl+V). The load table can be filtered to one load case and
+  edits element loads row by row.
 
 **Loads**
 - Load cases (Dead, Live, Wind, Seismic, …), each becomes an OpenSees pattern.
@@ -72,6 +76,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Self weight per load case with a factor.
 - Load combinations with per-case factors.
 - Active load case selector in the status bar; loads are drawn for the active case.
+  The tree can display several load cases at once, with individual **Display /
+  Undisplay** control. Uniform and trapezoidal loads are drawn as UDL envelopes and
+  point loads are drawn at their exact x/L position.
 
 **Analysis and results**
 - Static analysis (`LoadControl`, `BandGen`, RCM, Linear).
@@ -80,10 +87,22 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   missing supports and missing loads.
 - Result viewer: displacements, reactions, element forces (N, Vy, Vz, T, My, Mz at both ends),
   modal periods; CSV export.
+- **Beam Diagrams** sidebar: shear **Vy/Vz**, bending **My/Mz**, torsion **Mx** and
+  axial **Fx** diagrams for any load case or load combination. Diagrams are computed
+  along each member from its end forces and applied loads, with fill, scale, value and
+  deformed-shape overlay options.
+- **Deformation** sidebar: deformed shape for any load case or combination, with an
+  automatic or manual scale; the undeformed shape stays visible as a dashed outline.
+- Selecting another case or combination in either sidebar solves it automatically and
+  caches the result, so results can be reviewed case by case without rerunning the model.
 - Finished analyses switch to the **Results** ribbon tab instead of opening a dialog.
 - The model locks automatically after an analysis; press **Ctrl+L** or use the lock
   button to unlock for editing. Results clear when the model is changed.
 - Deformed shape overlay with automatic scale.
+
+![beam force diagrams](docs/beam_diagrams.png)
+
+![deformation for a load combination](docs/deformation.png)
 
 ![results and model lock](docs/results_lock.png)
 
@@ -264,12 +283,14 @@ app/
   main.py         entry point, self test, screenshot mode
   mainwindow.py   ribbon, docks, workflows
   ribbon.py       ribbon tabs, command groups and captions
-  viewport.py     3D viewport: camera, picking, loads, deformed shapes
+  viewport.py     3D viewport: camera, picking, loads, diagrams, deformed shapes
+  beamdiagram.py  member force distribution from end forces and loads
+  resultsview.py  beam diagram / deformation sidebar
   model.py        data model and JSON persistence
   units.py        display-unit conversion and unit labels
   opsgen.py       OpenSees model builder, analyses, Tcl export, validation
   dialogs.py      node / element / copy / load / combination dialogs
-  tables.py       spreadsheet model tables
+  tables.py       spreadsheet model tables and load-case filter
   results.py      result viewer and CSV export
   example.py      built-in demo frame
   theme.py        light professional theme

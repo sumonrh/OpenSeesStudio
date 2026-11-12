@@ -268,8 +268,8 @@ def _apply_case_loads(project: Project, case: str, log: List[str],
         py, pz, _px = _local_components(project, e, el.direction, el.value,
                                         el.value2, False)
         if abs(py) > 0 or abs(pz) > 0:
-            ops.eleLoad("-ele", e.tag, "-type", "-beamPoint", py,
-                        min(max(el.position, 1e-4), 1 - 1e-4), pz)
+            ops.eleLoad("-ele", e.tag, "-type", "-beamPoint", py, pz,
+                        min(max(el.position, 1e-4), 1 - 1e-4))
 
     sw = project.self_weight.get(case, 0.0)
     if abs(sw) > 1e-12:
@@ -357,7 +357,7 @@ def _trapezoid_loads(project: Project, e: Element, el: ElementLoad,
         wz = w1_z + (w2_z - w1_z) * xL
         seg = length / n
         ops.eleLoad("-ele", e.tag, "-type", "-beamPoint", wy * seg,
-                    min(max(xL, 1e-4), 1 - 1e-4), wz * seg)
+                    wz * seg, min(max(xL, 1e-4), 1 - 1e-4))
     log.append(f"Element {e.tag}: trapezoidal load approximated by {n} point loads.")
 
 
@@ -575,7 +575,7 @@ def export_tcl(project: Project) -> str:
                 py, pz, _px = _local_components(project, project.elements[el.elem],
                                                 el.direction, el.value, el.value2, False)
                 A(f"  eleLoad -ele {el.elem} -type -beamPoint {_num(py)} "
-                  f"{_num(el.position)} {_num(pz)}")
+                  f"{_num(pz)} {_num(el.position)}")
         sw = project.self_weight.get(case, 0.0)
         if abs(sw) > 1e-12:
             A(f"  # self weight, factor {_num(sw)}")

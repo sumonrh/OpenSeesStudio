@@ -19,6 +19,7 @@ from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
                     Node, Project, Section, default_project, fmt)
 from .ribbon import Ribbon
 from .results import ResultsDialog
+from .resultsview import ResultsPanel
 from .tables import TablesDialog
 from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
 from .viewport import Viewport
@@ -82,6 +83,7 @@ class MainWindow(QMainWindow):
         self.history = History(self.project)
         self.static_results: Optional[opsgen.StaticResults] = None
         self.modal_results: Optional[opsgen.ModalResults] = None
+        self.static_cache: Dict[str, opsgen.StaticResults] = {}
         self.results_scenario = ""
         self.model_locked = False
 
@@ -181,6 +183,14 @@ class MainWindow(QMainWindow):
                                  "Run an eigenvalue analysis")
         self.a_results = self._act("Results", "results", self.show_results, "F7")
         self.a_animate = self._act("Animate", "animate", self.animate_mode, "F8", checkable=True)
+        self.a_beam_diagram = self._act(
+            "Beam Diagrams", "diagram", self._toggle_beam_diagram, "",
+            "Show shear, moment, axial and torsion diagrams for a load case "
+            "or combination", checkable=True)
+        self.a_deformation = self._act(
+            "Deformation", "deformed", self._toggle_deformation, "",
+            "Show the deformed shape of a load case or combination",
+            checkable=True)
 
         self.a_orbit = self._act("Orbit", "rotate", self._toggle_orbit, "O",
                                  "3D orbit: left-drag rotates the model "
@@ -252,12 +262,15 @@ class MainWindow(QMainWindow):
 
     def clean_view(self) -> None:
         self.viewport.stop_animation()
+        self.viewport.clear_diagrams()
         self.viewport.set_show(show_deformed=False, show_loads=False,
                                show_labels=False)
         for action, state in ((self.a_deformed, False),
                               (self.a_loads_visible, False),
                               (self.a_labels, False),
-                              (self.a_animate, False)):
+                              (self.a_animate, False),
+                              (self.a_beam_diagram, False),
+                              (self.a_deformation, False)):
             action.blockSignals(True)
             action.setChecked(state)
             action.blockSignals(False)
@@ -305,6 +318,8 @@ class MainWindow(QMainWindow):
 
     def _set_deform_scale(self, value: float) -> None:
         self.viewport.deformed_scale = float(value) if value > 0 else None
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_deformation_scale(float(value))
         self.viewport.update()
 
     def _apply_scale(self) -> None:
@@ -347,7 +362,7 @@ class MainWindow(QMainWindow):
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right):
             group.add_large(action)
         group = page.add_group("Display")
-        group.add_column((self.a_orbit, self.a_labels, self.a_grid, self.a_deformed))
+        group.add_column((self.a_orbit, self.a_labels, self.a_grid))
         group = page.add_group("Deformed shape")
         group.add_field("Scale", self.scale_spin)
         group = page.add_group("View mode")
@@ -423,16 +438,18 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_modal)
         group = page.add_group("Results")
         group.add_large(self.a_results)
-        group.add_column((self.a_animate, self.a_deformed))
+        group.add_large(self.a_animate)
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
         page = ribbon.add_tab("Results")
         group = page.add_group("Results")
         group.add_large(self.a_results)
-        group.add_large(self.a_animate)
+        group = page.add_group("Result display")
+        group.add_large(self.a_beam_diagram)
+        group.add_large(self.a_deformation)
         group = page.add_group("Display")
-        group.add_column((self.a_deformed, self.a_labels, self.a_grid))
+        group.add_column((self.a_clean_view, self.a_labels, self.a_grid))
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -486,11 +503,170 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.RightToolBarArea, views)
         self.quick_view_toolbar = views
 
+    # ============================================================ results view
+    def _toggle_beam_diagram(self, checked: bool) -> None:
+        if checked:
+            self.results_dock.show()
+            self.results_dock.raise_()
+            self.results_panel.show_diagram_tab()
+            self._refresh_results_panel()
+            self._apply_beam_diagram()
+        else:
+            self.viewport.clear_diagrams()
+            if not self.a_deformation.isChecked():
+                self.viewport.show_deformed = False
+                self.a_deformed.blockSignals(True)
+                self.a_deformed.setChecked(False)
+                self.a_deformed.blockSignals(False)
+                self.results_dock.hide()
+
+    def _toggle_deformation(self, checked: bool) -> None:
+        if checked:
+            self.results_dock.show()
+            self.results_dock.raise_()
+            self.results_panel.show_deformation_tab()
+            self._refresh_results_panel()
+            self._apply_deformation()
+        else:
+            self.viewport.show_deformed = False
+            self.a_deformed.blockSignals(True)
+            self.a_deformed.setChecked(False)
+            self.a_deformed.blockSignals(False)
+            if not self.a_beam_diagram.isChecked():
+                self.results_dock.hide()
+
+    def _results_dock_visibility(self, visible: bool) -> None:
+        if visible:
+            return
+        deform_was = self.a_deformation.isChecked()
+        diagram_was = self.a_beam_diagram.isChecked()
+        for action in (self.a_beam_diagram, self.a_deformation):
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+        self.viewport.clear_diagrams()
+        if deform_was or diagram_was:
+            self.viewport.show_deformed = False
+            self.a_deformed.blockSignals(True)
+            self.a_deformed.setChecked(False)
+            self.a_deformed.blockSignals(False)
+
+    def _refresh_results_panel(self) -> None:
+        if not hasattr(self, "results_panel"):
+            return
+        names = self.project.scenario_names()
+        self.results_panel.set_scenarios(names)
+        current = self.results_scenario or self.scenario_combo.currentText()
+        if current in names:
+            self.results_panel.set_current_scenario(current)
+        if not names:
+            self.results_panel.set_note("Create a load case first.")
+        elif not self.static_cache:
+            self.results_panel.set_note("A case is solved automatically when you "
+                                        "apply a diagram or deformation.")
+
+    def _ensure_static_results(self, scenario: str) -> Optional[opsgen.StaticResults]:
+        if not scenario:
+            self._warn("Select a load case or combination first.")
+            return None
+        if scenario in self.static_cache:
+            return self.static_cache[scenario]
+        if not self.project.elements:
+            self._warn("The model has no elements.")
+            return None
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._status(f"Solving {scenario}…")
+        try:
+            res = opsgen.run_static(self.project, scenario)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            self._log(f"✖ Analysis '{scenario}' failed: {exc}")
+            QMessageBox.critical(self, "Analysis failed", str(exc))
+            self._status(f"Analysis '{scenario}' failed")
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.static_cache[scenario] = res
+        self._log(f"Results cached for '{scenario}' (max |u| = "
+                  f"{fmt(UNITS.length(res.max_disp), 4)} {UNITS.length_unit}).")
+        self._set_locked(True)
+        return res
+
+    def _apply_beam_diagram(self) -> None:
+        comps = self.results_panel.components()
+        if not comps:
+            self._status("Select at least one diagram component (Fx, Vy, Vz, Mx, My, Mz).")
+            return
+        scenario = self.results_panel.diagram_scenario() or self.scenario_combo.currentText()
+        res = self._ensure_static_results(scenario)
+        if res is None:
+            return
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self.viewport.set_diagrams(
+            res, scenario, comps, self.results_panel.diagram_scale_value(),
+            self.results_panel.diagram_show_values(),
+            self.results_panel.diagram_has_fill())
+        if self.results_panel.diagram_overlay_deform():
+            self.viewport.set_static_results(res)
+            self._apply_scale()
+            self.viewport.show_deformed = True
+            self.a_deformed.blockSignals(True)
+            self.a_deformed.setChecked(True)
+            self.a_deformed.blockSignals(False)
+        else:
+            self.viewport.show_deformed = False
+            self.a_deformed.blockSignals(True)
+            self.a_deformed.setChecked(False)
+            self.a_deformed.blockSignals(False)
+        self.a_beam_diagram.blockSignals(True)
+        self.a_beam_diagram.setChecked(True)
+        self.a_beam_diagram.blockSignals(False)
+        self.ribbon.set_current("Results")
+        self.results_dock.raise_()
+        self._status(f"Beam diagrams: {scenario} · {', '.join(comps)}")
+        self.viewport.update()
+
+    def _apply_deformation(self) -> None:
+        scenario = self.results_panel.deformation_scenario() or self.scenario_combo.currentText()
+        res = self._ensure_static_results(scenario)
+        if res is None:
+            return
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self.viewport.clear_diagrams()
+        self.a_beam_diagram.blockSignals(True)
+        self.a_beam_diagram.setChecked(False)
+        self.a_beam_diagram.blockSignals(False)
+        self.viewport.set_static_results(res)
+        scale = self.results_panel.deformation_scale_value()
+        self.viewport.deformed_scale = scale if scale > 0 else None
+        self.scale_spin.blockSignals(True)
+        self.scale_spin.setValue(scale)
+        self.scale_spin.blockSignals(False)
+        self.viewport.show_deformed = True
+        self.a_deformed.blockSignals(True)
+        self.a_deformed.setChecked(True)
+        self.a_deformed.blockSignals(False)
+        self.a_deformation.blockSignals(True)
+        self.a_deformation.setChecked(True)
+        self.a_deformation.blockSignals(False)
+        self.ribbon.set_current("Results")
+        self.results_dock.raise_()
+        self._status(f"Deformed shape: {scenario}")
+
     def _scenario_changed(self, text: str) -> None:
         if not text:
             return
-        self.viewport.load_scenario = text
+        self.viewport.set_load_scenario(text)
+        self.viewport.show_loads = True
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(True)
+        self.a_loads_visible.blockSignals(False)
         self.project.settings["last_case"] = text
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_current_scenario(text)
+        self._refresh_tree()
         self.viewport.update()
 
     # ==================================================================== docks
@@ -521,6 +697,20 @@ class MainWindow(QMainWindow):
         dock2.setMinimumWidth(290)
         self.addDockWidget(Qt.RightDockWidgetArea, dock2)
         self.props_dock = dock2
+
+        # ---- results sidebar -------------------------------------------
+        self.results_panel = ResultsPanel(self)
+        self.results_panel.diagramRequested.connect(self._apply_beam_diagram)
+        self.results_panel.deformationRequested.connect(self._apply_deformation)
+        dock4 = QDockWidget("Results View", self)
+        dock4.setObjectName("results_dock")
+        dock4.setWidget(self.results_panel)
+        dock4.setMinimumWidth(280)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock4)
+        self.tabifyDockWidget(dock2, dock4)
+        dock4.hide()
+        self.results_dock = dock4
+        self.results_dock.visibilityChanged.connect(self._results_dock_visibility)
 
         # ---- messages --------------------------------------------------
         self.log_view = QPlainTextEdit()
@@ -719,6 +909,7 @@ class MainWindow(QMainWindow):
         self._refresh_tree()
         self._refresh_scenarios()
         self._refresh_props()
+        self._refresh_results_panel()
         self._update_title()
         self.viewport.update()
 
@@ -778,19 +969,18 @@ class MainWindow(QMainWindow):
         ld = group("Loads", "loads")
         g_cases = group("Load Cases", "cases", len(p.cases), ld)
         for c in p.cases.values():
-            add_child(g_cases, f"{c.name}   ({c.kind})", "case", c.name)
-        g_nl = group("Nodal Loads", "nodal_loads", len(p.nodal_loads), ld)
-        for load in p.nodal_loads[:200]:
-            add_child(g_nl, f"{load.tag}   node {load.node}   {load.case}",
-                      "node", load.node)
-        if len(p.nodal_loads) > 200:
-            add_child(g_nl, f"... {len(p.nodal_loads) - 200} more in Tables")
-        g_elload = group("Element Loads", "element_loads", len(p.elem_loads), ld)
-        for load in p.elem_loads[:200]:
-            add_child(g_elload, f"{load.tag}   element {load.elem}   {load.case}",
-                      "element", load.elem)
-        if len(p.elem_loads) > 200:
-            add_child(g_elload, f"... {len(p.elem_loads) - 200} more in Tables")
+            n_el = sum(1 for load in p.elem_loads if load.case == c.name)
+            n_nd = sum(1 for load in p.nodal_loads if load.case == c.name)
+            sw = p.self_weight.get(c.name, 0.0)
+            item = add_child(g_cases, f"{c.name}   ({c.kind})", "case", c.name)
+            item.setToolTip(0, f"{n_el} element load(s), {n_nd} nodal load(s)"
+                               + (f", self weight ×{fmt(sw, 3)}" if abs(sw) > 1e-12 else "")
+                               + "\nDouble-click: select loaded elements"
+                                 "\nRight-click: display, undisplay, table, delete")
+            if self.viewport.load_filter_active and c.name in self.viewport.display_cases:
+                font = item.font(0)
+                font.setBold(True)
+                item.setFont(0, font)
         g_sw = group("Self Weight", "self_weight", len(p.self_weight), ld)
         for case, factor in p.self_weight.items():
             add_child(g_sw, f"{case}   factor {fmt(factor, 3)}")
@@ -826,6 +1016,8 @@ class MainWindow(QMainWindow):
         if tag is not None:
             if key in ("material", "section"):
                 self._select_elements_using(key, tag)
+            elif key == "case":
+                self._select_case_elements(tag)
             return
         if key in ("nodes", "elements"):
             return
@@ -865,10 +1057,26 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         data = item.data(0, Qt.UserRole)
-        if not data or data[1] is None or data[0] not in ("material", "section"):
+        if not data or data[1] is None:
             return
         kind, tag = data
         menu = QMenu(self)
+        if kind == "case":
+            display = menu.addAction("Display")
+            display.triggered.connect(lambda: self._display_load_case(tag, True))
+            undisplay = menu.addAction("Undisplay")
+            undisplay.triggered.connect(lambda: self._display_load_case(tag, False))
+            menu.addSeparator()
+            table = menu.addAction("Table…")
+            table.setEnabled(not self.model_locked)
+            table.triggered.connect(lambda: self._open_case_table(tag))
+            delete = menu.addAction("Delete")
+            delete.setEnabled(not self.model_locked)
+            delete.triggered.connect(lambda: self._delete_load_case(tag))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
+        if kind not in ("material", "section"):
+            return
         select = menu.addAction("Select elements using this")
         select.triggered.connect(lambda: self._select_elements_using(kind, tag))
         menu.addSeparator()
@@ -876,6 +1084,87 @@ class MainWindow(QMainWindow):
         delete.setEnabled(not self.model_locked)
         delete.triggered.connect(lambda: self._delete_tree_entity(kind, tag))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _select_case_elements(self, case: str) -> None:
+        element_tags = sorted({load.elem for load in self.project.elem_loads
+                               if load.case == case
+                               and load.elem in self.project.elements})
+        if abs(self.project.self_weight.get(case, 0.0)) > 1e-12:
+            element_tags = sorted(set(element_tags) | set(self.project.elements))
+        if element_tags:
+            self.viewport.select_elements(element_tags)
+            self._status(f"Selected {len(element_tags)} element(s) carrying load case {case}")
+            return
+        node_tags = sorted({load.node for load in self.project.nodal_loads
+                            if load.case == case and load.node in self.project.nodes})
+        if node_tags:
+            self.viewport.select_nodes(node_tags)
+            self._status(f"Selected {len(node_tags)} node(s) carrying load case {case}")
+            return
+        self._status(f"Load case {case} has no applied loads")
+
+    def _display_load_case(self, case: str, show: bool) -> None:
+        if show:
+            if not self.viewport.load_filter_active:
+                self.viewport.set_display_cases([])
+            self.viewport.display_cases.add(case)
+        else:
+            if not self.viewport.load_filter_active:
+                self.viewport.set_display_cases([])
+            self.viewport.display_cases.discard(case)
+        self.viewport.load_filter_active = True
+        self.viewport.show_loads = bool(self.viewport.display_cases)
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(self.viewport.show_loads)
+        self.a_loads_visible.blockSignals(False)
+        self._refresh_tree()
+        self.viewport.update()
+        if self.viewport.display_cases:
+            self._status("Displaying load case(s): "
+                         + ", ".join(sorted(self.viewport.display_cases)))
+        else:
+            self._status("No load cases displayed")
+
+    def _open_case_table(self, case: str) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        dlg = TablesDialog(self.project, self, case_filter=case)
+        dlg.tabs.setCurrentWidget(dlg.page_eleload)
+        if not dlg.exec() or dlg.result_project is None:
+            return
+        self._adopt(dlg.result_project)
+        self._clear_results()
+        self._commit(f"Edited element loads [{case}]")
+        self.viewport.fit()
+
+    def _delete_load_case(self, case: str) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        p = self.project
+        n_el = sum(1 for load in p.elem_loads if load.case == case)
+        n_nd = sum(1 for load in p.nodal_loads if load.case == case)
+        if QMessageBox.question(
+                self, "Delete load case",
+                f"Delete load case {case} and its {n_el} element load(s) and "
+                f"{n_nd} nodal load(s)?\nCombination references will be removed."
+        ) != QMessageBox.Yes:
+            return
+        del p.cases[case]
+        p.nodal_loads = [load for load in p.nodal_loads if load.case != case]
+        p.elem_loads = [load for load in p.elem_loads if load.case != case]
+        p.self_weight.pop(case, None)
+        for combo in list(p.combos.values()):
+            combo.factors = [(c, f) for c, f in combo.factors if c != case]
+            if not combo.factors:
+                del p.combos[combo.name]
+        self.viewport.display_cases.discard(case)
+        self.viewport.show_loads = bool(self.viewport.display_cases)
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(self.viewport.show_loads)
+        self.a_loads_visible.blockSignals(False)
+        self._commit(f"Deleted load case {case}")
 
     def _delete_tree_entity(self, kind: str, tag) -> None:
         if self.model_locked:
@@ -1066,10 +1355,13 @@ class MainWindow(QMainWindow):
         self.static_results = res
         self.modal_results = None
         self.results_scenario = res.scenario
-        self.viewport.load_scenario = res.scenario
+        self.static_cache[res.scenario] = res
+        self.viewport.set_load_scenario(res.scenario)
         if self.scenario_combo.findText(res.scenario) >= 0:
             self.scenario_combo.setCurrentText(res.scenario)
         self.viewport.set_static_results(res)
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_current_scenario(res.scenario)
         self.viewport.fit()
         self._apply_scale()
         self.a_deformed.setChecked(True)
@@ -1192,7 +1484,15 @@ class MainWindow(QMainWindow):
     def _clear_results(self) -> None:
         self.static_results = None
         self.modal_results = None
+        self.static_cache.clear()
         self.viewport.clear_results()
+        if hasattr(self, "results_panel"):
+            for action in (self.a_beam_diagram, self.a_deformation):
+                action.blockSignals(True)
+                action.setChecked(False)
+                action.blockSignals(False)
+            self.results_panel.set_note("Results cleared. Apply a diagram or "
+                                        "deformation to solve the selected case.")
 
     # ============================================================== structure
     def new_nodes(self) -> None:
@@ -1557,7 +1857,12 @@ class MainWindow(QMainWindow):
         self.static_results = res
         self.modal_results = None
         self.results_scenario = scenario
-        self.viewport.load_scenario = scenario
+        self.static_cache[scenario] = res
+        self.viewport.set_load_scenario(scenario)
+        self.viewport.show_loads = True
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(True)
+        self.a_loads_visible.blockSignals(False)
         self.viewport.set_static_results(res)
         self._apply_scale()
         self._log(f"Static analysis '{scenario}' complete. Max |u| = "
@@ -1567,6 +1872,10 @@ class MainWindow(QMainWindow):
         self.a_animate.setChecked(False)
         self._set_locked(True)
         self.ribbon.set_current("Results")
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_current_scenario(scenario)
+        if self.viewport.show_diagrams:
+            self._apply_beam_diagram()
         self._log("Model locked after analysis. Press Ctrl+L to unlock before editing.")
 
     def run_modal(self) -> None:
@@ -1608,7 +1917,7 @@ class MainWindow(QMainWindow):
         self._show_results_dialog()
 
     def _plot_static(self, scenario: str) -> None:
-        self.viewport.load_scenario = scenario
+        self.viewport.set_load_scenario(scenario)
         self.viewport.set_static_results(self.static_results)
         self._apply_scale()
         self.viewport.show_deformed = True
