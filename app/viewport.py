@@ -120,6 +120,8 @@ class Viewport(QWidget):
     selectionChanged = Signal()
     statusMessage = Signal(str)
     cameraChanged = Signal()
+    elementDrawRequested = Signal(int, int)
+    drawModeCancelled = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -133,6 +135,12 @@ class Viewport(QWidget):
 
         self.sel_nodes: Set[int] = set()
         self.sel_elements: Set[int] = set()
+        self.hidden_nodes: Set[int] = set()
+        self.hidden_elements: Set[int] = set()
+
+        self.draw_element_mode = False
+        self.draw_first_node: Optional[int] = None
+        self.draw_cursor: Optional[QPoint] = None
 
         self.show_nodes = True
         self.show_elements = True
@@ -183,11 +191,67 @@ class Viewport(QWidget):
         self.project = project
         self.sel_nodes.clear()
         self.sel_elements.clear()
+        self.hidden_nodes.clear()
+        self.hidden_elements.clear()
+        self.set_draw_element_mode(False)
         self.static_results = None
         self.modal_results = None
         if fit:
             self.fit()
         self.selectionChanged.emit()
+        self.update()
+
+    # ------------------------------------------------------------- visibility
+    def is_node_visible(self, tag: int) -> bool:
+        return tag not in self.hidden_nodes
+
+    def is_element_visible(self, tag: int, element=None) -> bool:
+        if tag in self.hidden_elements:
+            return False
+        element = element or (self.project.elements.get(tag) if self.project else None)
+        if element is None:
+            return False
+        return all(node not in self.hidden_nodes for node in element.nodes)
+
+    def show_only_selected(self) -> bool:
+        if not self.project or not (self.sel_nodes or self.sel_elements):
+            return False
+        visible_nodes = set(self.sel_nodes)
+        visible_elements = set(self.sel_elements)
+        for tag in self.sel_elements:
+            element = self.project.elements.get(tag)
+            if element:
+                visible_nodes.update(element.nodes)
+        for tag, element in self.project.elements.items():
+            if all(node in visible_nodes for node in element.nodes):
+                visible_elements.add(tag)
+        self.hidden_nodes = set(self.project.nodes) - visible_nodes
+        self.hidden_elements = set(self.project.elements) - visible_elements
+        self._hover_node = None
+        self._hover_elem = None
+        self.update()
+        return True
+
+    def hide_selected(self) -> bool:
+        if not self.project or not (self.sel_nodes or self.sel_elements):
+            return False
+        self.hidden_nodes.update(self.sel_nodes)
+        self.hidden_elements.update(self.sel_elements)
+        self._hover_node = None
+        self._hover_elem = None
+        self.update()
+        return True
+
+    def clear_visibility(self) -> None:
+        self.hidden_nodes.clear()
+        self.hidden_elements.clear()
+        self.update()
+
+    def set_draw_element_mode(self, enabled: bool) -> None:
+        self.draw_element_mode = bool(enabled)
+        self.draw_first_node = None
+        self.draw_cursor = None
+        self.setCursor(Qt.CrossCursor if enabled else Qt.ArrowCursor)
         self.update()
 
     def set_static_results(self, res: Optional[StaticResults]) -> None:
@@ -252,8 +316,10 @@ class Viewport(QWidget):
 
     def select_all(self) -> None:
         if self.project:
-            self.sel_nodes = set(self.project.nodes)
-            self.sel_elements = set(self.project.elements)
+            self.sel_nodes = {tag for tag in self.project.nodes
+                              if self.is_node_visible(tag)}
+            self.sel_elements = {tag for tag, e in self.project.elements.items()
+                                 if self.is_element_visible(tag, e)}
             self.selectionChanged.emit()
             self.update()
 
@@ -442,6 +508,8 @@ class Viewport(QWidget):
         else:
             items = []
             for tag, e in self.project.elements.items():
+                if not self.is_element_visible(tag, e):
+                    continue
                 pts = [proj.get(t) for t in e.nodes]
                 if any(s is None for s in pts):
                     continue
@@ -474,6 +542,8 @@ class Viewport(QWidget):
         if dproj and self.show_deformed and not self.show_extruded:
             items2 = []
             for tag, e in self.project.elements.items():
+                if not self.is_element_visible(tag, e):
+                    continue
                 pts = [dproj.get(t) for t in e.nodes]
                 if any(s is None for s in pts):
                     continue
@@ -494,6 +564,8 @@ class Viewport(QWidget):
         # ---- supports --------------------------------------------------
         if self.show_supports:
             for tag, n in self.project.nodes.items():
+                if not self.is_node_visible(tag):
+                    continue
                 if not any(n.support):
                     continue
                 s = proj.get(tag)
@@ -505,6 +577,8 @@ class Viewport(QWidget):
         if self.show_nodes:
             nodes_sorted = sorted(proj.items(), key=lambda kv: -kv[1][2])
             for tag, s in nodes_sorted:
+                if not self.is_node_visible(tag):
+                    continue
                 selected = tag in self.sel_nodes
                 hover = tag == self._hover_node
                 r = 5.2 if selected else (4.6 if hover else 3.9)
@@ -523,18 +597,35 @@ class Viewport(QWidget):
             p.setFont(QFont("Segoe UI", 7))
             p.setPen(QPen(QColor("#41566e")))
             for tag, s in proj.items():
+                if not self.is_node_visible(tag):
+                    continue
                 if len(proj) > 900:
                     break
                 p.drawText(QPointF(s[0] + 6, s[1] - 5), str(tag))
             if len(self.project.elements) <= 600:
                 p.setPen(QPen(QColor("#7b8ea3")))
                 for tag, e in self.project.elements.items():
+                    if not self.is_element_visible(tag, e):
+                        continue
                     pts = [proj.get(t) for t in e.nodes]
                     if any(s is None for s in pts) or not pts:
                         continue
                     mx = sum(s[0] for s in pts) / len(pts)
                     my = sum(s[1] for s in pts) / len(pts)
                     p.drawText(QPointF(mx + 3, my + 12), str(tag))
+
+        # ---- element drawing preview ----------------------------------
+        if (self.draw_element_mode and self.project
+                and self.draw_first_node in self.project.nodes):
+            start = proj.get(self.draw_first_node)
+            if start:
+                if self.draw_cursor is not None:
+                    p.setPen(QPen(QColor(theme.ORANGE), 1.6, Qt.DashLine))
+                    p.drawLine(QPointF(start[0], start[1]),
+                               QPointF(self.draw_cursor.x(), self.draw_cursor.y()))
+                p.setPen(QPen(QColor(theme.ORANGE), 2.2))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(QPointF(start[0], start[1]), 7, 7)
 
         # ---- triad, HUD, band -----------------------------------------
         if self.show_axes:
@@ -558,6 +649,8 @@ class Viewport(QWidget):
 
         items = []
         for tag, e in self.project.elements.items():
+            if not self.is_element_visible(tag, e):
+                continue
             base = [pts3.get(t) for t in e.nodes]
             if any(pt is None for pt in base):
                 continue
@@ -664,6 +757,8 @@ class Viewport(QWidget):
         entries = []
         max_abs = 0.0
         for tag, e in self.project.elements.items():
+            if not self.is_element_visible(tag, e):
+                continue
             if e.kind not in ("beam", "truss"):
                 continue
             base = [pts3.get(t) for t in e.nodes]
@@ -923,6 +1018,8 @@ class Viewport(QWidget):
             e = proj_.elements.get(el.elem)
             if e is None or len(e.nodes) < 2:
                 continue
+            if not self.is_element_visible(el.elem, e):
+                continue
             world_dir = _load_world_dir(proj_, e, el.direction)
             if world_dir is None:
                 continue
@@ -990,6 +1087,8 @@ class Viewport(QWidget):
             if mag > 0:
                 arrows.append((nl, f, mag, nl.case))
         for nl, f, mag, case in arrows:
+            if not self.is_node_visible(nl.node):
+                continue
             s = proj.get(nl.node)
             if s is None:
                 continue
@@ -1102,6 +1201,8 @@ class Viewport(QWidget):
         w, h = self.width(), self.height()
         best_node, best_nd = None, 9.0
         for tag, n in self.project.nodes.items():
+            if not self.is_node_visible(tag):
+                continue
             s = self.camera.project(n.xyz, w, h)
             if not s:
                 continue
@@ -1112,6 +1213,8 @@ class Viewport(QWidget):
             return best_node, None
         best_elem, best_ed = None, 7.0
         for tag, e in self.project.elements.items():
+            if not self.is_element_visible(tag, e):
+                continue
             pts = [self.camera.project(self.project.node_xyz(t), w, h) for t in e.nodes]
             if any(s is None for s in pts):
                 continue
@@ -1129,10 +1232,14 @@ class Viewport(QWidget):
             self.sel_nodes.clear()
             self.sel_elements.clear()
         for tag, n in self.project.nodes.items():
+            if not self.is_node_visible(tag):
+                continue
             s = self.camera.project(n.xyz, w, h)
             if s and rect.contains(QPoint(int(s[0]), int(s[1]))):
                 self.sel_nodes.add(tag)
         for tag, e in self.project.elements.items():
+            if not self.is_element_visible(tag, e):
+                continue
             pts = [self.camera.project(self.project.node_xyz(t), w, h) for t in e.nodes]
             if any(s is None for s in pts):
                 continue
@@ -1144,8 +1251,36 @@ class Viewport(QWidget):
         self.update()
 
     # ---------------------------------------------------------------- events
+    def _handle_draw_click(self, pos: QPoint) -> None:
+        node, _elem = self._hit(pos)
+        if node is None:
+            self.statusMessage.emit("Draw element: click an existing node.")
+            return
+        if self.draw_first_node is None:
+            self.draw_first_node = node
+            self.statusMessage.emit(
+                f"Draw element: start node {node}; click the end node.")
+            self.update()
+            return
+        if node == self.draw_first_node:
+            self.statusMessage.emit(
+                "Draw element: choose a different end node.")
+            return
+        start = self.draw_first_node
+        self.elementDrawRequested.emit(start, node)
+        self.draw_first_node = node
+        self.statusMessage.emit(
+            f"Draw element: {start}-{node}; continue from node {node} or press Esc.")
+        self.update()
+
     def mousePressEvent(self, ev) -> None:
         self.setFocus()
+        if ev.button() == Qt.LeftButton and self.draw_element_mode:
+            self._handle_draw_click(ev.position().toPoint())
+            self._press = None
+            self._band = None
+            self._moved = False
+            return
         self._press = ev.position().toPoint()
         self._last = self._press
         self._moved = False
@@ -1195,6 +1330,14 @@ class Viewport(QWidget):
             self._last = pos
             self.update()
             return
+        if self.draw_element_mode:
+            self.draw_cursor = pos
+            node, _elem = self._hit(pos)
+            self._hover_node = node
+            self._hover_elem = None
+            self.setCursor(Qt.CrossCursor)
+            self.update()
+            return
         if self.orbit_mode:
             self.setCursor(Qt.OpenHandCursor)
             return
@@ -1242,7 +1385,10 @@ class Viewport(QWidget):
         self._orbiting = False
         self._press = None
         self._moved = False
-        self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
+        if self.draw_element_mode:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
         self.update()
 
     def wheelEvent(self, ev) -> None:
@@ -1255,7 +1401,11 @@ class Viewport(QWidget):
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() == Qt.Key_Escape:
-            if self.orbit_mode:
+            if self.draw_element_mode:
+                self.set_draw_element_mode(False)
+                self.drawModeCancelled.emit()
+                self.statusMessage.emit("Draw element finished.")
+            elif self.orbit_mode:
                 self.set_orbit_mode(False)
             else:
                 self.clear_selection()

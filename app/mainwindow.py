@@ -121,7 +121,8 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self.viewport.fit()
         self._log(f"OpenSees Studio ready. Display units: {UNITS.label()}.")
-        self._log("Start with Structure > New Nodes (N), then New Elements (E).")
+        self._log("Start with Structure > New Nodes (N), then Batch Element (E) "
+                  "or Draw Element.")
         self._log("Use the ribbon tabs above the viewport to create, load and analyse.")
         self._shown = False
 
@@ -175,8 +176,14 @@ class MainWindow(QMainWindow):
 
         self.a_nodes = self._act("New Nodes", "node", self.new_nodes, "N",
                                  "Create nodes by coordinates")
-        self.a_elements = self._act("New Elements", "element", self.new_elements, "E",
-                                    "Create elements between nodes")
+        self.a_elements = self._act("Batch Element", "batch_element", self.new_elements, "E",
+                                    "Create multiple elements between selected nodes")
+        self.a_draw_element = self._act(
+            "Draw Element", "draw_element", self.toggle_draw_element, "",
+            "Draw beam elements by clicking from one node to another",
+            checkable=True)
+        self.a_draw_element.triggered.disconnect()
+        self.a_draw_element.toggled.connect(self.toggle_draw_element)
         self.a_copy = self._act("Copy / Move", "copy", self.copy_move, "C")
         self.a_subdivide = self._act("Subdivide", "subdivide", self.subdivide, "",
                                      "Split selected beam or truss elements into "
@@ -228,6 +235,15 @@ class MainWindow(QMainWindow):
                                          "Show or hide nodes in the viewport",
                                          checkable=True)
         self.a_nodes_visible.setChecked(True)
+        self.a_activate = self._act(
+            "Activate", "activate", self.activate_selection, "",
+            "Show only the selected nodes/elements; hide the rest")
+        self.a_deactivate = self._act(
+            "Deactivate", "deactivate", self.deactivate_selection, "",
+            "Hide the selected nodes/elements from the view")
+        self.a_activate_all = self._act(
+            "Activate All", "activate_all", self.activate_all, "",
+            "Show all nodes and elements again")
         self.mode_combo = QComboBox()
         self.mode_combo.setMinimumWidth(170)
         self.mode_combo.setMaximumWidth(260)
@@ -304,7 +320,8 @@ class MainWindow(QMainWindow):
         self.a_quick = self._act("Quick Start", "help", self.quick_start, "F1")
         self.a_about = self._act("About", "about", self.about, "")
 
-        self.edit_actions = (self.a_nodes, self.a_elements, self.a_copy, self.a_subdivide,
+        self.edit_actions = (self.a_nodes, self.a_elements, self.a_draw_element,
+                             self.a_copy, self.a_subdivide,
                              self.a_mirror, self.a_support, self.a_material,
                              self.a_section, self.a_hinge_defs, self.a_hinge_assign,
                              self.a_tables,
@@ -331,6 +348,28 @@ class MainWindow(QMainWindow):
         if nodes is not None:
             kw["show_nodes"] = nodes
         self.viewport.set_show(**kw)
+
+    def activate_selection(self) -> None:
+        if not (self.viewport.sel_nodes or self.viewport.sel_elements):
+            self._warn("Select nodes or elements first.")
+            return
+        if self.viewport.show_only_selected():
+            self._status("Activate: only selected nodes/elements are shown")
+        else:
+            self._warn("Select nodes or elements first.")
+
+    def deactivate_selection(self) -> None:
+        if not (self.viewport.sel_nodes or self.viewport.sel_elements):
+            self._warn("Select nodes or elements first.")
+            return
+        if self.viewport.hide_selected():
+            self._status("Deactivate: selected nodes/elements hidden")
+        else:
+            self._warn("Select nodes or elements first.")
+
+    def activate_all(self) -> None:
+        self.viewport.clear_visibility()
+        self._status("Activate All: all nodes and elements are visible")
 
     def clean_view(self) -> None:
         self.viewport.stop_animation()
@@ -375,6 +414,8 @@ class MainWindow(QMainWindow):
                                "Lock the model to protect analysis results (Ctrl+L).")
         for action in self.edit_actions:
             action.setEnabled(not locked)
+        if locked and self.a_draw_element.isChecked():
+            self.a_draw_element.setChecked(False)
         for widget in (self.nd_x, self.nd_y, self.nd_z, *self.nd_boxes, self.nd_apply,
                        self.el_mat, self.el_sec, self.el_vx, self.el_vy, self.el_vz,
                        self.el_apply):
@@ -436,6 +477,10 @@ class MainWindow(QMainWindow):
             group.add_large(action)
         group = page.add_group("Display")
         group.add_column((self.a_orbit, self.a_nodes_visible, self.a_labels, self.a_grid))
+        group = page.add_group("Visibility")
+        group.add_large(self.a_activate)
+        group.add_large(self.a_deactivate)
+        group.add_large(self.a_activate_all)
         group = page.add_group("Deformed shape")
         group.add_field("Scale", self.scale_spin)
         group = page.add_group("View mode")
@@ -447,6 +492,7 @@ class MainWindow(QMainWindow):
         group = page.add_group("Model")
         group.add_large(self.a_nodes)
         group.add_large(self.a_elements)
+        group.add_large(self.a_draw_element)
         group = page.add_group("Edit")
         group.add_large(self.a_copy)
         group.add_large(self.a_subdivide)
@@ -462,6 +508,7 @@ class MainWindow(QMainWindow):
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Elements")
         group.add_large(self.a_elements)
+        group.add_large(self.a_draw_element)
         group.add_large(self.a_subdivide)
         group.add_column((self.a_delete, self.a_fit_sel))
         group = page.add_group("Modify")
@@ -578,7 +625,8 @@ class MainWindow(QMainWindow):
         quick.setIconSize(QSize(16, 16))
         for action in (self.a_save, None, self.a_run, self.a_modal, self.a_results,
                        self.a_check, None, self.a_lock, self.a_nodes_visible,
-                       None, self.a_undo, self.a_redo):
+                       None, self.a_activate, self.a_deactivate,
+                       self.a_activate_all, None, self.a_undo, self.a_redo):
             if action is None:
                 quick.addSeparator()
             else:
@@ -826,6 +874,39 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self.model_dock = dock
 
+        # ---- draw element side panel ---------------------------------
+        self.draw_panel = QWidget()
+        draw_lay = QVBoxLayout(self.draw_panel)
+        draw_lay.setContentsMargins(8, 8, 8, 8)
+        draw_lay.addWidget(dialogs.hint(
+            "Click a start node, then an end node. The end node becomes the "
+            "next start; press Esc or Finish to stop."))
+        draw_form = QFormLayout()
+        self.draw_material = QComboBox()
+        self.draw_section = QComboBox()
+        draw_form.addRow("Material", self.draw_material)
+        draw_form.addRow("Section", self.draw_section)
+        draw_lay.addLayout(draw_form)
+        self.draw_info = QLabel("")
+        self.draw_info.setWordWrap(True)
+        self.draw_info.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        draw_lay.addWidget(self.draw_info)
+        finish = QPushButton("Finish")
+        finish.clicked.connect(
+            lambda: self.a_draw_element.setChecked(False))
+        draw_lay.addWidget(finish)
+        draw_lay.addStretch(1)
+        draw_dock = QDockWidget("Draw Element", self)
+        draw_dock.setObjectName("draw_dock")
+        draw_dock.setWidget(self.draw_panel)
+        draw_dock.setMinimumWidth(230)
+        self.addDockWidget(Qt.LeftDockWidgetArea, draw_dock)
+        self.splitDockWidget(self.model_dock, draw_dock, Qt.Vertical)
+        draw_dock.hide()
+        self.draw_dock = draw_dock
+        self.viewport.elementDrawRequested.connect(self._draw_element_between)
+        self.viewport.drawModeCancelled.connect(self._cancel_draw_mode)
+
         # ---- properties ------------------------------------------------
         self.props = QStackedWidget()
         self.props.setMinimumWidth(280)
@@ -886,7 +967,7 @@ class MainWindow(QMainWindow):
         tips = QLabel(
             "<b>Quick workflow</b><br>"
             "1. <b>N</b> create nodes<br>"
-            "2. <b>E</b> create elements<br>"
+            "2. <b>E</b> batch elements, <b>Draw Element</b> for node-to-node<br>"
             "3. <b>C</b> copy / move, <b>M</b> mirror<br>"
             "4. <b>S</b> assign supports<br>"
             "5. <b>L</b> apply nodal loads<br>"
@@ -1049,8 +1130,31 @@ class MainWindow(QMainWindow):
         self._refresh_scenarios()
         self._refresh_props()
         self._refresh_results_panel()
+        self._refresh_draw_combos()
+        self.viewport.hidden_nodes.intersection_update(self.project.nodes)
+        self.viewport.hidden_elements.intersection_update(self.project.elements)
         self._update_title()
         self.viewport.update()
+
+    def _refresh_draw_combos(self) -> None:
+        if not hasattr(self, "draw_material"):
+            return
+        for combo, items, empty in (
+                (self.draw_material, self.project.materials, "No materials"),
+                (self.draw_section, self.project.sections, "No sections")):
+            current = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for tag, item in sorted(items.items()):
+                combo.addItem(f"{tag}   {item.name}", tag)
+            if combo.count() == 0:
+                combo.addItem(empty, 0)
+            index = combo.findData(current)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            combo.blockSignals(False)
+        self.draw_info.setText(
+            f"{len(self.project.materials)} material(s), "
+            f"{len(self.project.sections)} section(s).")
 
     def _update_title(self) -> None:
         name = os.path.basename(self.project.path) if self.project.path else "Untitled"
@@ -1490,6 +1594,7 @@ class MainWindow(QMainWindow):
         from .example import demo_frame
 
         self.project = demo_frame()
+        self._cancel_draw_mode()
         self.history = History(self.project)
         self._clear_results()
         self.viewport.set_project(self.project)
@@ -1506,6 +1611,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open failed", str(exc))
             return
         self.project = loaded
+        self._cancel_draw_mode()
         self.history = History(self.project)
         self._clear_results()
         self.viewport.set_project(self.project)
@@ -1517,6 +1623,7 @@ class MainWindow(QMainWindow):
         """Replace the current model with a project dictionary (MCP bridge)."""
         loaded = Project.from_dict(data)
         self._adopt(loaded)
+        self._cancel_draw_mode()
         self.project.title = str(data.get("title", self.project.title))
         self._clear_results()
         self._set_locked(False)
@@ -1601,6 +1708,7 @@ class MainWindow(QMainWindow):
             return
         self.project = default_project()
         self.project.settings = dict(self.project.settings)
+        self._cancel_draw_mode()
         self.history = History(self.project)
         self._clear_results()
         self.viewport.set_project(self.project)
@@ -1618,6 +1726,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open failed", str(exc))
             return
         self.project = loaded
+        self._cancel_draw_mode()
         self.history = History(self.project)
         self._clear_results()
         self.viewport.set_project(self.project)
@@ -1633,6 +1742,7 @@ class MainWindow(QMainWindow):
                 "Unsaved changes will be lost.") != QMessageBox.Yes:
             return
         self.project = default_project()
+        self._cancel_draw_mode()
         self.history = History(self.project)
         self._clear_results()
         self.results_scenario = ""
@@ -1799,6 +1909,62 @@ class MainWindow(QMainWindow):
             created.append(tag)
         self._commit(f"Created {len(created)} element(s)")
         self.viewport.select_elements(created)
+
+    def toggle_draw_element(self, checked: bool) -> None:
+        if checked:
+            self._refresh_draw_combos()
+            if not self.project.materials or not self.project.sections:
+                self._warn("Create at least one material and section before "
+                           "drawing elements.")
+                self.a_draw_element.blockSignals(True)
+                self.a_draw_element.setChecked(False)
+                self.a_draw_element.blockSignals(False)
+                return
+            self.draw_dock.show()
+            self.draw_dock.raise_()
+            self.viewport.set_draw_element_mode(True)
+            self._status("Draw Element: click the start node, then the end node. "
+                         "Esc or Finish stops.")
+            self._log("Draw Element active: click node to node. "
+                      "The last node becomes the next start.")
+        else:
+            self.viewport.set_draw_element_mode(False)
+            self.draw_dock.hide()
+            self._status("Draw Element finished")
+
+    def _cancel_draw_mode(self) -> None:
+        self.a_draw_element.blockSignals(True)
+        self.a_draw_element.setChecked(False)
+        self.a_draw_element.blockSignals(False)
+        self.viewport.set_draw_element_mode(False)
+        self.draw_dock.hide()
+
+    def _draw_element_between(self, start: int, end: int) -> None:
+        if start not in self.project.nodes or end not in self.project.nodes:
+            self._warn("One of the clicked nodes no longer exists.")
+            return
+        if start == end:
+            self._warn("An element cannot reuse the same node.")
+            return
+        mat = int(self.draw_material.currentData() or 0)
+        sec = int(self.draw_section.currentData() or 0)
+        if mat not in self.project.materials:
+            self._warn("Select a valid material in the Draw Element panel.")
+            return
+        if sec not in self.project.sections:
+            self._warn("Select a valid section in the Draw Element panel.")
+            return
+        for element in self.project.elements.values():
+            if len(element.nodes) == 2 and set(element.nodes) == {start, end}:
+                self._warn(f"An element already connects nodes {start} and {end}.")
+                return
+        tag = self.project.next_element()
+        self.project.elements[tag] = Element(
+            tag, "beam", [start, end], mat, sec, None)
+        self._commit(f"Created element {tag} ({start}-{end})")
+        self.viewport.select_elements([tag])
+        self._status(f"Draw Element: created element {tag} from node {start} "
+                     f"to node {end}; continue from node {end}.")
 
     def subdivide(self) -> None:
         selected = sorted(self.viewport.sel_elements)
@@ -2655,7 +2821,8 @@ class MainWindow(QMainWindow):
             "<p>A graphical model generator for OpenSees.</p>"
             "<ol>"
             "<li><b>New Nodes (N)</b> — enter coordinates, optionally repeat with spacing.</li>"
-            "<li><b>New Elements (E)</b> — select nodes first, then pick beam / truss / shell.</li>"
+            "<li><b>Batch Element (E)</b> — select nodes first, then pick beam / truss / shell.</li>"
+            "<li><b>Draw Element</b> — choose material/section in the side panel, then click node to node.</li>"
             "<li><b>Copy / Move (C)</b> and <b>Mirror (M)</b> — replicate storeys or spans.</li>"
             "<li><b>Supports (S)</b> — fixed, pinned or roller restraints.</li>"
             "<li><b>Load Cases</b>, <b>Nodal Loads (L)</b>, <b>Element Loads</b>, <b>Self Weight</b>.</li>"

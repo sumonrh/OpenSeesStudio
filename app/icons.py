@@ -105,6 +105,60 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.drawEllipse(QPointF(5, 18.5), 2.3, 2.3)
         p.drawEllipse(QPointF(19, 5.5), 2.3, 2.3)
 
+    elif name == "batch_element":
+        _pen(p, "#8ea6bd", 1.4)
+        for offset in (-3.5, 0.0, 3.5):
+            p.drawLine(QPointF(4.0, 18.0 + offset),
+                       QPointF(20.0, 6.0 + offset))
+        _fill(p, accent)
+        for offset in (-3.5, 0.0, 3.5):
+            p.drawEllipse(QPointF(4.0, 18.0 + offset), 1.8, 1.8)
+            p.drawEllipse(QPointF(20.0, 6.0 + offset), 1.8, 1.8)
+
+    elif name == "draw_element":
+        _pen(p, accent, 1.8)
+        p.drawLine(QPointF(4.5, 19.5), QPointF(19.5, 4.5))
+        _fill(p, INK)
+        p.drawEllipse(QPointF(4.5, 19.5), 2.4, 2.4)
+        p.drawEllipse(QPointF(19.5, 4.5), 2.4, 2.4)
+        _pen(p, ORANGE, 1.4)
+        p.drawLine(QPointF(14.0, 19.0), QPointF(20.5, 12.5))
+        p.drawLine(QPointF(14.0, 19.0), QPointF(15.6, 18.3))
+        p.drawLine(QPointF(14.0, 19.0), QPointF(14.7, 17.4))
+
+    elif name == "activate":
+        _pen(p, accent, 1.5)
+        p.drawArc(QRectF(3.0, 7.0, 18.0, 10.0), 0, 180 * 16)
+        p.drawArc(QRectF(3.0, 7.0, 18.0, 10.0), 180 * 16, 180 * 16)
+        _fill(p, accent)
+        p.drawEllipse(QPointF(12.0, 12.0), 3.0, 3.0)
+        _pen(p, GREEN, 1.8)
+        p.drawLine(QPointF(15.0, 18.5), QPointF(17.0, 20.5))
+        p.drawLine(QPointF(17.0, 20.5), QPointF(21.0, 15.0))
+
+    elif name == "deactivate":
+        _pen(p, accent, 1.5)
+        p.drawArc(QRectF(3.0, 7.0, 18.0, 10.0), 0, 180 * 16)
+        p.drawArc(QRectF(3.0, 7.0, 18.0, 10.0), 180 * 16, 180 * 16)
+        _fill(p, accent)
+        p.drawEllipse(QPointF(12.0, 12.0), 3.0, 3.0)
+        _pen(p, ORANGE, 2.0)
+        p.drawLine(QPointF(4.0, 21.0), QPointF(20.0, 3.0))
+
+    elif name == "activate_all":
+        _pen(p, accent, 1.5)
+        p.drawArc(QRectF(3.0, 6.0, 18.0, 9.0), 0, 180 * 16)
+        p.drawArc(QRectF(3.0, 6.0, 18.0, 9.0), 180 * 16, 180 * 16)
+        _fill(p, accent)
+        p.drawEllipse(QPointF(12.0, 10.5), 2.7, 2.7)
+        _pen(p, GREEN, 1.6)
+        p.drawLine(QPointF(4.5, 20.0), QPointF(9.5, 20.0))
+        p.drawLine(QPointF(7.5, 17.5), QPointF(4.5, 20.0))
+        p.drawLine(QPointF(7.5, 22.5), QPointF(4.5, 20.0))
+        p.drawLine(QPointF(14.5, 20.0), QPointF(19.5, 20.0))
+        p.drawLine(QPointF(16.5, 17.5), QPointF(19.5, 20.0))
+        p.drawLine(QPointF(16.5, 22.5), QPointF(19.5, 20.0))
+
     elif name == "subdivide":
         _pen(p, "#8ea6bd", 1.8)
         p.drawLine(QPointF(4, 20), QPointF(20, 4))

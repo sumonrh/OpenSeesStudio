@@ -54,6 +54,12 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 **Structure**
 - Create nodes by coordinates, with repetition and spacing.
 - Create beams (`elasticBeamColumn`), trusses and 4-node shells (`ShellMITC4`).
+- **Batch Element** creates beam/truss/shell elements from a selected node list;
+  **Draw Element** opens a side panel with material and section lists and draws
+  beams by clicking from node to node (the end node becomes the next start).
+- **Activate** shows only the selected nodes/elements, **Deactivate** hides the
+  selected items, and **Activate All** restores the full view. The same three
+  buttons are on the horizontal toolbar below the ribbon.
 - Chain creation: give a list of nodes and beams/trusses are created between consecutive nodes.
 - Copy / move with a translation and repeat count; attached elements are duplicated.
 - Subdivide selected beam or truss elements into a user-defined number of equal
@@ -177,7 +183,7 @@ and time-history analysis is in
 | Key | Action |
 |---|---|
 | N | New nodes |
-| E | New elements |
+| E | Batch elements |
 | C | Copy / move |
 | M | Mirror |
 | S | Supports |
@@ -196,6 +202,8 @@ and time-history analysis is in
 **Mouse:** left = select (drag = box select), middle = pan, right = orbit, wheel = zoom.
 Press **O** (or the Orbit ribbon button) for AutoCAD-style orbit mode, where left-drag rotates
 the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the selection.
+In **Draw Element** mode, left-click a start node and then an end node; the end node
+becomes the next start. Esc or **Finish** ends the tool.
 
 ## MCP server (AI agents)
 

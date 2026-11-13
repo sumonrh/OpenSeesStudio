@@ -904,6 +904,46 @@ check("response-spectrum results dialog",
       rsd.table.rowCount() == 2 and rsd.plot.results is not None)
 rsd.close()
 
+print("== view visibility and draw element ==")
+nodes = sorted(win.project.nodes)
+win.viewport.select_nodes(nodes[:1])
+win.activate_selection()
+check("activate keeps selected only",
+      len(win.viewport.hidden_nodes) == len(nodes) - 1
+      and win.viewport.is_node_visible(nodes[0])
+      and not win.viewport.is_node_visible(nodes[1]))
+win.activate_all()
+check("activate all restores visibility",
+      not win.viewport.hidden_nodes and not win.viewport.hidden_elements)
+win.viewport.select_nodes(nodes[:1])
+win.deactivate_selection()
+check("deactivate hides selected",
+      nodes[0] in win.viewport.hidden_nodes)
+win.activate_all()
+check("quick toolbar has visibility actions",
+      all(action in win.quick_toolbar.actions()
+          for action in (win.a_activate, win.a_deactivate, win.a_activate_all)))
+win.a_draw_element.setChecked(True)
+check("draw element panel opens",
+      win.viewport.draw_element_mode and not win.draw_dock.isHidden())
+from app.model import Node
+base = win.project.next_node()
+win.project.nodes[base] = Node(base, 50000.0, 0.0, 0.0)
+win.project.nodes[base + 1] = Node(base + 1, 51000.0, 0.0, 0.0)
+before = len(win.project.elements)
+win._draw_element_between(base, base + 1)
+check("draw element creates a beam",
+      len(win.project.elements) == before + 1)
+win.a_draw_element.setChecked(False)
+check("draw element mode closes",
+      not win.viewport.draw_element_mode and win.draw_dock.isHidden())
+for tag, element in list(win.project.elements.items()):
+    if set(element.nodes) == {base, base + 1}:
+        del win.project.elements[tag]
+win.project.nodes.pop(base, None)
+win.project.nodes.pop(base + 1, None)
+win.refresh_all()
+
 print("== disconnected nodes are rejected ==")
 from app import opsgen
 from app.model import Node
