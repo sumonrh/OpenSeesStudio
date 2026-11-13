@@ -1,10 +1,35 @@
 # OpenSees Studio
 
+[![Download for Windows](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?label=download%20for%20windows&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
+
 A graphical model generator for **OpenSees**, built with Python,
 PySide6 and OpenSeesPy. It focuses on the model-generation workflow: nodes, elements,
 copy/move/mirror, supports, load cases, nodal and element loads, self weight,
 load combinations, static and modal analysis, and result review. The interface uses a
 ribbon with task tabs, command groups and group captions.
+
+## Install on Windows
+
+[**Download the latest installer**](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
+
+1. Open the link above (or **Releases** on the right side of this page) and click
+   `OpenSeesStudio-...-Setup.exe` under **Assets**. Do not download the
+   `Source code (zip)` or `Source code (tar.gz)` files.
+2. Open the downloaded file from your **Downloads** folder.
+3. If Windows shows **"Windows protected your PC"**, click **More info**, then
+   **Run anyway**. The installer is not code-signed yet, so Windows asks once.
+4. Click **Next**, choose whether you want a desktop shortcut, then **Install**.
+5. Start **OpenSees Studio** from the Start menu or the desktop shortcut.
+
+Requirements: Windows 10 or 11, 64-bit. Python is not needed and no administrator
+password is required — the app installs for the current user in
+`%LOCALAPPDATA%\Programs\OpenSees Studio`.
+
+To remove it, use **Settings > Apps > Installed apps > OpenSees Studio > Uninstall**
+or "Uninstall OpenSees Studio" in the Start menu.
+
+The installer also contains the MCP server for AI agents; see
+[MCP server](#mcp-server-ai-agents).
 
 ![main window](docs/main.png)
 
@@ -337,8 +362,25 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.0-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.1-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
+
+### Code signing
+
+Signing is optional and off by default. To sign the application, the MCP server and
+the installer, set one of these before running `build.ps1`:
+
+```powershell
+# certificate file
+$env:OSS_SIGN_PFX = "C:\keys\codesign.pfx"
+$env:OSS_SIGN_PASSWORD = "..."
+
+# or a certificate already installed in the Windows certificate store
+$env:OSS_SIGN_THUMBPRINT = "A1B2C3..."
+```
+
+`build.ps1` signs with `signtool` (SHA-256, timestamped) and continues with a
+warning when no certificate is configured, so unsigned developer builds still work.
 
 ## Project layout
 
