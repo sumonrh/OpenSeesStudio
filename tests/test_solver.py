@@ -2,12 +2,15 @@
 import math
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.model import (Project, Element, Node, NodalLoad, LoadCase, Section,
-                       HingeDefinition, default_project)
+                       HingeDefinition, TimeHistoryCase, default_project)
 from app import opsgen
+from app import groundmotion
 
 FAILS = []
 
@@ -291,6 +294,58 @@ pt.nodal_loads.append(NodalLoad(1, 2, "DL", [50.0, 0, 0, 0, 0, 0]))
 txt = opsgen.export_tcl(pt)
 assert "element truss 1 1 2" in txt and "pattern Plain" in txt
 print("   tcl lines:", len(txt.splitlines()))
+
+print("== time-history ground-motion readers ==")
+tmpdir = Path(tempfile.mkdtemp(prefix="osstudio_gm_"))
+two_col = tmpdir / "two_col.txt"
+two_col.write_text("0.0 0.0\n0.01 0.10\n0.02 0.0\n", encoding="utf-8")
+dt, values, note = groundmotion.read_two_column(two_col)
+check("two-column dt", dt, 0.01, 1e-12)
+check("two-column point count", len(values), 3, 0)
+check("two-column first acceleration", values[1], 0.10, 1e-12)
+at2 = tmpdir / "record.at2"
+at2.write_text("2 0.01 NPTS, DT\n0.0 1.0\n", encoding="utf-8")
+dt2, values2, _ = groundmotion.read_at2(at2)
+check("AT2 dt", dt2, 0.01, 1e-12)
+check("AT2 point count", len(values2), 2, 0)
+sine_case = TimeHistoryCase(source="sine", dt=0.01, n_steps=100,
+                            sine_amplitude=0.10, sine_period=1.0)
+sine = groundmotion.load_ground_motion(sine_case)
+check("sine point count", len(sine.values), 100, 0)
+check("sine starts at zero", sine.values[0], 0.0, 1e-12)
+check("sine peak amplitude", max(abs(v) for v in sine.values), 0.10, 2e-2)
+
+print("== time-history solver ==")
+p = default_project()
+p.materials[1].E = 200.0
+p.materials[1].rho = 7.85e-9
+s = p.sections[1]
+s.shape, s.b, s.h = "Rectangle", 300.0, 600.0
+s.compute()
+p.nodes[1] = Node(1, 0, 0, 0, support=[True] * 6)
+p.nodes[2] = Node(2, 0, 0, 3000)
+p.elements[1] = Element(1, "beam", [1, 2], 1, 1, vecxz=[1, 0, 0])
+p.cases["DL"] = LoadCase("DL")
+p.time_history = TimeHistoryCase(source="sine", dt=0.01, n_steps=100,
+                                 direction=1, damping_ratio=0.05,
+                                 sine_amplitude=0.10, sine_period=1.0)
+th = opsgen.run_time_history(p)
+check("time-history completed steps", th.n_steps, 100, 0)
+check("time-history requested steps", th.n_steps_requested, 100, 0)
+check("time-history time rows", len(th.time), 100, 0)
+check("time-history node rows", len(th.node_disp[2]), 100, 0)
+check("time-history positive peak displacement",
+      1 if th.peak_disp > 0.0 else 0, 1, 0)
+check("time-history peak displacement bounded",
+      1 if th.peak_disp < 10.0 else 0, 1, 0)
+print(f"   peak displacement: {th.peak_disp:.6g} mm")
+check("time-history peak velocity positive",
+      1 if th.peak_vel > 0.0 else 0, 1, 0)
+check("time-history peak acceleration positive",
+      1 if th.peak_accel > 0.0 else 0, 1, 0)
+cloned = Project.from_dict(p.to_dict())
+check("time-history case persists", cloned.time_history.n_steps, 100, 0)
+check("time-history source persists", 1 if cloned.time_history.source == "sine" else 0, 1, 0)
 
 print()
 if FAILS:

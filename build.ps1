@@ -22,6 +22,10 @@ try {
         Write-Host "== GUI tests ==" -ForegroundColor Cyan
         & $py tests\test_gui.py
         if ($LASTEXITCODE -ne 0) { throw "GUI tests failed" }
+
+        Write-Host "== Analysis runner tests ==" -ForegroundColor Cyan
+        & $py tests\test_analysis_runner.py
+        if ($LASTEXITCODE -ne 0) { throw "analysis runner tests failed" }
     }
 
     Write-Host "== PyInstaller ==" -ForegroundColor Cyan

@@ -17,21 +17,14 @@ def _guard_streams() -> None:
 
 _guard_streams()
 
-from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtGui import QIcon  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
-
-from . import icons, theme  # noqa: E402
-from .mainwindow import MainWindow  # noqa: E402
-
-
 def _selftest(report_path: str) -> int:
     """Headless end-to-end check used to verify the packaged executable."""
     import math
 
     from . import opsgen
     from .model import (ElementLoad, Element, LoadCase, LoadCombination,
-                        NodalLoad, Node, Section, default_project)
+                        NodalLoad, Node, Section, TimeHistoryCase,
+                        default_project)
 
     lines = []
 
@@ -73,6 +66,13 @@ def _selftest(report_path: str) -> int:
         emit(f"combination factor 1.4 -> {rc.displacements[2][2]:.6f} mm")
         assert abs(rc.displacements[2][2] - 1.4 * got) < 1e-6 * abs(got), "combination scaling"
 
+        p.time_history = TimeHistoryCase(
+            source="sine", dt=0.01, n_steps=20, direction=1,
+            damping_ratio=0.05, sine_amplitude=0.10, sine_period=1.0)
+        th = opsgen.run_time_history(p)
+        emit(f"time history: {th.n_steps} steps, peak {th.peak_disp:.6f} mm")
+        assert th.n_steps == 20 and th.peak_disp > 0.0, "time-history result"
+
         from .hinge_catalog import MATERIALS, image_path
         expected_images = [m.key for m in MATERIALS.values() if m.image]
         missing = [key for key in expected_images if not image_path(key)]
@@ -103,6 +103,12 @@ def _selftest(report_path: str) -> int:
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
 
+    if "--analysis-child" in argv:
+        idx = argv.index("--analysis-child")
+        from .analysis_child import main as child_main
+
+        return child_main(argv[idx + 1:])
+
     if "--selftest" in argv:
         i = argv.index("--selftest")
         report = "selftest_report.txt"
@@ -117,6 +123,11 @@ def main(argv=None) -> int:
                 "OpenSeesStudio.App.1")
         except Exception:
             pass
+
+    from PySide6.QtWidgets import QApplication
+
+    from . import icons, theme
+    from .mainwindow import MainWindow
 
     app = QApplication(argv)
     app.setApplicationName("OpenSees Studio")

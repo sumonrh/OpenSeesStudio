@@ -7,6 +7,7 @@ hidden = [
     "openseespy",
     "openseespywin",
     "openseespywin.opensees",
+    "app.analysis_child",
 ]
 
 excludes = [

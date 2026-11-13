@@ -96,6 +96,12 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 **Analysis and results**
 - Static analysis (`LoadControl`, `BandGen`, RCM, Linear).
 - Modal analysis (eigenvalues, periods, frequencies, animated mode shapes).
+- **Time History** group in the **Analysis** tab: uniform base excitation from a
+  generated sine or a PEER AT2 / two-column / single-column record, optional
+  gravity preload, Rayleigh damping from the first mode, and a node/DOF
+  displacement, velocity or acceleration plot with CSV export.
+- Analyses run in a **separate OpenSees process** with progress and Cancel, so a
+  solver failure does not take down the GUI.
 - **Mode shapes** are available from a dropdown in the **Results** ribbon tab;
   select any mode and use **Animate** without opening the results table.
 - **Pushover** ribbon tab: displacement-controlled nonlinear static analysis with

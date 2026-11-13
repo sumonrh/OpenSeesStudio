@@ -5,6 +5,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["OPENSEES_STUDIO_IN_PROCESS"] = "1"
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
@@ -791,6 +792,50 @@ if win.pushover_results:
         win._tree_double(hinge_group.child(0), 0)
         win.edit_hinge_defs = old_edit_defs
         check("double-click hinge opens library", bool(calls))
+
+print("== time-history module ==")
+from app.dialogs import TimeHistoryDialog
+from app.timehistory import TimeHistoryResultsDialog
+from app.opsgen import TimeHistoryResults
+from app.model import TimeHistoryCase
+
+check("time-history actions present",
+      all(hasattr(win, name) for name in
+          ("a_ground_motion", "a_time_history", "a_time_history_results")))
+check("time-history results initially disabled",
+      not win.a_time_history_results.isEnabled())
+thp = Project()
+thp.time_history = TimeHistoryCase(source="sine", dt=0.01, n_steps=20,
+                                   sine_amplitude=0.10, sine_period=1.0)
+thd = TimeHistoryDialog(thp)
+thd.steps.setValue(20)
+spec = thd.spec()
+check("time-history dialog spec",
+      spec.source == "sine" and spec.n_steps == 20)
+thd.close()
+rows = 20
+fake = TimeHistoryResults(
+    case_name="TH test", ground_motion="sine", direction=1, dt=0.01,
+    n_steps=rows, n_steps_requested=rows,
+    time=[i * 0.01 for i in range(rows)],
+    node_disp={1: [[0.0] * 6 for _ in range(rows)],
+               2: [[0.01 * i, 0.0, 0.0, 0.0, 0.0, 0.0]
+                   for i in range(rows)]},
+    node_vel={1: [[0.0] * 6 for _ in range(rows)],
+              2: [[0.0] * 6 for _ in range(rows)]},
+    node_accel={1: [[0.0] * 6 for _ in range(rows)],
+                2: [[0.0] * 6 for _ in range(rows)]},
+    peak_disp=0.19, peak_vel=0.0, peak_accel=0.0)
+td = TimeHistoryResultsDialog(thp, fake)
+check("time-history results dialog selects peak node",
+      td.node.currentData() == 2 and td.plot.results is not None)
+td.close()
+win.time_history_results = fake
+win.a_time_history_results.setEnabled(True)
+win._clear_results()
+check("time-history results clear",
+      win.time_history_results is None
+      and not win.a_time_history_results.isEnabled())
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

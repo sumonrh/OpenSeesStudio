@@ -9,19 +9,21 @@ from typing import Dict, List, Optional, Tuple
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
-                               QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-                               QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMessageBox, QPushButton, QRadioButton, QSpinBox,
-                               QTableWidget, QTableWidgetItem, QTabWidget,
-                               QVBoxLayout, QWidget)
+                               QDialogButtonBox, QDoubleSpinBox,
+                               QFileDialog, QFormLayout, QGridLayout,
+                               QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+                               QLineEdit, QListWidget, QListWidgetItem,
+                               QMessageBox, QPushButton, QRadioButton,
+                               QSpinBox, QTableWidget, QTableWidgetItem,
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from . import steelsections, theme
+from .groundmotion import load_ground_motion
 from .hinge_catalog import MATERIALS as HINGE_MATERIALS, image_path as hinge_image
 from .model import (COMBINATION_KINDS, ELEMENT_KINDS, LOADCASE_KINDS,
                     LOAD_DIRECTIONS, MATERIAL_KINDS, SECTION_SHAPES,
                     SHAPE_LABELS, Element, LoadCase, LoadCombination, Material,
-                    Project, Section, fmt)
+                    Project, Section, TimeHistoryCase, fmt)
 from .units import UNITS
 
 
@@ -1671,3 +1673,198 @@ class AnalysisDialog(BaseDialog):
         return {"static_steps": self.steps.value(),
                 "modal_modes": self.modes.value(),
                 "mass_from_density": self.mass.isChecked()}
+
+
+class TimeHistoryDialog(BaseDialog):
+    """Define a uniform-excitation time-history case."""
+
+    def __init__(self, project: Project, parent=None) -> None:
+        super().__init__("Time History Analysis", parent, 660)
+        self.project = project
+        self.case = copy.deepcopy(project.time_history)
+        self._case = self.case
+        self._probe_info = ""
+
+        self.body.addWidget(title_label("Ground motion"))
+        form = QFormLayout()
+        self.name = QLineEdit(self.case.name)
+        form.addRow("Case name", self.name)
+        self.source = QComboBox()
+        self.source.addItem("Sine wave (generated)", "sine")
+        self.source.addItem("Ground-motion file", "file")
+        form.addRow("Source", self.source)
+        self.body.addLayout(form)
+
+        self.file_box = QWidget()
+        file_form = QFormLayout(self.file_box)
+        file_form.setContentsMargins(0, 0, 0, 0)
+        path_row = QHBoxLayout()
+        self.path = QLineEdit(self.case.path)
+        self.path.setPlaceholderText("AT2, two-column or single-column record")
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        path_row.addWidget(self.path, 1)
+        path_row.addWidget(browse)
+        path_host = QWidget()
+        path_host.setLayout(path_row)
+        file_form.addRow("File", path_host)
+        self.format = QComboBox()
+        for label, key in (("Auto detect", "auto"), ("PEER AT2 / NGA", "at2"),
+                           ("Time + acceleration", "two_column"),
+                           ("Acceleration only", "single_column")):
+            self.format.addItem(label, key)
+        file_form.addRow("Format", self.format)
+        self.info = QLabel("")
+        self.info.setWordWrap(True)
+        self.info.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        file_form.addRow("", self.info)
+        self.body.addWidget(self.file_box)
+
+        self.sine_box = QWidget()
+        sine_form = QFormLayout(self.sine_box)
+        sine_form.setContentsMargins(0, 0, 0, 0)
+        self.amplitude = spin(self.case.sine_amplitude, 0.0, 10.0, 4, 0.01, "g")
+        self.period = spin(self.case.sine_period, 0.01, 60.0, 4, 0.1, "s")
+        sine_form.addRow("Amplitude", self.amplitude)
+        sine_form.addRow("Period", self.period)
+        self.body.addWidget(self.sine_box)
+
+        self.body.addWidget(title_label("Time stepping and excitation"))
+        common = QFormLayout()
+        self.dt = spin(self.case.dt, 0.0001, 1.0, 5, 0.005, "s")
+        self.steps = int_spin(self.case.n_steps, 0, 1_000_000)
+        self.direction = QComboBox()
+        for label, key in (("Global X", 1), ("Global Y", 2), ("Global Z", 3)):
+            self.direction.addItem(label, key)
+        self.scale = spin(self.case.scale, 0.0, 100.0, 4, 0.1)
+        self.damping = spin(self.case.damping_ratio, 0.0, 0.5, 4, 0.01)
+        self.mode = int_spin(self.case.damping_mode, 1, 100)
+        self.gravity = QComboBox()
+        self.gravity.addItem("None", "")
+        for name in project.cases:
+            self.gravity.addItem(name, name)
+        common.addRow("Time step", self.dt)
+        common.addRow("Steps (0 = whole record)", self.steps)
+        common.addRow("Direction", self.direction)
+        common.addRow("Record scale", self.scale)
+        common.addRow("Damping ratio", self.damping)
+        common.addRow("Damping mode", self.mode)
+        common.addRow("Gravity preload", self.gravity)
+        self.body.addLayout(common)
+        self.summary = hint("")
+        self.body.addWidget(self.summary)
+        self.buttons("Save")
+
+        # Restore the stored selection.
+        for widget, value in (
+                (self.source, self.case.source),
+                (self.format, self.case.format),
+                (self.direction, self.case.direction),
+                (self.gravity, self.case.gravity_case)):
+            index = widget.findData(value)
+            if index >= 0:
+                widget.setCurrentIndex(index)
+
+        self.source.currentIndexChanged.connect(self._source_changed)
+        self.path.editingFinished.connect(self._probe)
+        self.format.currentIndexChanged.connect(self._probe)
+        self.dt.valueChanged.connect(self._update_summary)
+        self.steps.valueChanged.connect(self._update_summary)
+        self.amplitude.valueChanged.connect(self._update_summary)
+        self.period.valueChanged.connect(self._update_summary)
+        self._source_changed()
+
+    def _source_changed(self, *_args) -> None:
+        file_mode = self.source.currentData() == "file"
+        self.file_box.setVisible(file_mode)
+        self.sine_box.setVisible(not file_mode)
+        if file_mode:
+            self.steps.setValue(0)
+        elif self.steps.value() == 0:
+            self.steps.setValue(1000)
+        self._probe()
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open ground motion", self.path.text() or "",
+            "Ground motions (*.txt *.dat *.at2 *.csv);;All files (*)")
+        if path:
+            self.path.setText(path)
+            self._probe()
+
+    def _probe(self) -> None:
+        if self.source.currentData() != "file":
+            self.info.setText("Generated sine motion; no file needed.")
+            self._update_summary()
+            return
+        text = self.path.text().strip()
+        if not text:
+            self.info.setText("Choose a ground-motion file.")
+            self._probe_info = ""
+            self._update_summary()
+            return
+        probe = copy.deepcopy(self._case)
+        probe.source = "file"
+        probe.path = text
+        probe.format = self.format.currentData() or "auto"
+        probe.dt = self.dt.value()
+        probe.n_steps = 0
+        try:
+            motion = load_ground_motion(probe)
+        except Exception as exc:
+            self.info.setText(f"⚠ {exc}")
+            self.info.setStyleSheet("color:#c92a2a; font-size:11px;")
+            self._probe_info = ""
+            self._update_summary()
+            return
+        self.info.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        self._probe_info = (f"{motion.note}; {motion.npts} points, "
+                            f"duration {motion.duration:g} s")
+        self.info.setText(self._probe_info)
+        self._update_summary()
+
+    def _update_summary(self, *_args) -> None:
+        if self.source.currentData() == "file":
+            duration = ""
+            if self._probe_info:
+                try:
+                    duration = f"; {self._probe_info.split('duration ')[-1]}"
+                except Exception:
+                    duration = ""
+            self.summary.setText(
+                "The record's own dt is used for AT2 and two-column files. "
+                "Steps = 0 uses the whole record." + duration)
+        else:
+            duration = self.steps.value() * self.dt.value()
+            self.summary.setText(
+                f"Sine duration = {duration:g} s at dt = {self.dt.value():g} s. "
+                "The analysis starts from rest; a gravity preload is optional.")
+
+    def _build_case(self) -> TimeHistoryCase:
+        return TimeHistoryCase(
+            name=self.name.text().strip() or "TH1",
+            source=self.source.currentData() or "sine",
+            path=self.path.text().strip(),
+            format=self.format.currentData() or "auto",
+            dt=self.dt.value(),
+            n_steps=self.steps.value(),
+            direction=int(self.direction.currentData() or 1),
+            scale=self.scale.value(),
+            damping_ratio=self.damping.value(),
+            damping_mode=self.mode.value(),
+            gravity_case=self.gravity.currentData() or "",
+            sine_amplitude=self.amplitude.value(),
+            sine_period=self.period.value())
+
+    def accept(self) -> None:
+        case = self._build_case()
+        try:
+            load_ground_motion(case)
+        except Exception as exc:
+            QMessageBox.warning(self, "Ground motion", str(exc))
+            return
+        self._case = case
+        super().accept()
+
+    def spec(self) -> TimeHistoryCase:
+        return self._case

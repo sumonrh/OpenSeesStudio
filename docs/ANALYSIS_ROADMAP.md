@@ -11,8 +11,11 @@ hinge assignments, tree usage colouring, OpenSees reference diagrams and the
 Pushover tab with `beamWithHinges` lumped hinge models are implemented. The hinge
 library currently includes the main structural OpenSees material families
 (steel, concrete, generic hysteretic, pinching/Bouc-Wen and flag/self-centering,
-plus moment-rotation IMK definitions for future spring hinges). The remaining
-phases below are still planned.
+plus moment-rotation IMK definitions for future spring hinges). A
+uniform-excitation time-history MVP (sine or AT2/two-column/single-column record,
+gravity preload, Rayleigh damping, response plot and CSV export) and a
+child-process analysis runner with progress/cancel are also implemented. The
+remaining phases below are still planned.
 
 Command-level smoke checks against the installed build passed for:
 
@@ -72,8 +75,8 @@ commands.
 | Dampers / bearings | None | No energy-dissipation or isolation modelling |
 | Static analysis | `LoadControl`, `Linear` algorithm | No displacement control, arc length or convergence controls |
 | Modal analysis | `eigen` | No response-spectrum combination |
-| Dynamic analysis | None | No time series, ground motion or transient analysis |
-| Results | One static or one modal result set | No time histories, envelopes, capacity curves or hinge states |
+| Dynamic analysis | Uniform-excitation transient (sine/AT2/two-column/single-column), gravity preload, Rayleigh damping | No response spectrum, multi-support excitation or ground-motion catalog yet |
+| Results | Static, modal, pushover and time-history results | No response-spectrum combinations, envelopes or multi-case time-history overlays |
 | Persistence | Project schema v1 | No ground motions, analysis cases or fiber definitions |
 | MCP / Tcl | 43 MCP tools, static Tcl export | No parity for new analysis types |
 

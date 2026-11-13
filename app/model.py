@@ -408,6 +408,43 @@ PUSHOVER_DEFAULTS = {
 
 
 @dataclass
+class TimeHistoryCase:
+    """Settings for a uniform-excitation time-history analysis."""
+
+    name: str = "TH1"
+    source: str = "sine"             # sine | file
+    path: str = ""
+    format: str = "auto"             # auto | at2 | two_column | single_column
+    dt: float = 0.01                 # s
+    n_steps: int = 1000              # 0 = use the full record
+    direction: int = 1               # 1=X, 2=Y, 3=Z
+    scale: float = 1.0               # applied to the record values (g)
+    damping_ratio: float = 0.05
+    damping_mode: int = 1
+    gravity_case: str = ""
+    sine_amplitude: float = 0.10     # g
+    sine_period: float = 1.0         # s
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+    @staticmethod
+    def from_dict(d: dict) -> "TimeHistoryCase":
+        case = TimeHistoryCase()
+        for key, value in (d or {}).items():
+            if not hasattr(case, key):
+                continue
+            if key in ("n_steps", "direction", "damping_mode"):
+                setattr(case, key, int(value))
+            elif key == "name" or key in ("source", "path", "format",
+                                          "gravity_case"):
+                setattr(case, key, str(value))
+            else:
+                setattr(case, key, _f(value))
+        return case
+
+
+@dataclass
 class LoadCase:
     name: str = "DL"
     kind: str = "Dead"
@@ -512,6 +549,7 @@ class Project:
         self.combos: Dict[str, LoadCombination] = {}
         self.hinge_defs: Dict[int, HingeDefinition] = {}
         self.hinge_assignments: Dict[int, int] = {}
+        self.time_history: TimeHistoryCase = TimeHistoryCase()
         self.settings: dict = dict(DEFAULT_SETTINGS)
         self.title: str = "Untitled"
         self.path: str = ""
@@ -679,6 +717,7 @@ class Project:
             "hinge_assignments": [
                 {"element": element, "hinge": hinge}
                 for element, hinge in self.hinge_assignments.items()],
+            "time_history": self.time_history.to_dict(),
             "settings": self.settings,
         }
 
@@ -705,6 +744,7 @@ class Project:
                 continue
             if hinge in p.hinge_defs:
                 p.hinge_assignments[element] = hinge
+        p.time_history = TimeHistoryCase.from_dict(d.get("time_history", {}))
         legacy = d.get("hinges", [])
         if legacy and not p.hinge_defs:
             grouped = {}

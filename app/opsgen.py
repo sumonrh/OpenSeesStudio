@@ -7,13 +7,18 @@ Units: kN, mm, tonne, s.
 from __future__ import annotations
 
 import math
+import shutil
+import tempfile
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 import openseespy.opensees as ops
 
 from .model import (Element, ElementLoad, Material, Node, Project, Section,
-                    G_ACC)
+                    TimeHistoryCase, G_ACC)
+from .groundmotion import load_ground_motion
 from .hinge_catalog import MATERIALS, build_command
 
 _EPS = 1e-12
@@ -126,6 +131,33 @@ class PushoverResults:
     def max_hinge_rotation(self, step: PushoverStep) -> float:
         return max((abs(v) for vals in step.hinge_rotations.values() for v in vals),
                    default=0.0)
+
+
+@dataclass
+class TimeHistoryResults:
+    case_name: str = ""
+    ground_motion: str = ""
+    direction: int = 1
+    dt: float = 0.0
+    n_steps: int = 0
+    n_steps_requested: int = 0
+    time: List[float] = field(default_factory=list)
+    node_disp: Dict[int, List[List[float]]] = field(default_factory=dict)
+    node_vel: Dict[int, List[List[float]]] = field(default_factory=dict)
+    node_accel: Dict[int, List[List[float]]] = field(default_factory=dict)
+    peak_disp: float = 0.0
+    peak_vel: float = 0.0
+    peak_accel: float = 0.0
+    log: str = ""
+
+    @property
+    def early_stop(self) -> bool:
+        return self.n_steps < self.n_steps_requested
+
+    def history(self, node: int, kind: str = "disp") -> List[List[float]]:
+        table = {"disp": self.node_disp, "vel": self.node_vel,
+                 "accel": self.node_accel}.get(kind, {})
+        return table.get(int(node), [])
 
 
 # --------------------------------------------------------------------------- #
@@ -681,7 +713,9 @@ def run_static(project: Project, scenario: str) -> StaticResults:
     return res
 
 
-def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverResults:
+def run_pushover(project: Project, config: Optional[dict] = None,
+                 progress: Optional[Callable[[int, int], None]] = None
+                 ) -> PushoverResults:
     """Run a displacement-controlled pushover with lumped plastic hinges.
 
     Beam elements are rebuilt as ``beamWithHinges``; the hinge sections are
@@ -830,6 +864,8 @@ def run_pushover(project: Project, config: Optional[dict] = None) -> PushoverRes
                 f"(control displacement {result.steps[-1].displacement:.3f} mm, "
                 f"OpenSees return code {rc}).")
         record(step_no)
+        if progress is not None:
+            progress(step_no, steps)
 
     result.log = "\n".join(log)
     return result
@@ -880,6 +916,209 @@ def run_modal(project: Project, nmodes: int = 6) -> ModalResults:
 # --------------------------------------------------------------------------- #
 # Tcl export
 # --------------------------------------------------------------------------- #
+def _recorder_table(path: Path, steps: int, width: int) -> np.ndarray:
+    try:
+        data = np.loadtxt(path, ndmin=2)
+    except Exception as exc:
+        raise RuntimeError(f"Could not read recorder {path.name}: {exc}") from exc
+    if data.size == 0:
+        return np.zeros((0, width))
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+    if data.shape[0] < steps:
+        steps = data.shape[0]
+    data = data[:steps]
+    if data.shape[1] != width:
+        raise RuntimeError(
+            f"Recorder {path.name} has {data.shape[1]} columns, expected {width}.")
+    return data
+
+
+def run_time_history(project: Project,
+                     config: Optional[dict] = None,
+                     progress: Optional[Callable[[int, int], None]] = None
+                     ) -> TimeHistoryResults:
+    """Run a uniform-excitation transient analysis.
+
+    The case is stored in ``project.time_history``.  The ground motion is
+    either a generated sine or a file read by :mod:`app.groundmotion`.
+    Recorders write displacement, velocity and acceleration for every node.
+    """
+    errors, _warnings = check_model(project)
+    if errors:
+        raise ValueError("Model check failed:\n• " + "\n• ".join(errors))
+
+    cfg = project.time_history.to_dict()
+    if config:
+        cfg.update(config)
+    case = TimeHistoryCase.from_dict(cfg)
+    log: List[str] = []
+    log += build(project, None)
+    ops.wipeAnalysis()
+
+    # Optional gravity preload, held constant and reset to transient time 0.
+    if case.gravity_case:
+        if (case.gravity_case not in project.cases
+                and case.gravity_case not in project.combos):
+            raise ValueError(f"Gravity case '{case.gravity_case}' does not exist.")
+        _apply_scenario(project, case.gravity_case, log)
+        ops.constraints("Transformation")
+        ops.numberer("RCM")
+        ops.system("BandGen")
+        ops.test("NormDispIncr", 1.0e-6, 50, 0)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        rc = ops.analyze(1)
+        if rc != 0:
+            raise RuntimeError(
+                f"Gravity analysis '{case.gravity_case}' failed "
+                f"(OpenSees return code {rc}).")
+        ops.loadConst("-time", 0.0)
+        log.append(f"Gravity case '{case.gravity_case}' applied and held constant.")
+        ops.wipeAnalysis()
+
+    motion = load_ground_motion(case)
+    values = [v * G_ACC * float(case.scale) for v in motion.values]
+    if not values:
+        raise ValueError("The ground motion has no values.")
+    n_requested = len(values)
+    log.append(
+        f"Time history: {motion.note}; direction {case.direction}; "
+        f"{n_requested} steps at dt={motion.dt:g} s; scale={case.scale:g}.")
+
+    # Path time series and uniform base excitation.  Use high tags so the
+    # gravity preload's Linear time series/pattern tags remain untouched.
+    ops.timeSeries("Path", 1001, "-dt", motion.dt, "-values", *values)
+    ops.pattern("UniformExcitation", 1001, int(case.direction), "-accel", 1001)
+
+    # Rayleigh damping from the first mode.  A model without mass cannot
+    # produce a meaningful time history, so a failed eigen solve is an error.
+    beta_k = None
+    if case.damping_ratio > 0.0:
+        try:
+            ops.constraints("Transformation")
+            ops.numberer("RCM")
+            ops.system("BandGen")
+            ops.test("NormDispIncr", 1.0e-6, 50, 0)
+            ops.algorithm("Linear")
+            ops.integrator("Newmark", 0.5, 0.25)
+            ops.analysis("Transient")
+            eig = ops.eigen("-fullGenLapack", 1)
+            lam = float(eig[0]) if hasattr(eig, "__getitem__") else float(eig)
+            omega = math.sqrt(max(lam, 0.0))
+            if omega <= 0.0:
+                raise RuntimeError("the first eigenvalue is not positive")
+            beta_k = 2.0 * float(case.damping_ratio) / omega
+            log.append(
+                f"Rayleigh damping: zeta={case.damping_ratio:g} on mode "
+                f"{case.damping_mode}, betaK={beta_k:.6g}.")
+        except Exception as exc:
+            raise RuntimeError(
+                "Time-history analysis needs mass for damping/eigen analysis. "
+                "Enable 'Build lumped masses from material densities' in "
+                f"Analysis > Settings and give the material a density ({exc}).")
+        finally:
+            ops.wipeAnalysis()
+    else:
+        log.append("Rayleigh damping: none.")
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="osstudio_th_"))
+    node_ids = sorted(project.nodes)
+    dofs = [1, 2, 3, 4, 5, 6]
+    recorder_paths = {
+        kind: temp_dir / f"nodes_{kind}.out"
+        for kind in ("disp", "vel", "accel")
+    }
+    completed = 0
+    try:
+        for kind, path in recorder_paths.items():
+            ops.recorder("Node", "-file", str(path), "-time",
+                         "-node", *node_ids, "-dof", *dofs, kind)
+
+        ops.constraints("Transformation")
+        ops.numberer("RCM")
+        ops.system("BandGen")
+        ops.test("NormDispIncr", 1.0e-6, 50, 0)
+        ops.algorithm("Newton")
+        ops.integrator("Newmark", 0.5, 0.25)
+        ops.analysis("Transient")
+        if beta_k is not None:
+            ops.rayleigh(0.0, beta_k, 0.0, 0.0)
+
+        for step in range(n_requested):
+            status = int(ops.analyze(1, motion.dt))
+            if status != 0:
+                ops.test("NormDispIncr", 1.0e-5, 1000, 0)
+                ops.algorithm("ModifiedNewton", "-initial")
+                status = int(ops.analyze(1, motion.dt))
+                if status != 0:
+                    ops.algorithm("Broyden", 8)
+                    status = int(ops.analyze(1, motion.dt))
+                if status != 0:
+                    ops.algorithm("NewtonLineSearch", 0.8)
+                    status = int(ops.analyze(1, motion.dt))
+                ops.test("NormDispIncr", 1.0e-6, 50, 0)
+                ops.algorithm("Newton")
+            if status != 0:
+                log.append(
+                    f"Transient stopped at step {step + 1}/{n_requested} "
+                    f"(OpenSees return code {status}).")
+                break
+            completed += 1
+            if progress is not None:
+                progress(completed, n_requested)
+    finally:
+        ops.wipeAnalysis()
+        ops.remove("recorders")
+
+    if completed == 0:
+        raise RuntimeError(
+            "Time-history analysis failed at the first step; no history was recorded.")
+
+    width = 1 + len(node_ids) * len(dofs)
+    tables = {
+        kind: _recorder_table(path, completed, width)
+        for kind, path in recorder_paths.items()
+    }
+    disp = tables["disp"]
+    vel = tables["vel"]
+    accel = tables["accel"]
+    time_values = disp[:, 0].tolist()
+    node_disp = {
+        nid: disp[:, 1 + i * 6:1 + (i + 1) * 6].tolist()
+        for i, nid in enumerate(node_ids)
+    }
+    node_vel = {
+        nid: vel[:, 1 + i * 6:1 + (i + 1) * 6].tolist()
+        for i, nid in enumerate(node_ids)
+    }
+    node_accel = {
+        nid: accel[:, 1 + i * 6:1 + (i + 1) * 6].tolist()
+        for i, nid in enumerate(node_ids)
+    }
+    peak_disp = float(np.max(np.abs(disp[:, 1:]))) if disp.shape[1] > 1 else 0.0
+    peak_vel = float(np.max(np.abs(vel[:, 1:]))) if vel.shape[1] > 1 else 0.0
+    peak_accel = float(np.max(np.abs(accel[:, 1:]))) if accel.shape[1] > 1 else 0.0
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return TimeHistoryResults(
+        case_name=case.name,
+        ground_motion=motion.note,
+        direction=int(case.direction),
+        dt=motion.dt,
+        n_steps=completed,
+        n_steps_requested=n_requested,
+        time=time_values,
+        node_disp=node_disp,
+        node_vel=node_vel,
+        node_accel=node_accel,
+        peak_disp=peak_disp,
+        peak_vel=peak_vel,
+        peak_accel=peak_accel,
+        log="\n".join(log))
+
+
 def export_tcl(project: Project) -> str:
     L: List[str] = []
     A = L.append

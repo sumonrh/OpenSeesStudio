@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
                                QWidget)
 
 from . import dialogs, icons, opsgen, theme
+from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .hinges import AssignHingesDialog, HingeLibraryDialog
 from .hinge_catalog import MATERIALS as HINGE_MATERIALS
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
@@ -24,6 +25,7 @@ from .ribbon import Ribbon
 from .results import ResultsDialog
 from .resultsview import ResultsPanel
 from .tables import TablesDialog
+from .timehistory import TimeHistoryResultsDialog
 from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
 from .viewport import Viewport
 
@@ -87,6 +89,8 @@ class MainWindow(QMainWindow):
         self.static_results: Optional[opsgen.StaticResults] = None
         self.modal_results: Optional[opsgen.ModalResults] = None
         self.pushover_results: Optional[opsgen.PushoverResults] = None
+        self.time_history_results: Optional[opsgen.TimeHistoryResults] = None
+        self.analysis_runner: Optional[AnalysisRunner] = None
         self.static_cache: Dict[str, opsgen.StaticResults] = {}
         self.results_scenario = ""
         self.model_locked = False
@@ -235,6 +239,16 @@ class MainWindow(QMainWindow):
             "Pushover Results", "results", self.show_pushover_results, "",
             "Show the capacity curve and hinge state")
         self.a_pushover_results.setEnabled(False)
+        self.a_ground_motion = self._act(
+            "Ground Motion", "load_show", self.define_time_history, "",
+            "Define the ground motion and time-history case")
+        self.a_time_history = self._act(
+            "Time History", "run_static", self.run_time_history, "",
+            "Run a uniform-excitation time-history analysis")
+        self.a_time_history_results = self._act(
+            "TH Results", "results", self.show_time_history_results, "",
+            "Show the time-history response")
+        self.a_time_history_results.setEnabled(False)
         self.a_clean_view = self._act("Clean View", "clean", self.clean_view, "",
                                       "Hide deformation, loads and labels")
         self.a_extruded = self._act("Extruded", "extruded",
@@ -275,7 +289,7 @@ class MainWindow(QMainWindow):
                              self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
-                             self.a_settings)
+                             self.a_settings, self.a_ground_motion)
 
     def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None,
                 extruded=None, nodes=None) -> None:
@@ -469,6 +483,10 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_check)
         group.add_large(self.a_run)
         group.add_large(self.a_modal)
+        group = page.add_group("Time history")
+        group.add_large(self.a_ground_motion)
+        group.add_large(self.a_time_history)
+        group.add_large(self.a_time_history_results)
         group = page.add_group("Results")
         group.add_large(self.a_results)
         group = page.add_group("Model state")
@@ -491,6 +509,7 @@ class MainWindow(QMainWindow):
         group = page.add_group("Results")
         group.add_large(self.a_results)
         group.add_large(self.a_pushover_results)
+        group.add_large(self.a_time_history_results)
         group = page.add_group("Mode shapes")
         group.add_field("Mode", self.mode_combo)
         group.add_large(self.a_animate)
@@ -1416,12 +1435,14 @@ class MainWindow(QMainWindow):
                       p.settings.get("length_unit", "m"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
-                     "hinge_defs", "hinge_assignments", "settings", "title"):
+                     "hinge_defs", "hinge_assignments", "time_history",
+                     "settings", "title"):
             setattr(p, attr, getattr(other, attr))
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
     def _commit(self, label: str) -> None:
-        if self.static_results or self.modal_results or self.pushover_results:
+        if (self.static_results or self.modal_results or self.pushover_results
+                or self.time_history_results):
             self._clear_results()
         self.history.push(self.project, label)
         self.refresh_all()
@@ -1482,7 +1503,9 @@ class MainWindow(QMainWindow):
         self.static_results = res
         self.modal_results = None
         self.pushover_results = None
+        self.time_history_results = None
         self.a_pushover_results.setEnabled(False)
+        self.a_time_history_results.setEnabled(False)
         self._refresh_mode_combo()
         self.results_scenario = res.scenario
         self.static_cache[res.scenario] = res
@@ -1514,7 +1537,9 @@ class MainWindow(QMainWindow):
         self.modal_results = res
         self.static_results = None
         self.pushover_results = None
+        self.time_history_results = None
         self.a_pushover_results.setEnabled(False)
+        self.a_time_history_results.setEnabled(False)
         mode = int(payload.get("mode", 1))
         self._refresh_mode_combo()
         index = self.mode_combo.findData(mode)
@@ -1627,8 +1652,11 @@ class MainWindow(QMainWindow):
         self.static_results = None
         self.modal_results = None
         self.pushover_results = None
+        self.time_history_results = None
         if hasattr(self, "a_pushover_results"):
             self.a_pushover_results.setEnabled(False)
+        if hasattr(self, "a_time_history_results"):
+            self.a_time_history_results.setEnabled(False)
         self.static_cache.clear()
         self.viewport.clear_results()
         self._refresh_mode_combo()
@@ -2040,6 +2068,34 @@ class MainWindow(QMainWindow):
             self._warn("Create a load case first.")
         return text
 
+    def _run_analysis(self, kind: str, config: dict, title: str, on_finished) -> None:
+        if self.analysis_runner is not None and self.analysis_runner.is_running:
+            self._warn("An analysis is already running.")
+            return
+        runner = AnalysisRunner(self)
+        self.analysis_runner = runner
+        dialog = AnalysisProgressDialog(title, runner, self)
+        runner.failed.connect(
+            lambda msg: self._log(f"✖ {title} failed: {msg.splitlines()[0]}"))
+        runner.cancelled.connect(lambda: self._status(f"{title} cancelled"))
+        self._status(f"Running {title.lower()}…")
+        try:
+            runner.run(self.project, kind, config)
+        except Exception as exc:
+            self.analysis_runner = None
+            QMessageBox.critical(self, title, str(exc))
+            self._log(f"✖ {title} failed: {exc}")
+            return
+        if runner.completed:
+            if runner.result is not None:
+                on_finished(runner.result)
+            self.analysis_runner = None
+            return
+        dialog.exec()
+        if runner.result is not None:
+            on_finished(runner.result)
+        self.analysis_runner = None
+
     def run_static(self) -> None:
         scenario = self._scenario()
         if not scenario:
@@ -2047,20 +2103,17 @@ class MainWindow(QMainWindow):
         if not self.project.elements:
             self._warn("The model has no elements.")
             return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            res = opsgen.run_static(self.project, scenario)
-        except Exception as exc:
-            QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "Analysis failed", str(exc))
-            self._log(f"✖ Static analysis failed: {exc}")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._run_analysis("static", {"scenario": scenario},
+                           "Static analysis", self._static_finished)
+
+    def _static_finished(self, res: opsgen.StaticResults) -> None:
         self.static_results = res
         self.modal_results = None
         self.pushover_results = None
+        self.time_history_results = None
         self.a_pushover_results.setEnabled(False)
+        self.a_time_history_results.setEnabled(False)
+        scenario = res.scenario
         self.results_scenario = scenario
         self.static_cache[scenario] = res
         self.viewport.set_load_scenario(scenario)
@@ -2089,20 +2142,16 @@ class MainWindow(QMainWindow):
             self._warn("The model has no elements.")
             return
         nmodes = int(self.project.settings.get("modal_modes", 6))
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            res = opsgen.run_modal(self.project, nmodes)
-        except Exception as exc:
-            QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "Modal analysis failed", str(exc))
-            self._log(f"✖ Modal analysis failed: {exc}")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._run_analysis("modal", {"nmodes": nmodes},
+                           "Modal analysis", self._modal_finished)
+
+    def _modal_finished(self, res: opsgen.ModalResults) -> None:
         self.modal_results = res
         self.static_results = None
         self.pushover_results = None
+        self.time_history_results = None
         self.a_pushover_results.setEnabled(False)
+        self.a_time_history_results.setEnabled(False)
         self._refresh_mode_combo()
         if self.mode_combo.count():
             self.mode_combo.setCurrentIndex(0)
@@ -2141,8 +2190,6 @@ class MainWindow(QMainWindow):
         settings = dict(self.project.settings.get("pushover", {}))
         settings.update(cfg)
         self.project.settings["pushover"] = settings
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        self._status("Running pushover analysis…")
         used_defs = {self.project.hinge_assignments[e] for e in assigned}
         models = ", ".join(sorted({
             self.project.hinge_defs[t].material for t in used_defs
@@ -2152,16 +2199,10 @@ class MainWindow(QMainWindow):
                   f"lateral '{cfg['lateral_case']}', target "
                   f"{fmt(UNITS.length(cfg['target_displacement']), 3)} "
                   f"{UNITS.length_unit}.")
-        try:
-            res = opsgen.run_pushover(self.project, cfg)
-        except Exception as exc:
-            QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "Pushover failed", str(exc))
-            self._log(f"✖ Pushover analysis failed: {exc}")
-            self._status("Pushover analysis failed")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._run_analysis("pushover", cfg, "Pushover analysis",
+                           self._pushover_finished)
+
+    def _pushover_finished(self, res: opsgen.PushoverResults) -> None:
         self._clear_results()
         self.pushover_results = res
         self.a_pushover_results.setEnabled(True)
@@ -2207,6 +2248,51 @@ class MainWindow(QMainWindow):
                      f"{UNITS.length_unit}, "
                      f"V = {fmt(UNITS.force(step.base_shear), 3)} "
                      f"{UNITS.force_unit}")
+
+    def define_time_history(self) -> None:
+        dlg = dialogs.TimeHistoryDialog(self.project, self)
+        if not dlg.exec():
+            return
+        self.project.time_history = dlg.spec()
+        self._commit("Edited time-history case")
+        case = self.project.time_history
+        source = "sine" if case.source == "sine" else case.path
+        self._log(f"Time-history case '{case.name}' saved ({source}).")
+        self._status("Time-history case saved")
+
+    def run_time_history(self) -> None:
+        if not self.project.elements:
+            self._warn("The model has no elements.")
+            return
+        case = self.project.time_history
+        if case.source == "file" and not case.path:
+            self.define_time_history()
+            case = self.project.time_history
+            if case.source == "file" and not case.path:
+                return
+        self._run_analysis("time_history", {}, "Time-history analysis",
+                           self._time_history_finished)
+
+    def _time_history_finished(self, res: opsgen.TimeHistoryResults) -> None:
+        self._clear_results()
+        self.time_history_results = res
+        self.a_time_history_results.setEnabled(True)
+        self._set_locked(True)
+        self.ribbon.set_current("Results")
+        suffix = " (stopped early)" if res.early_stop else ""
+        self._log(
+            f"✔ Time history '{res.case_name}' complete: {res.n_steps} of "
+            f"{res.n_steps_requested} steps; peak |u| = "
+            f"{fmt(UNITS.length(res.peak_disp), 4)} {UNITS.length_unit}.{suffix}")
+        self._status(f"Time-history complete - {res.n_steps} steps")
+        self.show_time_history_results()
+
+    def show_time_history_results(self) -> None:
+        if self.time_history_results is None:
+            self._warn("Run a time-history analysis first.")
+            return
+        dlg = TimeHistoryResultsDialog(self.project, self.time_history_results, self)
+        dlg.exec()
 
     def _show_results_dialog(self) -> None:
         if not self.static_results and not self.modal_results:
