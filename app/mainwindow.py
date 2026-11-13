@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
 
 from . import dialogs, icons, opsgen, theme
 from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
+from .groundmotion_dialog import GroundMotionCatalogDialog
 from .hinges import AssignHingesDialog, HingeLibraryDialog
 from .hinge_catalog import MATERIALS as HINGE_MATERIALS
 from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
@@ -24,6 +25,7 @@ from .pushover import PushoverResultsDialog
 from .ribbon import Ribbon
 from .results import ResultsDialog
 from .resultsview import ResultsPanel
+from .response_spectrum import ResponseSpectrumDialog, ResponseSpectrumResultsDialog
 from .tables import TablesDialog
 from .timehistory import TimeHistoryResultsDialog
 from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
@@ -90,7 +92,11 @@ class MainWindow(QMainWindow):
         self.modal_results: Optional[opsgen.ModalResults] = None
         self.pushover_results: Optional[opsgen.PushoverResults] = None
         self.time_history_results: Optional[opsgen.TimeHistoryResults] = None
+        self.response_spectrum_results: Optional[opsgen.ResponseSpectrumResults] = None
         self.analysis_runner: Optional[AnalysisRunner] = None
+        self.time_history_dialog = None
+        self.time_history_step_scenario = ""
+        self.response_spectrum_dialog = None
         self.static_cache: Dict[str, opsgen.StaticResults] = {}
         self.results_scenario = ""
         self.model_locked = False
@@ -143,6 +149,8 @@ class MainWindow(QMainWindow):
     def _make_actions(self) -> None:
         self.a_new = self._act("New", "new", self.file_new, "Ctrl+N", "New project")
         self.a_open = self._act("Open", "open", self.file_open, "Ctrl+O", "Open a project")
+        self.a_close = self._act("Close Project", "new", self.file_close, "Ctrl+W",
+                                 "Close the current project and return to Untitled")
         self.a_save = self._act("Save", "save", self.file_save, "Ctrl+S", "Save the project")
         self.a_save_as = self._act("Save As", "save_as", self.file_save_as, "Ctrl+Shift+S")
         self.a_export_tcl = self._act("Export Tcl", "export", self.export_tcl, "",
@@ -240,8 +248,11 @@ class MainWindow(QMainWindow):
             "Show the capacity curve and hinge state")
         self.a_pushover_results.setEnabled(False)
         self.a_ground_motion = self._act(
-            "Ground Motion", "load_show", self.define_time_history, "",
-            "Define the ground motion and time-history case")
+            "TH Case", "settings", self.define_time_history, "",
+            "Define the time-history case and ground-motion source")
+        self.a_gm_catalog = self._act(
+            "GM Catalog", "load_show", self.ground_motion_catalog, "",
+            "Manage the project ground-motion catalog")
         self.a_time_history = self._act(
             "Time History", "run_static", self.run_time_history, "",
             "Run a uniform-excitation time-history analysis")
@@ -249,6 +260,16 @@ class MainWindow(QMainWindow):
             "TH Results", "results", self.show_time_history_results, "",
             "Show the time-history response")
         self.a_time_history_results.setEnabled(False)
+        self.a_spectrum_case = self._act(
+            "RS Case", "settings", self.define_response_spectrum, "",
+            "Define the response spectrum and modal combination")
+        self.a_spectrum = self._act(
+            "Response Spectrum", "run_static", self.run_response_spectrum, "",
+            "Run a response-spectrum analysis")
+        self.a_spectrum_results = self._act(
+            "RS Results", "results", self.show_response_spectrum_results, "",
+            "Show the response-spectrum results")
+        self.a_spectrum_results.setEnabled(False)
         self.a_clean_view = self._act("Clean View", "clean", self.clean_view, "",
                                       "Hide deformation, loads and labels")
         self.a_extruded = self._act("Extruded", "extruded",
@@ -289,7 +310,8 @@ class MainWindow(QMainWindow):
                              self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
-                             self.a_settings, self.a_ground_motion)
+                             self.a_settings, self.a_ground_motion,
+                             self.a_gm_catalog, self.a_spectrum_case)
 
     def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None,
                 extruded=None, nodes=None) -> None:
@@ -385,6 +407,7 @@ class MainWindow(QMainWindow):
         menu = ribbon.app_menu
         menu.addAction(self.a_new)
         menu.addAction(self.a_open)
+        menu.addAction(self.a_close)
         menu.addSeparator()
         menu.addAction(self.a_save)
         menu.addAction(self.a_save_as)
@@ -483,12 +506,22 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_check)
         group.add_large(self.a_run)
         group.add_large(self.a_modal)
-        group = page.add_group("Time history")
-        group.add_large(self.a_ground_motion)
-        group.add_large(self.a_time_history)
-        group.add_large(self.a_time_history_results)
         group = page.add_group("Results")
         group.add_large(self.a_results)
+        group = page.add_group("Model state")
+        group.add_large(self.a_lock)
+
+        page = ribbon.add_tab("Dynamic")
+        group = page.add_group("Ground motions")
+        group.add_large(self.a_gm_catalog)
+        group.add_large(self.a_ground_motion)
+        group = page.add_group("Time history")
+        group.add_large(self.a_time_history)
+        group.add_large(self.a_time_history_results)
+        group = page.add_group("Response spectrum")
+        group.add_large(self.a_spectrum_case)
+        group.add_large(self.a_spectrum)
+        group.add_large(self.a_spectrum_results)
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -510,6 +543,7 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_results)
         group.add_large(self.a_pushover_results)
         group.add_large(self.a_time_history_results)
+        group.add_large(self.a_spectrum_results)
         group = page.add_group("Mode shapes")
         group.add_field("Mode", self.mode_combo)
         group.add_large(self.a_animate)
@@ -1435,14 +1469,14 @@ class MainWindow(QMainWindow):
                       p.settings.get("length_unit", "m"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
-                     "hinge_defs", "hinge_assignments", "time_history",
-                     "settings", "title"):
+                     "hinge_defs", "hinge_assignments", "ground_motions",
+                     "time_history", "response_spectrum", "settings", "title"):
             setattr(p, attr, getattr(other, attr))
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
     def _commit(self, label: str) -> None:
         if (self.static_results or self.modal_results or self.pushover_results
-                or self.time_history_results):
+                or self.time_history_results or self.response_spectrum_results):
             self._clear_results()
         self.history.push(self.project, label)
         self.refresh_all()
@@ -1504,8 +1538,10 @@ class MainWindow(QMainWindow):
         self.modal_results = None
         self.pushover_results = None
         self.time_history_results = None
+        self.response_spectrum_results = None
         self.a_pushover_results.setEnabled(False)
         self.a_time_history_results.setEnabled(False)
+        self.a_spectrum_results.setEnabled(False)
         self._refresh_mode_combo()
         self.results_scenario = res.scenario
         self.static_cache[res.scenario] = res
@@ -1538,8 +1574,10 @@ class MainWindow(QMainWindow):
         self.static_results = None
         self.pushover_results = None
         self.time_history_results = None
+        self.response_spectrum_results = None
         self.a_pushover_results.setEnabled(False)
         self.a_time_history_results.setEnabled(False)
+        self.a_spectrum_results.setEnabled(False)
         mode = int(payload.get("mode", 1))
         self._refresh_mode_combo()
         index = self.mode_combo.findData(mode)
@@ -1587,6 +1625,24 @@ class MainWindow(QMainWindow):
         self.viewport.fit()
         self._set_locked(False)
         self._log(f"Opened {path}")
+
+    def file_close(self) -> None:
+        if QMessageBox.question(
+                self, "Close project",
+                "Close the current project and return to an Untitled model?\n"
+                "Unsaved changes will be lost.") != QMessageBox.Yes:
+            return
+        self.project = default_project()
+        self.history = History(self.project)
+        self._clear_results()
+        self.results_scenario = ""
+        self.viewport.set_project(self.project)
+        self.refresh_all()
+        self.viewport.fit()
+        self._set_locked(False)
+        self._update_title()
+        self._log("Project closed.")
+        self._status("Project closed")
 
     def file_save(self) -> None:
         if not self.project.path:
@@ -1653,10 +1709,24 @@ class MainWindow(QMainWindow):
         self.modal_results = None
         self.pushover_results = None
         self.time_history_results = None
+        self.response_spectrum_results = None
+        if self.time_history_step_scenario:
+            self.static_cache.pop(self.time_history_step_scenario, None)
+            self.time_history_step_scenario = ""
+        if self.time_history_dialog is not None:
+            dialog = self.time_history_dialog
+            self.time_history_dialog = None
+            dialog.close()
+        if self.response_spectrum_dialog is not None:
+            dialog = self.response_spectrum_dialog
+            self.response_spectrum_dialog = None
+            dialog.close()
         if hasattr(self, "a_pushover_results"):
             self.a_pushover_results.setEnabled(False)
         if hasattr(self, "a_time_history_results"):
             self.a_time_history_results.setEnabled(False)
+        if hasattr(self, "a_spectrum_results"):
+            self.a_spectrum_results.setEnabled(False)
         self.static_cache.clear()
         self.viewport.clear_results()
         self._refresh_mode_combo()
@@ -2111,8 +2181,10 @@ class MainWindow(QMainWindow):
         self.modal_results = None
         self.pushover_results = None
         self.time_history_results = None
+        self.response_spectrum_results = None
         self.a_pushover_results.setEnabled(False)
         self.a_time_history_results.setEnabled(False)
+        self.a_spectrum_results.setEnabled(False)
         scenario = res.scenario
         self.results_scenario = scenario
         self.static_cache[scenario] = res
@@ -2150,8 +2222,10 @@ class MainWindow(QMainWindow):
         self.static_results = None
         self.pushover_results = None
         self.time_history_results = None
+        self.response_spectrum_results = None
         self.a_pushover_results.setEnabled(False)
         self.a_time_history_results.setEnabled(False)
+        self.a_spectrum_results.setEnabled(False)
         self._refresh_mode_combo()
         if self.mode_combo.count():
             self.mode_combo.setCurrentIndex(0)
@@ -2291,8 +2365,179 @@ class MainWindow(QMainWindow):
         if self.time_history_results is None:
             self._warn("Run a time-history analysis first.")
             return
-        dlg = TimeHistoryResultsDialog(self.project, self.time_history_results, self)
-        dlg.exec()
+        if self.time_history_dialog is not None:
+            self.time_history_dialog.close()
+            self.time_history_dialog = None
+        dlg = TimeHistoryResultsDialog(self.project, self.time_history_results,
+                                       self)
+        dlg.stepSelected.connect(self._show_time_history_step)
+        dlg.destroyed.connect(self._time_history_dialog_closed)
+        self.time_history_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        self._show_time_history_step(dlg.current_step)
+
+    def _time_history_dialog_closed(self, *_args) -> None:
+        self.time_history_dialog = None
+        if hasattr(self, "results_panel"):
+            self._refresh_results_panel()
+
+    def _show_time_history_step(self, index: int) -> None:
+        results = self.time_history_results
+        if results is None or not results.time:
+            return
+        index = max(0, min(int(index), len(results.time) - 1))
+        displacements = {
+            nid: list(rows[index])
+            for nid, rows in results.node_disp.items()
+            if 0 <= index < len(rows)
+        }
+        element_forces = {
+            eid: list(rows[index])
+            for eid, rows in results.element_forces.items()
+            if 0 <= index < len(rows)
+        }
+        element_kind = {
+            eid: self.project.elements[eid].kind
+            for eid in element_forces if eid in self.project.elements
+        }
+        max_disp = max(
+            (max(abs(v) for v in row) for row in displacements.values()),
+            default=0.0)
+        scenario = f"{results.case_name} step {index + 1}"
+        if (self.time_history_step_scenario
+                and self.time_history_step_scenario != scenario):
+            self.static_cache.pop(self.time_history_step_scenario, None)
+        self.time_history_step_scenario = scenario
+        res = opsgen.StaticResults(
+            scenario=scenario,
+            displacements=displacements,
+            element_forces=element_forces,
+            element_kind=element_kind,
+            max_disp=max_disp,
+            log=results.log)
+        self.static_cache[scenario] = res
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_scenarios([scenario])
+            self.results_panel.set_current_scenario(scenario)
+        self.viewport.set_load_scenario(scenario)
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
+        self.viewport.set_static_results(res)
+        self.viewport.show_deformed = True
+        self.a_deformed.blockSignals(True)
+        self.a_deformed.setChecked(True)
+        self.a_deformed.blockSignals(False)
+        self._apply_scale()
+        if self.viewport.show_diagrams and hasattr(self, "results_panel"):
+            comps = self.results_panel.components()
+            if comps:
+                self.viewport.set_diagrams(
+                    res, scenario, comps,
+                    self.results_panel.diagram_scale_value(),
+                    self.results_panel.diagram_show_values(),
+                    self.results_panel.diagram_has_fill())
+        self.viewport.update()
+        self._status(
+            f"Time history step {index + 1}/{len(results.time)}: "
+            f"t = {results.time[index]:.4g} s, "
+            f"max |u| = {fmt(UNITS.length(max_disp), 4)} "
+            f"{UNITS.length_unit}")
+
+    def ground_motion_catalog(self) -> None:
+        dlg = GroundMotionCatalogDialog(self.project, self)
+        if not dlg.exec():
+            return
+        self.project.ground_motions = dlg.records
+        self._commit("Edited ground-motion catalog")
+        self._log(f"Ground-motion catalog: "
+                  f"{len(self.project.ground_motions)} record(s).")
+
+    def define_response_spectrum(self) -> None:
+        dlg = ResponseSpectrumDialog(self.project, self)
+        if not dlg.exec():
+            return
+        self.project.response_spectrum = dlg.spec()
+        self._commit("Edited response-spectrum case")
+        case = self.project.response_spectrum
+        self._log(f"Response-spectrum case '{case.name}' saved: "
+                  f"{len(case.periods)} points, {case.combination}.")
+
+    def run_response_spectrum(self) -> None:
+        if not self.project.elements:
+            self._warn("The model has no elements.")
+            return
+        self._run_analysis("response_spectrum", {},
+                           "Response-spectrum analysis",
+                           self._response_spectrum_finished)
+
+    def _response_spectrum_finished(self,
+                                    res: opsgen.ResponseSpectrumResults) -> None:
+        self._clear_results()
+        self.response_spectrum_results = res
+        self.a_spectrum_results.setEnabled(True)
+        self._set_locked(True)
+        self.ribbon.set_current("Results")
+        self._show_response_spectrum_model()
+        self._log(
+            f"✔ Response spectrum '{res.case_name}' complete: {res.n_modes} "
+            f"modes, peak |u| = {fmt(UNITS.length(res.peak_disp), 4)} "
+            f"{UNITS.length_unit}.")
+        self._status(f"Response spectrum complete - {res.n_modes} modes")
+        self.show_response_spectrum_results()
+
+    def _show_response_spectrum_model(self) -> None:
+        results = self.response_spectrum_results
+        if results is None:
+            return
+        static = results.static_at()
+        self.static_cache[static.scenario] = static
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_scenarios([static.scenario])
+            self.results_panel.set_current_scenario(static.scenario)
+        self.viewport.set_load_scenario(static.scenario)
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
+        self.viewport.set_static_results(static)
+        self.viewport.show_deformed = True
+        self.a_deformed.blockSignals(True)
+        self.a_deformed.setChecked(True)
+        self.a_deformed.blockSignals(False)
+        self._apply_scale()
+        if self.viewport.show_diagrams and hasattr(self, "results_panel"):
+            comps = self.results_panel.components()
+            if comps:
+                self.viewport.set_diagrams(
+                    static, static.scenario, comps,
+                    self.results_panel.diagram_scale_value(),
+                    self.results_panel.diagram_show_values(),
+                    self.results_panel.diagram_has_fill())
+        self.viewport.update()
+
+    def show_response_spectrum_results(self) -> None:
+        if self.response_spectrum_results is None:
+            self._warn("Run a response-spectrum analysis first.")
+            return
+        if self.response_spectrum_dialog is not None:
+            self.response_spectrum_dialog.close()
+            self.response_spectrum_dialog = None
+        dlg = ResponseSpectrumResultsDialog(
+            self.project, self.response_spectrum_results, self)
+        dlg.showDeformed.connect(self._show_response_spectrum_model)
+        dlg.destroyed.connect(self._response_spectrum_dialog_closed)
+        self.response_spectrum_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        self._show_response_spectrum_model()
+
+    def _response_spectrum_dialog_closed(self, *_args) -> None:
+        self.response_spectrum_dialog = None
+        if hasattr(self, "results_panel"):
+            self._refresh_results_panel()
 
     def _show_results_dialog(self) -> None:
         if not self.static_results and not self.modal_results:

@@ -11,8 +11,8 @@ from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
 from app.analysis_runner import AnalysisRunner
-from app.model import (Element, Node, NodalLoad, Project, TimeHistoryCase,
-                       default_project)
+from app.model import (Element, Node, NodalLoad, Project, ResponseSpectrumCase,
+                       TimeHistoryCase, default_project)
 
 app = QApplication.instance() or QApplication([])
 
@@ -79,6 +79,22 @@ def main():
         print("PASS time-history child run:", result.n_steps, result.peak_disp)
         if result.n_steps != 20 or result.peak_disp <= 0.0:
             failures.append("time-history result")
+
+    p = base_project()
+    p.response_spectrum = ResponseSpectrumCase(
+        direction=3, n_modes=2, periods=[0.0, 0.2, 0.5, 1.0],
+        accelerations=[0.4, 0.8, 0.6, 0.3])
+    outcome = run_case(p, "response_spectrum", {})
+    result = outcome.get("result")
+    if result is None:
+        failures.append("response-spectrum child run")
+        print("FAIL response-spectrum child run:",
+              outcome.get("error", "timeout"))
+    else:
+        print("PASS response-spectrum child run:",
+              result.n_modes, result.peak_disp)
+        if result.n_modes < 1 or result.peak_disp <= 0.0:
+            failures.append("response-spectrum result")
 
     if failures:
         print("FAILURES:", failures)

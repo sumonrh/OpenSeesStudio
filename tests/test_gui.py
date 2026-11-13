@@ -3,6 +3,7 @@
 import os
 import sys
 import tempfile
+import math
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["OPENSEES_STUDIO_IN_PROCESS"] = "1"
@@ -215,13 +216,14 @@ check("Shift+left orbits", abs(vp.camera.yaw - yaw2) > 1e-4,
 print("== ribbon ==")
 titles = [win.ribbon.tabs.tabText(i) for i in range(win.ribbon.tabs.count())]
 check("ribbon tabs", titles == ["View", "Structure", "Node/Element", "Properties",
-                                "Boundary", "Load", "Analysis", "Pushover",
-                                "Results", "Tools"],
+                                "Boundary", "Load", "Analysis", "Dynamic",
+                                "Pushover", "Results", "Tools"],
       f"({titles})")
 check("default ribbon tab", win.ribbon.current_title() == "Structure",
       f"({win.ribbon.current_title()})")
 check("ribbon group captions", len(win.ribbon.findChildren(QLabel, "ribbonCaption")) >= 5)
 check("ribbon app menu", len(win.ribbon.app_menu.actions()) >= 8)
+check("close project in app menu", win.a_close in win.ribbon.app_menu.actions())
 check("ribbon actions wired",
       any(b.defaultAction() is win.a_nodes
           for b in win.ribbon.findChildren(QToolButton)))
@@ -255,7 +257,7 @@ win.a_nodes_visible.trigger()
 check("node visibility toggle hides nodes", win.viewport.show_nodes != nodes_before)
 win.a_nodes_visible.trigger()
 check("node visibility toggle restores nodes", win.viewport.show_nodes == nodes_before)
-results_page = win.ribbon._pages[8]
+results_page = win.ribbon._pages[9]
 result_actions = [b.defaultAction() for b in results_page.findChildren(QToolButton)]
 check("results tab has diagrams and deformation",
       win.a_beam_diagram in result_actions and win.a_deformation in result_actions)
@@ -263,7 +265,7 @@ check("results tab has mode dropdown and animate",
       win.a_animate in result_actions and not win.mode_combo.isHidden())
 check("nodes action not repeated in results",
       win.a_nodes_visible not in result_actions)
-pushover_page = win.ribbon._pages[7]
+pushover_page = win.ribbon._pages[8]
 pushover_actions = [b.defaultAction() for b in pushover_page.findChildren(QToolButton)]
 check("pushover tab has run and hinge actions",
       win.a_pushover in pushover_actions
@@ -273,6 +275,12 @@ check("nodes action not repeated in pushover",
       win.a_nodes_visible not in pushover_actions)
 check("pushover results not repeated in pushover tab",
       win.a_pushover_results not in pushover_actions)
+dynamic_page = win.ribbon._pages[7]
+dynamic_actions = [b.defaultAction() for b in dynamic_page.findChildren(QToolButton)]
+check("dynamic tab has ground motion, time-history and spectrum actions",
+      win.a_gm_catalog in dynamic_actions
+      and win.a_time_history in dynamic_actions
+      and win.a_spectrum in dynamic_actions)
 check("properties panel action", win.a_props_visible.isChecked())
 win.a_props_visible.trigger()
 check("properties panel collapses", win.props_dock.isHidden())
@@ -825,10 +833,19 @@ fake = TimeHistoryResults(
               2: [[0.0] * 6 for _ in range(rows)]},
     node_accel={1: [[0.0] * 6 for _ in range(rows)],
                 2: [[0.0] * 6 for _ in range(rows)]},
+    element_forces={1: [[0.0, 0.0, 1.0, 0.0, 2.0, 0.0,
+                         0.0, 0.0, -1.0, 0.0, 3.0, 0.0]
+                        for _ in range(rows)]},
     peak_disp=0.19, peak_vel=0.0, peak_accel=0.0)
 td = TimeHistoryResultsDialog(thp, fake)
 check("time-history results dialog selects peak node",
       td.node.currentData() == 2 and td.plot.results is not None)
+check("time-history force table present", td.forces.rowCount() == 1)
+seen = []
+td.stepSelected.connect(seen.append)
+td.slider.setValue(3)
+check("time-history step slider emits",
+      td.current_step == 3 and seen == [3])
 td.close()
 win.time_history_results = fake
 win.a_time_history_results.setEnabled(True)
@@ -836,6 +853,56 @@ win._clear_results()
 check("time-history results clear",
       win.time_history_results is None
       and not win.a_time_history_results.isEnabled())
+
+print("== ground-motion catalog and response spectrum ==")
+from app.groundmotion_dialog import (GroundMotionCatalogDialog,
+                                     GroundMotionRecordDialog)
+from app.response_spectrum import (ResponseSpectrumDialog,
+                                   ResponseSpectrumResultsDialog)
+from app.model import GroundMotionRecord, ResponseSpectrumCase
+from app.opsgen import ResponseSpectrumResults
+
+gm_dir = tempfile.mkdtemp(prefix="osstudio_gm_gui_")
+gm_path = os.path.join(gm_dir, "demo.txt")
+with open(gm_path, "w", encoding="utf-8") as fh:
+    for i in range(60):
+        fh.write(f"{i * 0.01:.2f} {0.1 * math.sin(i / 5.0):.6f}\n")
+catalog = Project()
+catalog.ground_motions[1] = GroundMotionRecord(
+    1, "Demo record", gm_path, "two_column", 0.01, 60, 1.0, "test")
+cd = GroundMotionCatalogDialog(catalog)
+check("ground-motion catalog lists records", cd.table.rowCount() == 1)
+check("ground-motion catalog preview", len(cd.preview.values) == 60)
+cd.close()
+rd = GroundMotionRecordDialog(catalog, catalog.ground_motions[1])
+check("ground-motion record dialog", rd.name.text() == "Demo record"
+      and rd.format.currentData() == "two_column")
+rd.close()
+rs_project = Project()
+rs_project.ground_motions = dict(catalog.ground_motions)
+sd = ResponseSpectrumDialog(rs_project)
+check("response-spectrum dialog rows", sd.table.rowCount() >= 2)
+sd.accept()
+rs_spec = sd.spec()
+check("response-spectrum case spec",
+      len(rs_spec.periods) >= 2 and rs_spec.combination in ("SRSS", "CQC"))
+check("response-spectrum actions",
+      hasattr(win, "a_spectrum_case") and hasattr(win, "a_spectrum")
+      and hasattr(win, "a_spectrum_results")
+      and not win.a_spectrum_results.isEnabled())
+rs_fake = ResponseSpectrumResults(
+    case_name="RS test", direction=1, damping_ratio=0.05,
+    combination="SRSS", n_modes=2,
+    periods=[0.0, 0.5, 1.0], accelerations=[0.4, 0.8, 0.4],
+    modal_periods=[0.2, 0.5], modal_mass_ratios=[80.0, 15.0],
+    modal_cumulative_ratios=[80.0, 95.0],
+    node_disp={1: [0.0] * 6, 2: [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]},
+    element_forces={1: [0.0] * 12}, element_kind={1: "beam"},
+    peak_disp=0.1)
+rsd = ResponseSpectrumResultsDialog(rs_project, rs_fake)
+check("response-spectrum results dialog",
+      rsd.table.rowCount() == 2 and rsd.plot.results is not None)
+rsd.close()
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen

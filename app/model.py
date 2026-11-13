@@ -408,13 +408,45 @@ PUSHOVER_DEFAULTS = {
 
 
 @dataclass
+class GroundMotionRecord:
+    """A ground-motion file in the project catalog."""
+
+    tag: int = 0
+    name: str = "Record"
+    path: str = ""
+    format: str = "auto"             # auto | at2 | two_column | single_column
+    dt: float = 0.01
+    npts: int = 0
+    scale: float = 1.0
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+    @staticmethod
+    def from_dict(d: dict) -> "GroundMotionRecord":
+        rec = GroundMotionRecord()
+        for key, value in (d or {}).items():
+            if not hasattr(rec, key):
+                continue
+            if key in ("tag", "npts"):
+                setattr(rec, key, int(value))
+            elif key in ("name", "path", "format", "note"):
+                setattr(rec, key, str(value))
+            else:
+                setattr(rec, key, _f(value))
+        return rec
+
+
+@dataclass
 class TimeHistoryCase:
     """Settings for a uniform-excitation time-history analysis."""
 
     name: str = "TH1"
-    source: str = "sine"             # sine | file
+    source: str = "sine"             # sine | file | catalog
     path: str = ""
     format: str = "auto"             # auto | at2 | two_column | single_column
+    record: int = 0                  # catalog record tag when source = catalog
     dt: float = 0.01                 # s
     n_steps: int = 1000              # 0 = use the full record
     direction: int = 1               # 1=X, 2=Y, 3=Z
@@ -434,11 +466,61 @@ class TimeHistoryCase:
         for key, value in (d or {}).items():
             if not hasattr(case, key):
                 continue
-            if key in ("n_steps", "direction", "damping_mode"):
+            if key in ("n_steps", "direction", "damping_mode", "record"):
                 setattr(case, key, int(value))
             elif key == "name" or key in ("source", "path", "format",
                                           "gravity_case"):
                 setattr(case, key, str(value))
+            else:
+                setattr(case, key, _f(value))
+        return case
+
+
+DEFAULT_SPECTRUM_PERIODS = [0.0, 0.1, 0.3, 0.6, 1.0, 2.0, 3.0, 4.0]
+DEFAULT_SPECTRUM_SA = [0.40, 0.80, 0.80, 0.80, 0.48, 0.24, 0.16, 0.12]
+
+
+@dataclass
+class ResponseSpectrumCase:
+    """A user-defined acceleration response spectrum case."""
+
+    name: str = "RS1"
+    direction: int = 1               # 1=X, 2=Y, 3=Z
+    damping_ratio: float = 0.05
+    combination: str = "SRSS"        # SRSS | CQC
+    n_modes: int = 12
+    scale: float = 1.0
+    record: int = 0                  # optional catalog record used to generate
+    periods: List[float] = field(
+        default_factory=lambda: list(DEFAULT_SPECTRUM_PERIODS))
+    accelerations: List[float] = field(
+        default_factory=lambda: list(DEFAULT_SPECTRUM_SA))
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "direction": self.direction,
+            "damping_ratio": self.damping_ratio,
+            "combination": self.combination,
+            "n_modes": self.n_modes,
+            "scale": self.scale,
+            "record": self.record,
+            "periods": list(self.periods),
+            "accelerations": list(self.accelerations),
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "ResponseSpectrumCase":
+        case = ResponseSpectrumCase()
+        for key, value in (d or {}).items():
+            if not hasattr(case, key):
+                continue
+            if key in ("direction", "n_modes", "record"):
+                setattr(case, key, int(value))
+            elif key in ("name", "combination"):
+                setattr(case, key, str(value))
+            elif key in ("periods", "accelerations"):
+                setattr(case, key, [_f(v) for v in value])
             else:
                 setattr(case, key, _f(value))
         return case
@@ -549,7 +631,9 @@ class Project:
         self.combos: Dict[str, LoadCombination] = {}
         self.hinge_defs: Dict[int, HingeDefinition] = {}
         self.hinge_assignments: Dict[int, int] = {}
+        self.ground_motions: Dict[int, GroundMotionRecord] = {}
         self.time_history: TimeHistoryCase = TimeHistoryCase()
+        self.response_spectrum: ResponseSpectrumCase = ResponseSpectrumCase()
         self.settings: dict = dict(DEFAULT_SETTINGS)
         self.title: str = "Untitled"
         self.path: str = ""
@@ -573,6 +657,9 @@ class Project:
 
     def next_hinge(self) -> int:
         return self._next(self.hinge_defs.keys())
+
+    def next_ground_motion(self) -> int:
+        return self._next(self.ground_motions.keys())
 
     def next_load(self) -> int:
         return max([l.tag for l in self.nodal_loads] + [l.tag for l in self.elem_loads] + [0]) + 1
@@ -717,7 +804,9 @@ class Project:
             "hinge_assignments": [
                 {"element": element, "hinge": hinge}
                 for element, hinge in self.hinge_assignments.items()],
+            "ground_motions": [g.to_dict() for g in self.ground_motions.values()],
             "time_history": self.time_history.to_dict(),
+            "response_spectrum": self.response_spectrum.to_dict(),
             "settings": self.settings,
         }
 
@@ -745,6 +834,14 @@ class Project:
             if hinge in p.hinge_defs:
                 p.hinge_assignments[element] = hinge
         p.time_history = TimeHistoryCase.from_dict(d.get("time_history", {}))
+        p.ground_motions = {
+            g.tag: g for g in (
+                GroundMotionRecord.from_dict(x)
+                for x in d.get("ground_motions", []))
+            if g.tag > 0
+        }
+        p.response_spectrum = ResponseSpectrumCase.from_dict(
+            d.get("response_spectrum", {}))
         legacy = d.get("hinges", [])
         if legacy and not p.hinge_defs:
             grouped = {}

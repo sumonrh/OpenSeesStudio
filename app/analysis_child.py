@@ -54,6 +54,9 @@ def main(argv=None) -> int:
         elif kind == "time_history":
             results = opsgen.run_time_history(project, config,
                                               progress=_progress)
+        elif kind == "response_spectrum":
+            results = opsgen.run_response_spectrum(project, config,
+                                                   progress=_progress)
         else:
             raise ValueError(f"Unknown analysis kind: {kind}")
 

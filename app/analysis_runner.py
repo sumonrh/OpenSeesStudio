@@ -87,9 +87,30 @@ def _time_history_result(d: dict) -> opsgen.TimeHistoryResults:
         node_disp=_int_keyed(d.get("node_disp")),
         node_vel=_int_keyed(d.get("node_vel")),
         node_accel=_int_keyed(d.get("node_accel")),
+        element_forces=_int_keyed(d.get("element_forces")),
         peak_disp=float(d.get("peak_disp", 0.0)),
         peak_vel=float(d.get("peak_vel", 0.0)),
         peak_accel=float(d.get("peak_accel", 0.0)),
+        log=str(d.get("log", "")))
+
+
+def _response_spectrum_result(d: dict) -> opsgen.ResponseSpectrumResults:
+    return opsgen.ResponseSpectrumResults(
+        case_name=str(d.get("case_name", "")),
+        direction=int(d.get("direction", 1)),
+        damping_ratio=float(d.get("damping_ratio", 0.05)),
+        combination=str(d.get("combination", "SRSS")),
+        n_modes=int(d.get("n_modes", 0)),
+        periods=[float(v) for v in d.get("periods", [])],
+        accelerations=[float(v) for v in d.get("accelerations", [])],
+        modal_periods=[float(v) for v in d.get("modal_periods", [])],
+        modal_mass_ratios=[float(v) for v in d.get("modal_mass_ratios", [])],
+        modal_cumulative_ratios=[float(v)
+                                 for v in d.get("modal_cumulative_ratios", [])],
+        node_disp=_int_keyed(d.get("node_disp")),
+        element_forces=_int_keyed(d.get("element_forces")),
+        element_kind=_int_keyed(d.get("element_kind")),
+        peak_disp=float(d.get("peak_disp", 0.0)),
         log=str(d.get("log", "")))
 
 
@@ -98,6 +119,7 @@ _RESULT_BUILDERS = {
     "modal": _modal_result,
     "pushover": _pushover_result,
     "time_history": _time_history_result,
+    "response_spectrum": _response_spectrum_result,
 }
 
 
@@ -212,6 +234,9 @@ class AnalysisRunner(QObject):
             elif kind == "time_history":
                 result = opsgen.run_time_history(project, config,
                                                  progress=self._progress)
+            elif kind == "response_spectrum":
+                result = opsgen.run_response_spectrum(project, config,
+                                                      progress=self._progress)
             else:
                 raise ValueError(f"Unknown analysis kind: {kind}")
             self._result = result

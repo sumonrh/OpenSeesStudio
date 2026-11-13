@@ -96,10 +96,17 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 **Analysis and results**
 - Static analysis (`LoadControl`, `BandGen`, RCM, Linear).
 - Modal analysis (eigenvalues, periods, frequencies, animated mode shapes).
-- **Time History** group in the **Analysis** tab: uniform base excitation from a
-  generated sine or a PEER AT2 / two-column / single-column record, optional
-  gravity preload, Rayleigh damping from the first mode, and a node/DOF
-  displacement, velocity or acceleration plot with CSV export.
+- **Dynamic** ribbon tab: manage a project **ground-motion catalog** (import,
+  edit, remove, preview), define a catalog-backed or file-backed time-history
+  case (sine or PEER AT2 / two-column / single-column), optional gravity preload,
+  and Rayleigh damping from the first mode.
+- **Time-history results**: node/DOF displacement, velocity or acceleration plot,
+  CSV export, and a step slider that updates the deformed shape, beam diagrams
+  and an element end-force table at every step.
+- **Response spectrum**: a user-defined period/Sa table or a 5%-damped spectrum
+  generated from a catalog record, with SRSS/CQC modal combination, a spectrum
+  plot and modal mass-ratio table.
+- **File > Close Project** returns to an Untitled model without quitting the app.
 - Analyses run in a **separate OpenSees process** with progress and Cancel, so a
   solver failure does not take down the GUI.
 - **Mode shapes** are available from a dropdown in the **Results** ribbon tab;

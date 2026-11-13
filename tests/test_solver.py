@@ -8,7 +8,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.model import (Project, Element, Node, NodalLoad, LoadCase, Section,
-                       HingeDefinition, TimeHistoryCase, default_project)
+                       HingeDefinition, TimeHistoryCase, GroundMotionRecord,
+                       ResponseSpectrumCase, default_project)
 from app import opsgen
 from app import groundmotion
 
@@ -346,6 +347,37 @@ check("time-history peak acceleration positive",
 cloned = Project.from_dict(p.to_dict())
 check("time-history case persists", cloned.time_history.n_steps, 100, 0)
 check("time-history source persists", 1 if cloned.time_history.source == "sine" else 0, 1, 0)
+
+print("== ground-motion catalog and response spectrum ==")
+p.ground_motions[1] = GroundMotionRecord(
+    1, "Two-column demo", str(two_col), "two_column", 0.01, 3, 1.0, "test")
+catalog_case = TimeHistoryCase(source="catalog", record=1, n_steps=3,
+                               direction=1, damping_ratio=0.05)
+p.time_history = catalog_case
+th_catalog = opsgen.run_time_history(p)
+check("catalog time-history steps", th_catalog.n_steps, 3, 0)
+check("catalog time-history peak positive",
+      1 if th_catalog.peak_disp > 0.0 else 0, 1, 0)
+sa = groundmotion.spectrum_from_record(
+    p.ground_motions[1], [0.0, 0.2, 0.5, 1.0], 0.05)
+check("record spectrum point count", len(sa), 4, 0)
+check("record spectrum non-negative",
+      1 if all(v >= 0.0 and math.isfinite(v) for v in sa) else 0, 1, 0)
+p.response_spectrum = ResponseSpectrumCase(
+    name="RS test", direction=1, damping_ratio=0.05, combination="SRSS",
+    n_modes=2, periods=[0.0, 0.2, 0.5, 1.0],
+    accelerations=[0.40, 0.80, 0.60, 0.30])
+rs = opsgen.run_response_spectrum(p)
+check("response-spectrum modes", rs.n_modes, 2, 0)
+check("response-spectrum peak positive",
+      1 if rs.peak_disp > 0.0 else 0, 1, 0)
+check("response-spectrum node DOFs", len(rs.node_disp[2]), 6, 0)
+check("response-spectrum element forces", len(rs.element_forces[1]), 12, 0)
+cloned_rs = Project.from_dict(p.to_dict())
+check("ground-motion catalog persists",
+      1 if 1 in cloned_rs.ground_motions else 0, 1, 0)
+check("response-spectrum case persists",
+      len(cloned_rs.response_spectrum.periods), 4, 0)
 
 print()
 if FAILS:

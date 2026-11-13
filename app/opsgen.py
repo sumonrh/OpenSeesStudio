@@ -17,7 +17,7 @@ import numpy as np
 import openseespy.opensees as ops
 
 from .model import (Element, ElementLoad, Material, Node, Project, Section,
-                    TimeHistoryCase, G_ACC)
+                    ResponseSpectrumCase, TimeHistoryCase, G_ACC)
 from .groundmotion import load_ground_motion
 from .hinge_catalog import MATERIALS, build_command
 
@@ -145,6 +145,7 @@ class TimeHistoryResults:
     node_disp: Dict[int, List[List[float]]] = field(default_factory=dict)
     node_vel: Dict[int, List[List[float]]] = field(default_factory=dict)
     node_accel: Dict[int, List[List[float]]] = field(default_factory=dict)
+    element_forces: Dict[int, List[List[float]]] = field(default_factory=dict)
     peak_disp: float = 0.0
     peak_vel: float = 0.0
     peak_accel: float = 0.0
@@ -158,6 +159,39 @@ class TimeHistoryResults:
         table = {"disp": self.node_disp, "vel": self.node_vel,
                  "accel": self.node_accel}.get(kind, {})
         return table.get(int(node), [])
+
+    def element_history(self, element: int) -> List[List[float]]:
+        return self.element_forces.get(int(element), [])
+
+
+@dataclass
+class ResponseSpectrumResults:
+    case_name: str = ""
+    direction: int = 1
+    damping_ratio: float = 0.05
+    combination: str = "SRSS"
+    n_modes: int = 0
+    periods: List[float] = field(default_factory=list)
+    accelerations: List[float] = field(default_factory=list)
+    modal_periods: List[float] = field(default_factory=list)
+    modal_mass_ratios: List[float] = field(default_factory=list)
+    modal_cumulative_ratios: List[float] = field(default_factory=list)
+    node_disp: Dict[int, List[float]] = field(default_factory=dict)
+    element_forces: Dict[int, List[float]] = field(default_factory=dict)
+    element_kind: Dict[int, str] = field(default_factory=dict)
+    peak_disp: float = 0.0
+    log: str = ""
+
+    def static_at(self) -> StaticResults:
+        return StaticResults(
+            scenario=f"Response spectrum {self.case_name}",
+            displacements={tag: list(values)
+                           for tag, values in self.node_disp.items()},
+            element_forces={tag: list(values)
+                            for tag, values in self.element_forces.items()},
+            element_kind=dict(self.element_kind),
+            max_disp=self.peak_disp,
+            log=self.log)
 
 
 # --------------------------------------------------------------------------- #
@@ -978,7 +1012,7 @@ def run_time_history(project: Project,
         log.append(f"Gravity case '{case.gravity_case}' applied and held constant.")
         ops.wipeAnalysis()
 
-    motion = load_ground_motion(case)
+    motion = load_ground_motion(case, project.ground_motions)
     values = [v * G_ACC * float(case.scale) for v in motion.values]
     if not values:
         raise ValueError("The ground motion has no values.")
@@ -1030,11 +1064,25 @@ def run_time_history(project: Project,
         kind: temp_dir / f"nodes_{kind}.out"
         for kind in ("disp", "vel", "accel")
     }
+    force_ids: List[int] = []
+    force_widths: Dict[int, int] = {}
+    for eid in sorted(project.elements):
+        try:
+            raw = ops.eleResponse(eid, "localForce")
+        except Exception:
+            raw = []
+        if raw:
+            force_ids.append(eid)
+            force_widths[eid] = len(raw)
+    element_path = temp_dir / "elements_localForce.out" if force_ids else None
     completed = 0
     try:
         for kind, path in recorder_paths.items():
             ops.recorder("Node", "-file", str(path), "-time",
                          "-node", *node_ids, "-dof", *dofs, kind)
+        if element_path is not None:
+            ops.recorder("Element", "-file", str(element_path), "-time",
+                         "-ele", *force_ids, "localForce")
 
         ops.constraints("Transformation")
         ops.numberer("RCM")
@@ -1097,6 +1145,16 @@ def run_time_history(project: Project,
         nid: accel[:, 1 + i * 6:1 + (i + 1) * 6].tolist()
         for i, nid in enumerate(node_ids)
     }
+    element_forces: Dict[int, List[List[float]]] = {}
+    if element_path is not None:
+        elem_width = 1 + sum(force_widths.values())
+        elem_data = _recorder_table(element_path, completed, elem_width)
+        start = 1
+        for eid in force_ids:
+            width_i = force_widths[eid]
+            element_forces[eid] = elem_data[
+                :, start:start + width_i].tolist()
+            start += width_i
     peak_disp = float(np.max(np.abs(disp[:, 1:]))) if disp.shape[1] > 1 else 0.0
     peak_vel = float(np.max(np.abs(vel[:, 1:]))) if vel.shape[1] > 1 else 0.0
     peak_accel = float(np.max(np.abs(accel[:, 1:]))) if accel.shape[1] > 1 else 0.0
@@ -1113,9 +1171,177 @@ def run_time_history(project: Project,
         node_disp=node_disp,
         node_vel=node_vel,
         node_accel=node_accel,
+        element_forces=element_forces,
         peak_disp=peak_disp,
         peak_vel=peak_vel,
         peak_accel=peak_accel,
+        log="\n".join(log))
+
+
+def _response_spectrum_cqc(ti: float, tj: float, damping: float) -> float:
+    if ti <= 0.0 or tj <= 0.0:
+        return 0.0
+    if abs(ti - tj) <= 1.0e-9:
+        return 1.0
+    r = tj / ti
+    return (8.0 * damping * damping * (1.0 + r) * r ** 1.5
+            / ((1.0 - r * r) ** 2
+               + 4.0 * damping * damping * r * (1.0 + r) ** 2))
+
+
+def run_response_spectrum(project: Project,
+                          config: Optional[dict] = None,
+                          progress: Optional[Callable[[int, int], None]] = None
+                          ) -> ResponseSpectrumResults:
+    """Run a response-spectrum analysis and combine the modal responses.
+
+    OpenSees computes the modal displacements mode by mode.  This function
+    records the modal node displacements and element local forces, then
+    applies SRSS or CQC combination with a sign taken from the dominant
+    modal contributor.
+    """
+    errors, _warnings = check_model(project)
+    if errors:
+        raise ValueError("Model check failed:\n• " + "\n• ".join(errors))
+
+    cfg = project.response_spectrum.to_dict()
+    if config:
+        cfg.update(config)
+    case = ResponseSpectrumCase.from_dict(cfg)
+    if len(case.periods) != len(case.accelerations):
+        raise ValueError("The spectrum needs one Sa value per period.")
+    if len(case.periods) < 2:
+        raise ValueError("The spectrum needs at least two (period, Sa) points.")
+    pairs = sorted(zip(case.periods, case.accelerations))
+    periods = [float(p) for p, _ in pairs]
+    accelerations = [float(a) for _, a in pairs]
+    if periods[0] < 0.0 or any(p <= periods[0] for p in periods[1:]):
+        raise ValueError("Spectrum periods must be non-negative and strictly increasing.")
+    if any(a < 0.0 for a in accelerations):
+        raise ValueError("Spectral accelerations must be non-negative.")
+    if case.combination not in ("SRSS", "CQC"):
+        raise ValueError("Combination must be SRSS or CQC.")
+
+    log: List[str] = []
+    log += build(project, None)
+    ops.wipeAnalysis()
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("BandGen")
+    ops.test("NormDispIncr", 1.0e-8, 50, 0)
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+
+    free = 6 * len(project.nodes) - sum(
+        sum(1 for b in node.support if b) for node in project.nodes.values())
+    n_modes = max(1, min(int(case.n_modes), max(1, free - 1)))
+    log.append(f"Response spectrum: {len(periods)} spectrum points, "
+               f"{n_modes} modes, direction {case.direction}, "
+               f"{case.combination} combination.")
+    try:
+        eig = ops.eigen("-fullGenLapack", n_modes)
+    except Exception:
+        eig = ops.eigen(n_modes)
+    if not eig:
+        raise RuntimeError("No eigenvalues were computed for the response spectrum.")
+    props = ops.modalProperties("-return") or {}
+    modal_periods = [float(p) for p in props.get("eigenPeriod", [])[:n_modes]]
+    if len(modal_periods) < n_modes:
+        modal_periods = [2.0 * math.pi / math.sqrt(max(float(lam), 1e-12))
+                         for lam in eig[:n_modes]]
+
+    sa_model = [a * G_ACC * float(case.scale) for a in accelerations]
+    node_ids = sorted(project.nodes)
+    element_ids = sorted(project.elements)
+    modal_disp: List[Dict[int, List[float]]] = []
+    modal_forces: List[Dict[int, List[float]]] = []
+    for mode in range(1, n_modes + 1):
+        ops.responseSpectrumAnalysis(
+            int(case.direction), "-Tn", *periods, "-Sa", *sa_model,
+            "-mode", mode)
+        modal_disp.append({
+            nid: [float(ops.nodeDisp(nid, dof)) for dof in range(1, 7)]
+            for nid in node_ids
+        })
+        forces: Dict[int, List[float]] = {}
+        for eid in element_ids:
+            try:
+                raw = ops.eleResponse(eid, "localForce")
+            except Exception:
+                raw = []
+            if raw:
+                forces[eid] = [float(v) for v in raw]
+        modal_forces.append(forces)
+        if progress is not None:
+            progress(mode, n_modes)
+
+    if case.combination == "CQC":
+        rho = [[_response_spectrum_cqc(modal_periods[i], modal_periods[j],
+                                       float(case.damping_ratio))
+                for j in range(n_modes)] for i in range(n_modes)]
+    else:
+        rho = [[1.0 if i == j else 0.0 for j in range(n_modes)]
+               for i in range(n_modes)]
+
+    def combine(series: List[float]) -> float:
+        if not series:
+            return 0.0
+        total = 0.0
+        for i in range(len(series)):
+            for j in range(len(series)):
+                total += rho[i][j] * series[i] * series[j]
+        magnitude = math.sqrt(max(total, 0.0))
+        dominant = max(range(len(series)), key=lambda i: abs(series[i]))
+        return magnitude if series[dominant] >= 0.0 else -magnitude
+
+    combined_disp: Dict[int, List[float]] = {}
+    for nid in node_ids:
+        combined_disp[nid] = [
+            combine([modal_disp[mode][nid][dof] for mode in range(n_modes)])
+            for dof in range(6)
+        ]
+    force_ids = sorted({eid for forces in modal_forces for eid in forces})
+    combined_forces: Dict[int, List[float]] = {}
+    for eid in force_ids:
+        width = max((len(forces[eid]) for forces in modal_forces
+                     if eid in forces), default=0)
+        combined_forces[eid] = [
+            combine([modal_forces[mode].get(eid, [0.0] * width)[comp]
+                     for mode in range(n_modes)])
+            for comp in range(width)
+        ]
+
+    dir_key = {1: "MX", 2: "MY", 3: "MZ"}.get(int(case.direction), "MX")
+    ratios = [float(v) for v in props.get(f"partiMassRatios{dir_key}", [])[:n_modes]]
+    cumulative = [float(v) for v in props.get(
+        f"partiMassRatiosCumu{dir_key}", [])[:n_modes]]
+    peak_disp = max(
+        (max(abs(v) for v in values) for values in combined_disp.values()),
+        default=0.0)
+    log.append("Modal periods: " + ", ".join(f"{p:.4g}" for p in modal_periods))
+    log.append(f"Peak combined displacement: {peak_disp:.4g} mm.")
+    if peak_disp <= 0.0:
+        log.append("No displacement response in the selected direction; "
+                   "check the excitation direction and the spectrum.")
+    ops.wipeAnalysis()
+
+    return ResponseSpectrumResults(
+        case_name=case.name,
+        direction=int(case.direction),
+        damping_ratio=float(case.damping_ratio),
+        combination=case.combination,
+        n_modes=n_modes,
+        periods=periods,
+        accelerations=accelerations,
+        modal_periods=modal_periods,
+        modal_mass_ratios=ratios,
+        modal_cumulative_ratios=cumulative,
+        node_disp=combined_disp,
+        element_forces=combined_forces,
+        element_kind={eid: project.elements[eid].kind
+                      for eid in combined_forces if eid in project.elements},
+        peak_disp=peak_disp,
         log="\n".join(log))
 
 

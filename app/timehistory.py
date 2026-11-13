@@ -1,14 +1,16 @@
-"""Time-history results view: response trace and CSV export."""
+"""Time-history results view: response trace, step navigation and forces."""
 
 from __future__ import annotations
 
 import csv
 from typing import Optional
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout,
-                               QLabel, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
+                               QFileDialog, QHBoxLayout, QHeaderView, QLabel,
+                               QPushButton, QSlider, QSpinBox, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import theme
 from .model import Project, fmt
@@ -18,10 +20,17 @@ from .units import UNITS
 _DOFS = ("UX", "UY", "UZ", "RX", "RY", "RZ")
 _QUANTITIES = (("Displacement", "disp"), ("Velocity", "vel"),
                ("Acceleration", "accel"))
+_FORCE_LABELS = ("N", "Vy", "Vz", "T", "My", "Mz")
+
+
+def _num(value: float, decimals: int = 4) -> str:
+    if abs(value) < 5e-5:
+        return "0"
+    return f"{value:.{decimals}f}".rstrip("0").rstrip(".")
 
 
 class TimeHistoryPlot(QWidget):
-    """One node/DOF response trace versus time."""
+    """One node/DOF response trace versus time, with a step cursor."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -29,14 +38,20 @@ class TimeHistoryPlot(QWidget):
         self.node = 0
         self.dof = 1
         self.quantity = "disp"
-        self.setMinimumHeight(300)
+        self.step = 0
+        self.setMinimumHeight(280)
 
     def set_trace(self, results: TimeHistoryResults, node: int, dof: int,
-                  quantity: str) -> None:
+                  quantity: str, step: int = 0) -> None:
         self.results = results
         self.node = int(node)
         self.dof = int(dof)
         self.quantity = quantity
+        self.step = int(step)
+        self.update()
+
+    def set_step(self, step: int) -> None:
+        self.step = int(step)
         self.update()
 
     def _values(self) -> tuple[list[float], list[float]]:
@@ -100,6 +115,16 @@ class TimeHistoryPlot(QWidget):
             p.drawLine(QPointF(px(xs[i - 1]), py(ys[i - 1])),
                        QPointF(px(xs[i]), py(ys[i])))
 
+        # Current-step cursor and marker.
+        if 0 <= self.step < len(xs):
+            p.setPen(QPen(QColor(theme.ORANGE), 1.2, Qt.DashLine))
+            p.drawLine(QPointF(px(xs[self.step]), top),
+                       QPointF(px(xs[self.step]), top + height))
+            p.setPen(QPen(QColor(theme.ORANGE), 2.0))
+            p.setBrush(QColor(theme.ORANGE))
+            p.drawEllipse(QPointF(px(xs[self.step]), py(ys[self.step])), 4, 4)
+            p.setBrush(Qt.NoBrush)
+
         p.setFont(QFont("Segoe UI", 7))
         p.setPen(QPen(QColor(theme.MUTED)))
         for i in range(6):
@@ -116,15 +141,20 @@ class TimeHistoryPlot(QWidget):
 
 
 class TimeHistoryResultsDialog(QDialog):
-    """Select a node/DOF and inspect the recorded response."""
+    """Inspect a time history and drive the model one step at a time."""
+
+    stepSelected = Signal(int)
 
     def __init__(self, project: Project, results: TimeHistoryResults,
                  parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Time-History Results")
-        self.resize(980, 660)
+        self.resize(1080, 820)
+        self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.project = project
         self.results = results
+        self._current_step = 0
 
         lay = QVBoxLayout(self)
         title = QLabel(f"Time history — {results.case_name}")
@@ -157,12 +187,42 @@ class TimeHistoryResultsDialog(QDialog):
         controls.addStretch(1)
         lay.addLayout(controls)
 
+        step_row = QHBoxLayout()
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.setFixedWidth(36)
+        self.next_btn = QPushButton("▶")
+        self.next_btn.setFixedWidth(36)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, max(results.n_steps - 1, 0))
+        self.step_spin = QSpinBox()
+        self.step_spin.setRange(1, max(results.n_steps, 1))
+        self.step_label = QLabel("")
+        self.step_label.setMinimumWidth(230)
+        step_row.addWidget(QLabel("Step"))
+        step_row.addWidget(self.prev_btn)
+        step_row.addWidget(self.slider, 1)
+        step_row.addWidget(self.next_btn)
+        step_row.addWidget(self.step_spin)
+        step_row.addWidget(self.step_label)
+        lay.addLayout(step_row)
+
         self.axis_note = QLabel("")
         self.axis_note.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
         lay.addWidget(self.axis_note)
 
         self.plot = TimeHistoryPlot()
         lay.addWidget(self.plot, 1)
+
+        forces_label = QLabel("Element end forces at the selected step")
+        forces_label.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        lay.addWidget(forces_label)
+        self.forces = QTableWidget()
+        self.forces.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.forces.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.forces.verticalHeader().setVisible(False)
+        self.forces.setMinimumHeight(190)
+        self.forces.setMaximumHeight(280)
+        lay.addWidget(self.forces)
 
         self.peak = QLabel("")
         self.peak.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
@@ -178,30 +238,103 @@ class TimeHistoryResultsDialog(QDialog):
         bar.addWidget(close)
         lay.addLayout(bar)
 
-        # Start on the node/DOF with the largest displacement response.
-        best = (-1.0, 0, 1)
+        # Start on the step with the largest displacement response.
+        best = (-1.0, 0, 1, 0)
         for nid, rows in results.node_disp.items():
             for dof in range(1, 7):
-                peak = max((abs(row[dof - 1]) for row in rows
-                            if len(row) >= dof), default=0.0)
-                if peak > best[0]:
-                    best = (peak, nid, dof)
+                for i, row in enumerate(rows):
+                    value = abs(row[dof - 1]) if len(row) >= dof else 0.0
+                    if value > best[0]:
+                        best = (value, nid, dof, i)
         if best[1]:
             index = self.node.findData(best[1])
             if index >= 0:
                 self.node.setCurrentIndex(index)
             self.dof.setCurrentIndex(best[2] - 1)
+        self._current_step = best[3]
 
-        self.node.currentIndexChanged.connect(self._refresh)
-        self.dof.currentIndexChanged.connect(self._refresh)
-        self.quantity.currentIndexChanged.connect(self._refresh)
-        self._refresh()
+        self.node.currentIndexChanged.connect(self._refresh_trace)
+        self.dof.currentIndexChanged.connect(self._refresh_trace)
+        self.quantity.currentIndexChanged.connect(self._refresh_trace)
+        self.slider.valueChanged.connect(
+            lambda value: self._set_step(value))
+        self.step_spin.valueChanged.connect(
+            lambda value: self._set_step(value - 1))
+        self.prev_btn.clicked.connect(
+            lambda: self._set_step(self._current_step - 1))
+        self.next_btn.clicked.connect(
+            lambda: self._set_step(self._current_step + 1))
+        self._build_force_table()
+        self._refresh_trace()
+        self._set_step(self._current_step, emit=False)
 
-    def _refresh(self, *_args) -> None:
+    @property
+    def current_step(self) -> int:
+        return self._current_step
+
+    def _build_force_table(self) -> None:
+        self.force_ids = sorted(self.results.element_forces)
+        headers = ["Element"]
+        for end in ("i", "j"):
+            headers += [f"{label}_{end}" for label in _FORCE_LABELS]
+        self.forces.setColumnCount(len(headers))
+        self.forces.setHorizontalHeaderLabels(headers)
+        self.forces.setRowCount(max(len(self.force_ids), 1))
+        if not self.force_ids:
+            self.forces.setItem(0, 0, QTableWidgetItem(
+                "No element forces recorded for this model."))
+            self.forces.setSpan(0, 0, 1, len(headers))
+            return
+        for row, eid in enumerate(self.force_ids):
+            self.forces.setItem(row, 0, QTableWidgetItem(str(eid)))
+        self.forces.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents)
+        self.forces.horizontalHeader().setStretchLastSection(True)
+
+    def _force_text(self, value: float, moment: bool) -> str:
+        if moment:
+            return _num(UNITS.moment(value))
+        return _num(UNITS.force(value))
+
+    def _fill_forces(self, step: int) -> None:
+        if not self.force_ids:
+            return
+        for row, eid in enumerate(self.force_ids):
+            rows = self.results.element_history(eid)
+            values = rows[step] if 0 <= step < len(rows) else []
+            for col, label in enumerate(_FORCE_LABELS, start=1):
+                for end in range(2):
+                    value = values[end * 6 + (col - 1)] if len(values) > end * 6 + (col - 1) else 0.0
+                    moment = label in ("My", "Mz", "T")
+                    item = QTableWidgetItem(self._force_text(value, moment))
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.forces.setItem(row, 1 + end * 6 + (col - 1), item)
+
+    def _set_step(self, index: int, emit: bool = True) -> None:
+        n = len(self.results.time)
+        if n <= 0:
+            return
+        index = max(0, min(int(index), n - 1))
+        self._current_step = index
+        for widget, value in ((self.slider, index),
+                              (self.step_spin, index + 1)):
+            widget.blockSignals(True)
+            widget.setValue(value)
+            widget.blockSignals(False)
+        time_value = self.results.time[index]
+        self.step_label.setText(
+            f"Step {index + 1}/{n}   t = {time_value:.4g} s")
+        self.plot.set_step(index)
+        self._fill_forces(index)
+        if emit:
+            self.stepSelected.emit(index)
+
+    def _refresh_trace(self, *_args) -> None:
         node = int(self.node.currentData() or 0)
         dof = int(self.dof.currentData() or 1)
         quantity = self.quantity.currentData() or "disp"
-        self.plot.set_trace(self.results, node, dof, quantity)
+        self.plot.set_trace(self.results, node, dof, quantity,
+                            self._current_step)
         rows = self.results.history(node, quantity)
         peak = max((abs(row[dof - 1]) for row in rows if len(row) >= dof),
                    default=0.0)

@@ -15,7 +15,9 @@ plus moment-rotation IMK definitions for future spring hinges). A
 uniform-excitation time-history MVP (sine or AT2/two-column/single-column record,
 gravity preload, Rayleigh damping, response plot and CSV export) and a
 child-process analysis runner with progress/cancel are also implemented. The
-remaining phases below are still planned.
+time-history viewer now steps through the deformed shape and element forces, and
+a ground-motion catalog with record-backed spectra plus a response-spectrum
+analysis (SRSS/CQC) is available. The remaining phases below are still planned.
 
 Command-level smoke checks against the installed build passed for:
 
@@ -75,8 +77,8 @@ commands.
 | Dampers / bearings | None | No energy-dissipation or isolation modelling |
 | Static analysis | `LoadControl`, `Linear` algorithm | No displacement control, arc length or convergence controls |
 | Modal analysis | `eigen` | No response-spectrum combination |
-| Dynamic analysis | Uniform-excitation transient (sine/AT2/two-column/single-column), gravity preload, Rayleigh damping | No response spectrum, multi-support excitation or ground-motion catalog yet |
-| Results | Static, modal, pushover and time-history results | No response-spectrum combinations, envelopes or multi-case time-history overlays |
+| Dynamic analysis | Uniform-excitation transient (sine/AT2/two-column/single-column), gravity preload, Rayleigh damping, response spectrum (SRSS/CQC) | No multi-support excitation or nonlinear ground-motion catalog scaling yet |
+| Results | Static, modal, pushover, time-history step viewer and response-spectrum results | No response-spectrum combination envelopes or multi-case time-history overlays |
 | Persistence | Project schema v1 | No ground motions, analysis cases or fiber definitions |
 | MCP / Tcl | 43 MCP tools, static Tcl export | No parity for new analysis types |
 

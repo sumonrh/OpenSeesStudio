@@ -1692,6 +1692,7 @@ class TimeHistoryDialog(BaseDialog):
         self.source = QComboBox()
         self.source.addItem("Sine wave (generated)", "sine")
         self.source.addItem("Ground-motion file", "file")
+        self.source.addItem("Catalog record", "catalog")
         form.addRow("Source", self.source)
         self.body.addLayout(form)
 
@@ -1729,6 +1730,24 @@ class TimeHistoryDialog(BaseDialog):
         sine_form.addRow("Period", self.period)
         self.body.addWidget(self.sine_box)
 
+        self.catalog_box = QWidget()
+        catalog_form = QFormLayout(self.catalog_box)
+        catalog_form.setContentsMargins(0, 0, 0, 0)
+        self.record = QComboBox()
+        for rec in sorted(project.ground_motions.values(), key=lambda r: r.tag):
+            self.record.addItem(
+                f"#{rec.tag}  {rec.name}  ({rec.format}, dt={rec.dt:g} s, "
+                f"{rec.npts} pts)", rec.tag)
+        if self.record.count() == 0:
+            self.record.addItem("No catalog records — use Tools > Ground Motion Catalog",
+                                0)
+        catalog_form.addRow("Record", self.record)
+        self.catalog_info = QLabel("")
+        self.catalog_info.setWordWrap(True)
+        self.catalog_info.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        catalog_form.addRow("", self.catalog_info)
+        self.body.addWidget(self.catalog_box)
+
         self.body.addWidget(title_label("Time stepping and excitation"))
         common = QFormLayout()
         self.dt = spin(self.case.dt, 0.0001, 1.0, 5, 0.005, "s")
@@ -1759,6 +1778,7 @@ class TimeHistoryDialog(BaseDialog):
         for widget, value in (
                 (self.source, self.case.source),
                 (self.format, self.case.format),
+                (self.record, self.case.record),
                 (self.direction, self.case.direction),
                 (self.gravity, self.case.gravity_case)):
             index = widget.findData(value)
@@ -1768,6 +1788,7 @@ class TimeHistoryDialog(BaseDialog):
         self.source.currentIndexChanged.connect(self._source_changed)
         self.path.editingFinished.connect(self._probe)
         self.format.currentIndexChanged.connect(self._probe)
+        self.record.currentIndexChanged.connect(self._probe)
         self.dt.valueChanged.connect(self._update_summary)
         self.steps.valueChanged.connect(self._update_summary)
         self.amplitude.valueChanged.connect(self._update_summary)
@@ -1775,10 +1796,13 @@ class TimeHistoryDialog(BaseDialog):
         self._source_changed()
 
     def _source_changed(self, *_args) -> None:
-        file_mode = self.source.currentData() == "file"
+        source = self.source.currentData()
+        file_mode = source == "file"
+        catalog_mode = source == "catalog"
         self.file_box.setVisible(file_mode)
-        self.sine_box.setVisible(not file_mode)
-        if file_mode:
+        self.catalog_box.setVisible(catalog_mode)
+        self.sine_box.setVisible(not file_mode and not catalog_mode)
+        if file_mode or catalog_mode:
             self.steps.setValue(0)
         elif self.steps.value() == 0:
             self.steps.setValue(1000)
@@ -1793,10 +1817,44 @@ class TimeHistoryDialog(BaseDialog):
             self._probe()
 
     def _probe(self) -> None:
-        if self.source.currentData() != "file":
+        source = self.source.currentData()
+        if source == "sine":
             self.info.setText("Generated sine motion; no file needed.")
+            self._probe_info = ""
             self._update_summary()
             return
+        if source == "catalog":
+            tag = int(self.record.currentData() or 0)
+            rec = self.project.ground_motions.get(tag)
+            if rec is None:
+                self.catalog_info.setText("Choose a catalog record.")
+                self.catalog_info.setStyleSheet(
+                    "color:#c92a2a; font-size:11px;")
+                self._probe_info = ""
+                self._update_summary()
+                return
+            probe = copy.deepcopy(self._case)
+            probe.source = "catalog"
+            probe.record = tag
+            probe.n_steps = 0
+            try:
+                motion = load_ground_motion(probe,
+                                            self.project.ground_motions)
+            except Exception as exc:
+                self.catalog_info.setText(f"⚠ {exc}")
+                self.catalog_info.setStyleSheet(
+                    "color:#c92a2a; font-size:11px;")
+                self._probe_info = ""
+                self._update_summary()
+                return
+            self.catalog_info.setStyleSheet(
+                f"color:{theme.MUTED}; font-size:11px;")
+            self._probe_info = (f"{motion.note}; {motion.npts} points, "
+                                f"duration {motion.duration:g} s")
+            self.catalog_info.setText(self._probe_info)
+            self._update_summary()
+            return
+
         text = self.path.text().strip()
         if not text:
             self.info.setText("Choose a ground-motion file.")
@@ -1810,7 +1868,7 @@ class TimeHistoryDialog(BaseDialog):
         probe.dt = self.dt.value()
         probe.n_steps = 0
         try:
-            motion = load_ground_motion(probe)
+            motion = load_ground_motion(probe, self.project.ground_motions)
         except Exception as exc:
             self.info.setText(f"⚠ {exc}")
             self.info.setStyleSheet("color:#c92a2a; font-size:11px;")
@@ -1824,7 +1882,18 @@ class TimeHistoryDialog(BaseDialog):
         self._update_summary()
 
     def _update_summary(self, *_args) -> None:
-        if self.source.currentData() == "file":
+        source = self.source.currentData()
+        if source == "catalog":
+            duration = ""
+            if self._probe_info:
+                try:
+                    duration = f"; {self._probe_info.split('duration ')[-1]}"
+                except Exception:
+                    duration = ""
+            self.summary.setText(
+                "The catalog record's own dt is used; steps = 0 uses the whole "
+                "record. Record scale × case scale applies." + duration)
+        elif source == "file":
             duration = ""
             if self._probe_info:
                 try:
@@ -1846,6 +1915,7 @@ class TimeHistoryDialog(BaseDialog):
             source=self.source.currentData() or "sine",
             path=self.path.text().strip(),
             format=self.format.currentData() or "auto",
+            record=int(self.record.currentData() or 0),
             dt=self.dt.value(),
             n_steps=self.steps.value(),
             direction=int(self.direction.currentData() or 1),
@@ -1859,7 +1929,7 @@ class TimeHistoryDialog(BaseDialog):
     def accept(self) -> None:
         case = self._build_case()
         try:
-            load_ground_motion(case)
+            load_ground_motion(case, self.project.ground_motions)
         except Exception as exc:
             QMessageBox.warning(self, "Ground motion", str(exc))
             return

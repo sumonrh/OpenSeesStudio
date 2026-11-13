@@ -24,7 +24,7 @@ def _selftest(report_path: str) -> int:
     from . import opsgen
     from .model import (ElementLoad, Element, LoadCase, LoadCombination,
                         NodalLoad, Node, Section, TimeHistoryCase,
-                        default_project)
+                        ResponseSpectrumCase, default_project)
 
     lines = []
 
@@ -72,6 +72,13 @@ def _selftest(report_path: str) -> int:
         th = opsgen.run_time_history(p)
         emit(f"time history: {th.n_steps} steps, peak {th.peak_disp:.6f} mm")
         assert th.n_steps == 20 and th.peak_disp > 0.0, "time-history result"
+
+        p.response_spectrum = ResponseSpectrumCase(
+            direction=3, n_modes=2, periods=[0.0, 0.2, 0.5, 1.0],
+            accelerations=[0.4, 0.8, 0.6, 0.3])
+        rs = opsgen.run_response_spectrum(p)
+        emit(f"response spectrum: {rs.n_modes} modes, peak {rs.peak_disp:.6f} mm")
+        assert rs.n_modes >= 1 and rs.peak_disp > 0.0, "response-spectrum result"
 
         from .hinge_catalog import MATERIALS, image_path
         expected_images = [m.key for m in MATERIALS.values() if m.image]

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
-from .model import TimeHistoryCase
+from .model import G_ACC, GroundMotionRecord, TimeHistoryCase
 
 _NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 _NPTS_OLD = re.compile(r"NPTS\s*=\s*(\d+).*?DT\s*=\s*([0-9.eE+\-]+)",
@@ -145,8 +145,14 @@ def read_file(path: str | Path, fmt: str, dt: float) -> GroundMotionData:
                             f"{path.name}: {note}")
 
 
-def load_ground_motion(case: TimeHistoryCase) -> GroundMotionData:
-    """Return the acceleration history in g, truncated to ``case.n_steps``."""
+def load_ground_motion(case: TimeHistoryCase,
+                       records: dict | None = None) -> GroundMotionData:
+    """Return the acceleration history in g, truncated to ``case.n_steps``.
+
+    ``source='catalog'`` resolves ``case.record`` through ``records`` (the
+    project's ground-motion catalog).  The catalog record's own scale is
+    applied before the case scale in the solver.
+    """
     if case.source == "sine":
         if case.dt <= 0.0:
             raise ValueError("The time step must be positive.")
@@ -164,9 +170,79 @@ def load_ground_motion(case: TimeHistoryCase) -> GroundMotionData:
             f"sine, amplitude={case.sine_amplitude:g} g, "
             f"period={case.sine_period:g} s, {case.n_steps} steps")
 
+    if case.source == "catalog":
+        record = (records or {}).get(int(case.record))
+        if record is None:
+            raise ValueError(
+                f"Ground-motion catalog record {case.record} does not exist.")
+        step = record.dt if record.dt > 0.0 else case.dt
+        motion = read_file(record.path, record.format, step)
+        if abs(record.scale - 1.0) > 1e-12:
+            motion.values = [value * record.scale for value in motion.values]
+        motion.source = "catalog"
+        motion.note = f"{record.name}: {motion.note}"
+        if case.n_steps > 0:
+            motion.values = motion.values[:case.n_steps]
+        if not motion.values:
+            raise ValueError(f"Catalog record '{record.name}' has no values.")
+        return motion
+
     motion = read_file(case.path, case.format, case.dt)
     if case.n_steps > 0:
         motion.values = motion.values[:case.n_steps]
     if not motion.values:
         raise ValueError("The ground-motion record contains no values.")
     return motion
+
+
+def spectrum_from_record(record: GroundMotionRecord,
+                         periods: list[float],
+                         damping_ratio: float = 0.05) -> list[float]:
+    """Compute a pseudo-acceleration spectrum (g) from a catalog record.
+
+    A unit-mass SDOF oscillator is integrated with Newmark's average-
+    acceleration method for each period.  T = 0 returns the peak ground
+    acceleration.
+    """
+    motion = read_file(record.path, record.format,
+                       record.dt if record.dt > 0.0 else 0.01)
+    values = [value * record.scale * G_ACC for value in motion.values]
+    if not values:
+        raise ValueError(f"Catalog record '{record.name}' has no values.")
+    dt = motion.dt
+    ag = values
+    pga = max(abs(value) for value in ag) / G_ACC
+    gamma, beta = 0.5, 0.25
+    result: list[float] = []
+    for period in periods:
+        period = float(period)
+        if period <= 1e-9:
+            result.append(pga)
+            continue
+        omega = 2.0 * math.pi / period
+        stiffness = omega * omega
+        damping = 2.0 * damping_ratio * omega
+        u = 0.0
+        v = 0.0
+        a = -ag[0]
+        peak = 0.0
+        for acceleration in ag:
+            k_eff = (stiffness + damping * gamma / (beta * dt)
+                     + 1.0 / (beta * dt * dt))
+            p_eff = (-acceleration
+                     + u / (beta * dt * dt)
+                     + v / (beta * dt)
+                     + (1.0 / (2.0 * beta) - 1.0) * a
+                     + damping * (gamma * u / (beta * dt)
+                                  + (gamma / beta - 1.0) * v
+                                  + dt * (gamma / (2.0 * beta) - 1.0) * a))
+            u_new = p_eff / k_eff
+            v_new = (gamma / (beta * dt) * (u_new - u)
+                     + (1.0 - gamma / beta) * v
+                     + dt * (1.0 - gamma / (2.0 * beta)) * a)
+            a_new = (u_new - u) / (beta * dt * dt) - v / (beta * dt) \
+                - (1.0 / (2.0 * beta) - 1.0) * a
+            u, v, a = u_new, v_new, a_new
+            peak = max(peak, abs(u))
+        result.append(omega * omega * peak / G_ACC)
+    return result
