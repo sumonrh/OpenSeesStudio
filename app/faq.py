@@ -13,7 +13,7 @@ WIKI = "https://opensees.berkeley.edu/wiki/index.php/Main_Page"
 GETTING_STARTED = "https://opensees.berkeley.edu/wiki/index.php/Getting_Started"
 COMMAND_MANUAL = ("https://opensees.berkeley.edu/OpenSees/manuals/usermanual/"
                   "OpenSeesCommandLanguageManualJune2006.pdf")
-OPENSEESPY = "https://openseespy.github.io/"
+OPENSEESPY = "https://openseespydoc.readthedocs.io/en/latest/"
 DOCS = "https://opensees.github.io/OpenSeesDocumentation/"
 
 FAQ_HTML = f"""

@@ -577,6 +577,8 @@ class Viewport(QWidget):
                 if not s:
                     continue
                 self._draw_support(p, s[0], s[1], all(n.support))
+            self._draw_springs(p, w, h, proj)
+            self._draw_constraints(p, w, h, proj)
 
         # ---- nodes -----------------------------------------------------
         if self.show_nodes:
@@ -1185,6 +1187,66 @@ class Viewport(QWidget):
             p.setFont(QFont("Segoe UI", 7))
             p.setPen(QPen(color.darker(130)))
             p.drawText(QPointF(mid[0] + 4, mid[1] - 15), text)
+
+    def _draw_springs(self, p: QPainter, w: int, h: int, proj) -> None:
+        for spring in getattr(self.project, "springs", {}).values():
+            if spring.node not in proj or not self.is_node_visible(spring.node):
+                continue
+            sx, sy, _ = proj[spring.node]
+            color = QColor("#7c5cbf")
+            p.setBrush(Qt.NoBrush)
+            if 1 <= int(spring.dof) <= 3:
+                axis = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+                        (0.0, 0.0, 1.0))[int(spring.dof) - 1]
+                direction = self._screen_dir(axis, 1.0)
+                if direction is None:
+                    continue
+                dx, dy = direction
+                px, py = -dy, dx
+                start = (sx + dx * 6.0, sy + dy * 6.0)
+                points = [QPointF(sx, sy), QPointF(*start)]
+                for i in range(4):
+                    side = 1.0 if i % 2 == 0 else -1.0
+                    t = (i + 1) / 4.0
+                    points.append(QPointF(
+                        start[0] + dx * 18.0 * t + px * 3.2 * side,
+                        start[1] + dy * 18.0 * t + py * 3.2 * side))
+                p.setPen(QPen(color, 1.5))
+                p.drawPolyline(QPolygonF(points))
+                end = (start[0] + dx * 18.0, start[1] + dy * 18.0)
+                p.setPen(QPen(color.darker(125), 1.2))
+                p.drawLine(QPointF(end[0] - px * 5, end[1] - py * 5),
+                           QPointF(end[0] + px * 5, end[1] + py * 5))
+            else:
+                p.setPen(QPen(color, 1.5))
+                p.drawArc(QRectF(sx - 9, sy - 9, 18, 18), 30 * 16, 300 * 16)
+                p.drawLine(QPointF(sx - 6, sy + 9), QPointF(sx + 6, sy + 9))
+            p.setFont(QFont("Segoe UI", 7))
+            p.setPen(QPen(color.darker(130)))
+            p.drawText(QPointF(sx + 7, sy + 15), f"S{spring.tag}")
+
+    def _draw_constraints(self, p: QPainter, w: int, h: int, proj) -> None:
+        for constraint in getattr(self.project, "constraints", {}).values():
+            master = proj.get(constraint.master)
+            if master is None or not self.is_node_visible(constraint.master):
+                continue
+            slaves = [proj.get(t) for t in constraint.slaves
+                      if t in proj and self.is_node_visible(t)]
+            slaves = [s for s in slaves if s is not None]
+            if not slaves:
+                continue
+            color = QColor("#e8622c")
+            p.setPen(QPen(color, 1.2, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            for slave in slaves:
+                p.drawLine(QPointF(master[0], master[1]),
+                           QPointF(slave[0], slave[1]))
+            if constraint.kind == "rigid_diaphragm" and len(slaves) >= 2:
+                poly = QPolygonF([QPointF(master[0], master[1])] +
+                                 [QPointF(s[0], s[1]) for s in slaves])
+                p.drawPolygon(poly)
+            p.setPen(QPen(color, 1.6))
+            p.drawRect(QRectF(master[0] - 2.5, master[1] - 2.5, 5, 5))
 
     @staticmethod
     def _head(p, x, y, vx, vy, size, color) -> None:

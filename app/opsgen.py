@@ -381,6 +381,75 @@ def build(project: Project, scenario: Optional[str] = None,
         if any(n.support):
             ops.fix(n.tag, *[1 if b else 0 for b in n.support])
 
+    # ---- point springs (zeroLength to fixed ground nodes) -------------
+    for index, spring in enumerate(sorted(project.springs.values(),
+                                          key=lambda s: s.tag)):
+        if spring.node not in nodes:
+            log.append(f"Spring {spring.tag} skipped: missing node {spring.node}")
+            continue
+        if not 1 <= int(spring.dof) <= 6:
+            log.append(f"Spring {spring.tag} skipped: invalid DOF {spring.dof}")
+            continue
+        ground_tag = 10_000_000 + index
+        xyz = project.node_xyz(spring.node)
+        ops.node(ground_tag, *xyz)
+        ops.fix(ground_tag, 1, 1, 1, 1, 1, 1)
+        mat_tag = 6_000_000 + index
+        if spring.kind == "linear":
+            ops.uniaxialMaterial("Elastic", mat_tag, max(float(spring.k), 1e-12))
+        elif spring.kind == "multilinear":
+            points = sorted(([float(u), float(f)] for u, f in spring.curve
+                             if float(u) > _EPS), key=lambda pair: pair[0])
+            if len(points) < 2:
+                points = [[1.0, max(float(spring.k), 1e-12)],
+                          [2.0, 2.0 * max(float(spring.k), 1e-12)]]
+            args = []
+            for u, f in points:
+                args.extend([u, f])
+            ops.uniaxialMaterial("MultiLinear", mat_tag, *args)
+        elif spring.kind == "py":
+            if int(spring.dof) > 3:
+                log.append(f"Spring {spring.tag} skipped: PySimple1 needs a "
+                           "translational DOF")
+                continue
+            ops.uniaxialMaterial("PySimple1", mat_tag,
+                                 int(spring.soil_type), float(spring.pult),
+                                 float(spring.y50), float(spring.cd))
+        else:
+            log.append(f"Spring {spring.tag} skipped: unknown kind {spring.kind}")
+            continue
+        ops.element("zeroLength", 7_000_000 + index, spring.node, ground_tag,
+                    "-mat", mat_tag, "-dir", int(spring.dof))
+
+    # ---- rigid links, equalDOF and rigid diaphragms -------------------
+    for constraint in sorted(project.constraints.values(), key=lambda c: c.tag):
+        if constraint.master not in nodes:
+            log.append(f"Constraint {constraint.tag} skipped: missing master "
+                       f"node {constraint.master}")
+            continue
+        slaves = [s for s in constraint.slaves if s in nodes]
+        missing = [s for s in constraint.slaves if s not in nodes]
+        if missing:
+            log.append(f"Constraint {constraint.tag}: missing slaves {missing}")
+        if not slaves:
+            continue
+        if constraint.kind in ("rigid_beam", "rigid_bar"):
+            link = "beam" if constraint.kind == "rigid_beam" else "bar"
+            for slave in slaves:
+                ops.rigidLink(link, constraint.master, slave)
+        elif constraint.kind == "equal_dof":
+            dofs = [d for d in constraint.dofs if 1 <= int(d) <= 6]
+            if not dofs:
+                log.append(f"Constraint {constraint.tag}: no valid DOFs")
+                continue
+            for slave in slaves:
+                ops.equalDOF(constraint.master, slave, *dofs)
+        elif constraint.kind == "rigid_diaphragm":
+            ops.rigidDiaphragm(int(constraint.perp), constraint.master, *slaves)
+        else:
+            log.append(f"Constraint {constraint.tag}: unknown kind "
+                       f"{constraint.kind}")
+
     # ---- elements -----------------------------------------------------
     transf_cache: Dict[Tuple[float, float, float], int] = {}
     transf_tag = 1
@@ -688,14 +757,49 @@ def check_model(project: Project):
         if len(e.nodes) >= 2 and project.element_length(e) < 1e-9:
             errors.append(f"Element {t} has zero length.")
 
+    used.update(s.node for s in project.springs.values()
+                if s.node in project.nodes)
     orphans = [t for t in project.nodes if t not in used]
     if orphans:
         errors.append(f"{len(orphans)} node(s) are not connected to any element "
                       f"(e.g. {orphans[:6]}). Delete them or connect them.")
 
     supported = [n for n in project.nodes.values() if any(n.support)]
-    if project.nodes and not supported:
+    if project.nodes and not supported and not project.springs:
         warnings.append("No supports are defined - the structure is unstable.")
+
+    for tag, spring in project.springs.items():
+        if spring.node not in project.nodes:
+            errors.append(f"Spring {tag} references missing node {spring.node}.")
+        if not 1 <= int(spring.dof) <= 6:
+            errors.append(f"Spring {tag} has an invalid DOF {spring.dof}.")
+        if spring.kind == "linear" and spring.k <= 0:
+            errors.append(f"Spring {tag} needs a positive stiffness.")
+        if spring.kind == "multilinear" and len(spring.curve) < 2:
+            errors.append(f"Spring {tag} needs at least two curve points.")
+        if spring.kind == "py":
+            if int(spring.dof) > 3:
+                errors.append(f"Spring {tag}: PySimple1 needs a translational DOF.")
+            if spring.pult <= 0 or spring.y50 <= 0:
+                errors.append(f"Spring {tag} needs positive pult and y50.")
+
+    for tag, constraint in project.constraints.items():
+        if constraint.master not in project.nodes:
+            errors.append(f"Constraint {tag} references missing master node "
+                          f"{constraint.master}.")
+        if not constraint.slaves:
+            errors.append(f"Constraint {tag} has no slave nodes.")
+        for slave in constraint.slaves:
+            if slave not in project.nodes:
+                errors.append(f"Constraint {tag} references missing slave node "
+                              f"{slave}.")
+            if slave == constraint.master:
+                errors.append(f"Constraint {tag} uses the master as a slave.")
+        if constraint.kind == "equal_dof" and not any(
+                1 <= int(d) <= 6 for d in constraint.dofs):
+            errors.append(f"Constraint {tag} has no valid DOFs.")
+        if constraint.kind == "rigid_diaphragm" and int(constraint.perp) not in (1, 2, 3):
+            errors.append(f"Constraint {tag} has an invalid diaphragm axis.")
 
     has_loads = bool(project.nodal_loads or project.elem_loads or project.self_weight)
     if not has_loads:
@@ -714,7 +818,7 @@ def run_static(project: Project, scenario: str) -> StaticResults:
     log: List[str] = []
     log += build(project, scenario)
     ops.wipeAnalysis()
-    ops.constraints("Plain")
+    ops.constraints("Transformation" if project.constraints else "Plain")
     ops.numberer("RCM")
     ops.system("BandGen")
     ops.algorithm("Linear")
@@ -912,7 +1016,7 @@ def run_modal(project: Project, nmodes: int = 6) -> ModalResults:
     log: List[str] = []
     log += build(project, None)
     ops.wipeAnalysis()
-    ops.constraints("Plain")
+    ops.constraints("Transformation" if project.constraints else "Plain")
     ops.numberer("RCM")
     ops.system("BandGen")
     ops.algorithm("Linear")
@@ -1367,6 +1471,31 @@ def export_tcl(project: Project) -> str:
         if any(n.support):
             A(f"fix {n.tag} " + " ".join("1" if b else "0" for b in n.support))
     A("")
+
+    if project.springs:
+        A("# ---------------- point springs ----------------")
+        for index, spring in enumerate(sorted(project.springs.values(),
+                                              key=lambda s: s.tag)):
+            ground = 10_000_000 + index
+            mat = 6_000_000 + index
+            xyz = project.node_xyz(spring.node)
+            A(f"node {ground} {_num(xyz[0])} {_num(xyz[1])} {_num(xyz[2])}")
+            A(f"fix {ground} 1 1 1 1 1 1")
+            if spring.kind == "linear":
+                A(f"uniaxialMaterial Elastic {mat} {_num(max(spring.k, 1e-12))}")
+            elif spring.kind == "multilinear":
+                pts = sorted((u, f) for u, f in spring.curve if u > 1e-9)
+                if len(pts) < 2:
+                    pts = [(1.0, max(spring.k, 1e-12)),
+                           (2.0, 2.0 * max(spring.k, 1e-12))]
+                args = " ".join(f"{_num(u)} {_num(f)}" for u, f in pts)
+                A(f"uniaxialMaterial MultiLinear {mat} {args}")
+            else:
+                A(f"uniaxialMaterial PySimple1 {mat} {spring.soil_type} "
+                  f"{_num(spring.pult)} {_num(spring.y50)} {_num(spring.cd)}")
+            A(f"element zeroLength {7_000_000 + index} {spring.node} {ground} "
+              f"-mat {mat} -dir {spring.dof}")
+        A("")
     A("# ---------------- elements -----------------")
     tag = 1
     for e in project.elements.values():
@@ -1388,6 +1517,21 @@ def export_tcl(project: Project) -> str:
               f"{_num(sec.A)} {_num(mat.E)} {_num(mat.G)} {_num(sec.J)} "
               f"{_num(sec.Iy)} {_num(sec.Iz)} {tag}")
             tag += 1
+    if project.constraints:
+        A("")
+        A("# ---------------- constraints --------------")
+        for c in sorted(project.constraints.values(), key=lambda item: item.tag):
+            if c.kind in ("rigid_beam", "rigid_bar"):
+                link = "beam" if c.kind == "rigid_beam" else "bar"
+                for slave in c.slaves:
+                    A(f"rigidLink {link} {c.master} {slave}")
+            elif c.kind == "equal_dof":
+                dofs = " ".join(str(d) for d in c.dofs)
+                for slave in c.slaves:
+                    A(f"equalDOF {c.master} {slave} {dofs}")
+            elif c.kind == "rigid_diaphragm":
+                slaves = " ".join(str(s) for s in c.slaves)
+                A(f"rigidDiaphragm {c.perp} {c.master} {slaves}")
     A("")
     A("# ---------------- loads --------------------")
     ts = 1

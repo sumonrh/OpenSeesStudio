@@ -407,6 +407,62 @@ for kind in ("frame2d", "frame3d", "truss2d", "truss3d", "bridge"):
     check(f"{kind} wizard solves under self weight",
           1 if math.isfinite(peak) and peak > 0.0 else 0, 1, 0)
 
+print("== point springs and constraints ==")
+from app.model import (BoundaryConstraint, SpringSupport, NodalLoad,  # noqa: E402
+                       LoadCase)
+
+
+def spring_model(kind: str):
+    project = default_project()
+    project.nodes = {1: Node(1, 0.0, 0.0, 0.0), 2: Node(2, 1000.0, 0.0, 0.0)}
+    project.nodes[1].support = [True] * 6
+    project.elements = {1: Element(1, "beam", [1, 2], 1, 1,
+                                   [0.0, 0.0, 1.0])}
+    project.cases = {"DL": LoadCase("DL", "Dead")}
+    project.nodal_loads = [NodalLoad(1, 2, "DL", [0.0, 0.0, -10.0, 0, 0, 0])]
+    if kind == "linear":
+        spring = SpringSupport(1, 2, dof=3, kind="linear", k=10.0)
+    elif kind == "curve":
+        spring = SpringSupport(1, 2, dof=3, kind="multilinear", k=10.0,
+                               curve=[[0.0, 0.0], [1.0, 5.0], [4.0, 15.0]])
+    else:
+        spring = SpringSupport(1, 2, dof=3, kind="py", pult=100.0,
+                               y50=10.0, cd=0.5)
+    project.springs = {1: spring}
+    return project
+
+
+plain = spring_model("linear")
+plain.springs.clear()
+r_plain = opsgen.run_static(plain, "DL")
+u_plain = abs(r_plain.displacements[2][2])
+for kind in ("linear", "curve", "py"):
+    model = spring_model(kind)
+    r = opsgen.run_static(model, "DL")
+    u = abs(r.displacements[2][2])
+    check(f"{kind} spring solves", 1 if math.isfinite(u) and u > 0 else 0, 1, 0)
+    if kind == "linear":
+        check("linear spring adds stiffness", u < u_plain, 1, 0)
+        k_beam = 10.0 / u_plain
+        check("linear spring stiffness", 10.0 / u - k_beam, 10.0, 1e-6)
+
+for kind in ("rigid_beam", "equal_dof", "rigid_diaphragm"):
+    model = spring_model("linear")
+    model.nodes[3] = Node(3, 2000.0, 0.0, 0.0)
+    model.elements[2] = Element(2, "beam", [2, 3], 1, 1, [0.0, 0.0, 1.0])
+    model.nodal_loads = [NodalLoad(1, 3, "DL", [0.0, 0.0, -10.0, 0, 0, 0])]
+    model.constraints = {1: BoundaryConstraint(
+        1, kind, 2, [3], dofs=[1, 2, 3], perp=3)}
+    r = opsgen.run_static(model, "DL")
+    peak = max(abs(v) for vec in r.displacements.values() for v in vec)
+    check(f"{kind} constraint solves", 1 if math.isfinite(peak) else 0, 1, 0)
+
+round_trip = Project.from_dict(spring_model("curve").to_dict())
+check("spring and constraint persistence",
+      len(round_trip.springs) == 1
+      and round_trip.springs[1].kind == "multilinear",
+      1, 0)
+
 print("== script console model capture ==")
 from app import scriptmodel, tcl  # noqa: E402
 

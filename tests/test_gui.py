@@ -557,7 +557,8 @@ eld.close()
 from app.faq import FaqDialog
 faq = FaqDialog(win)
 check("FAQ includes official OpenSees links",
-      "opensees.berkeley.edu" in faq.browser.toHtml())
+      "opensees.berkeley.edu" in faq.browser.toHtml()
+      and "openseespydoc.readthedocs.io" in faq.browser.toHtml())
 faq.close()
 
 from app.runcontrol import RunControlDialog
@@ -596,6 +597,41 @@ win._apply_tree_drop("support_preset", "fixed")
 check("dragging a support preset fixes selected nodes",
       all(win.project.nodes[target_node].support))
 win.undo()
+
+print("== springs and rigid constraints ==")
+from app.boundary_dialogs import SpringDialog
+sd = SpringDialog(win.project, [target_node])
+check("spring dialog default", sd.dof.currentData() == 1
+      and sd.kind.currentData() == "linear")
+sd.dof.setCurrentIndex(sd.dof.findData(3))
+sd.kind.setCurrentIndex(sd.kind.findData("multilinear"))
+spec = sd.spec()
+check("spring dialog spec", spec["dof"] == 3 and spec["kind"] == "multilinear"
+      and spec["k"] > 0 and len(spec["curve"]) == 3)
+sd.close()
+
+from app.model import BoundaryConstraint, SpringSupport
+spring_tag = win.project.next_spring()
+win.project.springs[spring_tag] = SpringSupport(
+    spring_tag, target_node, dof=3, kind="linear", k=10.0)
+constraint_tag = win.project.next_constraint()
+other_node = next(t for t in win.project.nodes if t != target_node)
+win.project.constraints[constraint_tag] = BoundaryConstraint(
+    constraint_tag, "equal_dof", target_node, [other_node], [1, 2, 3])
+win.refresh_all()
+root_now = win.tree.topLevelItem(0)
+boundary = next(root_now.child(i) for i in range(root_now.childCount())
+                if root_now.child(i).text(0).startswith("Boundary"))
+boundary_names = [boundary.child(i).text(0).split("   ")[0]
+                  for i in range(boundary.childCount())]
+check("tree lists point springs and constraints",
+      "Point Springs" in boundary_names and "Constraints" in boundary_names)
+check("project stores spring and constraint",
+      spring_tag in win.project.springs
+      and constraint_tag in win.project.constraints)
+win.project.springs.pop(spring_tag, None)
+win.project.constraints.pop(constraint_tag, None)
+win.refresh_all()
 
 print("== save / load ==")
 tmp = os.path.join(tempfile.gettempdir(), "oss_roundtrip.ospj")

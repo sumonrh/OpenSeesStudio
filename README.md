@@ -103,6 +103,11 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
   the original. The plane is previewed in the viewport while the dialog is open.
 - Supports: fixed, pinned, roller Z, or any combination of 6 DOF.
+- **Point springs** (`zeroLength`): linear Elastic stiffness, multi-linear
+  force-deformation (`MultiLinear`), and **PySimple1** p-y springs for piles.
+  Springs are drawn at the node and connect to an automatically fixed ground point.
+- **Constraints**: `rigidLink` beam/bar, `equalDOF`, and `rigidDiaphragm`, created
+  from selected master/slave nodes and listed in the model tree.
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with a standard steel database and custom shapes. The database
   contains AISC (USA) and CISC (Canada) W, HP, M, S, rectangular/square hollow,
@@ -198,7 +203,7 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 ![results and model lock](docs/results_lock.png)
 
 **AI integration**
-- MCP server (80 tools) so AI agents can build models, run analyses and read
+- MCP server (86 tools) so AI agents can build models, run analyses and read
   results; optional live GUI bridge with screenshots, visibility and labels.
 
 **Project and scripting**
@@ -254,8 +259,9 @@ OpenSeesPy has no embedded help engine, so the FAQ summarizes the official OpenS
 documentation (model building, supports, singular-matrix errors, mass and modal
 analysis, convergence, hinges, ground motions, SRSS/CQC) and links to the
 [OpenSees Wiki](https://opensees.berkeley.edu/wiki/index.php/Main_Page), the
-[Command Language Manual](https://opensees.berkeley.edu/OpenSees/manuals/usermanual/OpenSeesCommandLanguageManualJune2006.pdf)
-and the [OpenSees documentation](https://opensees.github.io/OpenSeesDocumentation/).
+[Command Language Manual](https://opensees.berkeley.edu/OpenSees/manuals/usermanual/OpenSeesCommandLanguageManualJune2006.pdf),
+the [OpenSees documentation](https://opensees.github.io/OpenSeesDocumentation/)
+and the [OpenSeesPy documentation](https://openseespydoc.readthedocs.io/en/latest/).
 
 ## Script console and Tcl import
 
@@ -278,12 +284,13 @@ commands are reported in the message log.
 ## MCP server (AI agents)
 
 `mcp_server/` exposes OpenSees Studio to AI agents over the **Model Context
-Protocol** (stdio transport, 80 tools). Agents can build the whole model,
+Protocol** (stdio transport, 86 tools). Agents can build the whole model,
 run analyses and read results.
 
 **Tools** (grouped): project new/open/save/summary; nodes (single, list, line,
 move, copy, mirror, delete); elements (beam/truss/shell, update, delete,
-subdivide); material and section libraries; supports; load cases, nodal and
+subdivide); material and section libraries; supports, point springs and node
+constraints (rigid links, equalDOF, diaphragms); load cases, nodal and
 element loads, self weight, combinations; hinge material catalogue, hinge
 definitions and assignments; static, modal, pushover, time-history and
 response-spectrum analyses with result tools; ground-motion catalog and record
@@ -409,7 +416,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.5-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.6-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing
@@ -446,6 +453,7 @@ app/
   dialogs.py      node / element / copy / load / combination dialogs
   tables.py       spreadsheet model tables and load-case filter
   results.py      result viewer and CSV export
+  boundary_dialogs.py springs, rigid links, equalDOF and diaphragms
   runcontrol.py   analysis run-control checklist
   faq.py          FAQ dialog and official OpenSees links
   console.py      Python/Tcl script console

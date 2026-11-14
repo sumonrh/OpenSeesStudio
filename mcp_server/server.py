@@ -50,9 +50,10 @@ if str(ROOT) not in sys.path:
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
 
 from app import groundmotion, hinge_catalog, opsgen, tcl, wizards  # noqa: E402
-from app.model import (Element, ElementLoad, GroundMotionRecord,  # noqa: E402
-                       HingeDefinition, LoadCase, LoadCombination, Material,
-                       NodalLoad, Node, Project, ResponseSpectrumCase, Section,
+from app.model import (BoundaryConstraint, Element, ElementLoad,  # noqa: E402
+                       GroundMotionRecord, HingeDefinition, LoadCase,
+                       LoadCombination, Material, NodalLoad, Node, Project,
+                       ResponseSpectrumCase, Section, SpringSupport,
                        TimeHistoryCase, default_project)
 from mcp_server.gui import GuiClient  # noqa: E402
 
@@ -167,6 +168,8 @@ def _summary() -> dict:
         "materials": len(p.materials),
         "sections": len(p.sections),
         "supports": sum(1 for n in p.nodes.values() if any(n.support)),
+        "springs": len(p.springs),
+        "constraints": len(p.constraints),
         "load_cases": list(p.cases),
         "combinations": list(p.combos),
         "nodal_loads": len(p.nodal_loads),
@@ -229,7 +232,7 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.5",
+    version="1.0.6",
     instructions=(
         "OpenSees Studio is a graphical model generator and analysis GUI for "
         "OpenSees. Use these tools to build structural models and analyse them.\n\n"
@@ -242,11 +245,14 @@ server = MCPServer(
         "get_static_results. Use run_modal for periods and mode shapes.\n\n"
         "For nonlinear work call list_hinge_materials, add_hinge_definition and "
         "assign_hinges, then run_pushover (requires a lateral case and hinges). "
-        "Dynamic work uses add_ground_motion, configure_time_history, "
-        "run_time_history, configure_response_spectrum and run_response_spectrum. "
-        "generate_frame_2d/3d, generate_truss_2d/3d and generate_bridge create "
-        "complete models from parameters. import_tcl/export_tcl exchange models; "
-        "run_python and run_tcl execute scripts in the shared OpenSees domain.\n\n"
+        "Point springs use add_point_spring (Elastic, MultiLinear or PySimple1 p-y); "
+        "node constraints use add_constraint (rigid_beam, rigid_bar, equal_dof, "
+        "rigid_diaphragm). Dynamic work uses add_ground_motion, "
+        "configure_time_history, run_time_history, configure_response_spectrum and "
+        "run_response_spectrum. generate_frame_2d/3d, generate_truss_2d/3d and "
+        "generate_bridge create complete models from parameters. "
+        "import_tcl/export_tcl exchange models; run_python and run_tcl execute "
+        "scripts in the shared OpenSees domain.\n\n"
         "A running GUI can be attached with gui_connect (the app must be started "
         "with the --bridge flag); the model is then mirrored live. "
         "gui_set_visibility and gui_set_labels control the view, and "
@@ -596,6 +602,8 @@ def _replace_geometry() -> Project:
     p.nodal_loads.clear()
     p.elem_loads.clear()
     p.hinge_assignments.clear()
+    p.springs.clear()
+    p.constraints.clear()
     return p
 
 
@@ -915,6 +923,109 @@ def assign_supports(tags: List[int],
         _p().nodes[t].support = list(flags)
     _changed(f"supports on {len(tags)} node(s)")
     return {"ok": True, "nodes": list(tags), "dof": [1 if b else 0 for b in flags]}
+
+
+@server.tool()
+@_locked
+def add_point_spring(node: int, dof: int = 1, kind: str = "linear",
+                     k: float = 10.0,
+                     curve: Optional[List[List[float]]] = None,
+                     pult: float = 100.0, y50: float = 10.0,
+                     cd: float = 0.5, soil_type: int = 1) -> dict:
+    """Add a zeroLength point spring at a node (linear, multilinear or p-y).
+
+    dof: 1..6 (UX, UY, UZ, RX, RY, RZ). curve contains [displacement, force]
+    backbone points and is used for kind='multilinear'. PySimple1 is used for
+    kind='py' with translational DOFs.
+    """
+    p = _p()
+    if int(node) not in p.nodes:
+        raise ValueError(f"Unknown node {node}.")
+    if not 1 <= int(dof) <= 6:
+        raise ValueError("dof must be between 1 and 6.")
+    if kind not in ("linear", "multilinear", "py"):
+        raise ValueError("kind must be linear, multilinear or py.")
+    if kind == "py" and int(dof) > 3:
+        raise ValueError("PySimple1 springs need a translational DOF (1-3).")
+    points = [[float(u), float(f)] for u, f in (curve or [[0.0, 0.0], [1.0, 10.0]])]
+    if kind == "multilinear" and len(points) < 2:
+        raise ValueError("curve needs at least two points.")
+    for tag, existing in list(p.springs.items()):
+        if existing.node == int(node) and existing.dof == int(dof):
+            p.springs.pop(tag, None)
+    tag = p.next_spring()
+    p.springs[tag] = SpringSupport(
+        tag, int(node), dof=int(dof), kind=kind, k=float(k),
+        curve=points, pult=float(pult), y50=float(y50), cd=float(cd),
+        soil_type=int(soil_type))
+    _changed(f"add point spring {tag}")
+    return {"ok": True, **p.springs[tag].to_dict()}
+
+
+@server.tool()
+@_locked
+def list_springs() -> List[dict]:
+    """List point springs (zeroLength supports)."""
+    return [s.to_dict() for s in sorted(_p().springs.values(),
+                                        key=lambda s: s.tag)]
+
+
+@server.tool()
+@_locked
+def delete_point_spring(tag: int) -> dict:
+    """Delete a point spring."""
+    if int(tag) not in _p().springs:
+        raise ValueError(f"Unknown point spring {tag}.")
+    _p().springs.pop(int(tag), None)
+    _changed(f"delete point spring {tag}")
+    return {"ok": True}
+
+
+@server.tool()
+@_locked
+def add_constraint(kind: str, master: int, slaves: List[int],
+                   dofs: Optional[List[int]] = None, perp: int = 3) -> dict:
+    """Add a rigidLink beam/bar, equalDOF or rigidDiaphragm constraint.
+
+    kind: rigid_beam, rigid_bar, equal_dof or rigid_diaphragm.
+    """
+    p = _p()
+    if kind not in ("rigid_beam", "rigid_bar", "equal_dof", "rigid_diaphragm"):
+        raise ValueError("Invalid constraint kind.")
+    if int(master) not in p.nodes:
+        raise ValueError(f"Unknown master node {master}.")
+    slave_tags = [int(s) for s in slaves if int(s) in p.nodes]
+    if not slave_tags:
+        raise ValueError("No valid slave nodes.")
+    if int(master) in slave_tags:
+        raise ValueError("The master node cannot also be a slave.")
+    values = [int(d) for d in (dofs or [1, 2, 3])]
+    if kind == "equal_dof" and not any(1 <= d <= 6 for d in values):
+        raise ValueError("equal_dof needs at least one DOF (1-6).")
+    tag = p.next_constraint()
+    p.constraints[tag] = BoundaryConstraint(
+        tag, kind, int(master), slave_tags, values, int(perp))
+    _changed(f"add constraint {tag}")
+    return {"ok": True, **p.constraints[tag].to_dict()}
+
+
+@server.tool()
+@_locked
+def list_constraints() -> List[dict]:
+    """List rigid links, equalDOF constraints and rigid diaphragms."""
+    return [c.to_dict() for c in sorted(_p().constraints.values(),
+                                        key=lambda c: c.tag)]
+
+
+@server.tool()
+@_locked
+def delete_constraint(tag: int) -> dict:
+    """Delete a node constraint."""
+    if int(tag) not in _p().constraints:
+        raise ValueError(f"Unknown constraint {tag}.")
+    _p().constraints.pop(int(tag), None)
+    _changed(f"delete constraint {tag}")
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- #

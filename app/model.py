@@ -397,6 +397,84 @@ class HingeDefinition:
 
 LOAD_DIRECTIONS = ("local-y", "local-z", "Global X", "Global Y", "Global Z")
 
+SPRING_DOFS = ("UX", "UY", "UZ", "RX", "RY", "RZ")
+SPRING_KINDS = ("linear", "multilinear", "py")
+
+
+@dataclass
+class SpringSupport:
+    """A zeroLength point spring connecting a node to a fixed ground point."""
+
+    tag: int
+    node: int
+    dof: int = 1                 # 1..6, global DOF of the zeroLength element
+    kind: str = "linear"         # linear | multilinear | py
+    k: float = 10.0              # linear stiffness (force/length or moment/rad)
+    curve: List[List[float]] = field(
+        default_factory=lambda: [[0.0, 0.0], [1.0, 10.0]])
+    pult: float = 100.0          # PySimple1 ultimate force
+    y50: float = 10.0            # PySimple1 displacement at 50% capacity
+    cd: float = 0.5              # PySimple1 drag coefficient
+    soil_type: int = 1           # PySimple1 soil type (1 sand, 2 clay)
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return {"tag": self.tag, "node": self.node, "dof": self.dof,
+                "kind": self.kind, "k": self.k, "curve": [list(p) for p in self.curve],
+                "pult": self.pult, "y50": self.y50, "cd": self.cd,
+                "soil_type": self.soil_type, "note": self.note}
+
+    @staticmethod
+    def from_dict(d: dict) -> "SpringSupport":
+        s = SpringSupport(int(d.get("tag", 0)), int(d.get("node", 0)))
+        for key, value in (d or {}).items():
+            if key in ("tag", "node"):
+                continue
+            if key == "dof":
+                s.dof = int(value)
+            elif key == "soil_type":
+                s.soil_type = int(value)
+            elif key in ("k", "pult", "y50", "cd"):
+                setattr(s, key, _f(value))
+            elif key == "kind":
+                s.kind = str(value)
+            elif key == "note":
+                s.note = str(value)
+            elif key == "curve":
+                s.curve = [[_f(v) for v in pair] for pair in value]
+        return s
+
+
+CONSTRAINT_KINDS = ("rigid_beam", "rigid_bar", "equal_dof", "rigid_diaphragm")
+
+
+@dataclass
+class BoundaryConstraint:
+    """A rigid link, equalDOF or rigid diaphragm between nodes."""
+
+    tag: int
+    kind: str = "rigid_beam"
+    master: int = 0
+    slaves: List[int] = field(default_factory=list)
+    dofs: List[int] = field(default_factory=lambda: [1, 2, 3])
+    perp: int = 3
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return {"tag": self.tag, "kind": self.kind, "master": self.master,
+                "slaves": list(self.slaves), "dofs": list(self.dofs),
+                "perp": self.perp, "note": self.note}
+
+    @staticmethod
+    def from_dict(d: dict) -> "BoundaryConstraint":
+        c = BoundaryConstraint(int(d.get("tag", 0)), str(d.get("kind", "rigid_beam")),
+                               int(d.get("master", 0)))
+        c.slaves = [int(v) for v in d.get("slaves", [])]
+        c.dofs = [int(v) for v in d.get("dofs", [1, 2, 3])]
+        c.perp = int(d.get("perp", 3))
+        c.note = str(d.get("note", ""))
+        return c
+
 PUSHOVER_DEFAULTS = {
     "gravity_case": "",
     "lateral_case": "",
@@ -631,6 +709,8 @@ class Project:
         self.combos: Dict[str, LoadCombination] = {}
         self.hinge_defs: Dict[int, HingeDefinition] = {}
         self.hinge_assignments: Dict[int, int] = {}
+        self.springs: Dict[int, SpringSupport] = {}
+        self.constraints: Dict[int, BoundaryConstraint] = {}
         self.ground_motions: Dict[int, GroundMotionRecord] = {}
         self.time_history: TimeHistoryCase = TimeHistoryCase()
         self.response_spectrum: ResponseSpectrumCase = ResponseSpectrumCase()
@@ -657,6 +737,12 @@ class Project:
 
     def next_hinge(self) -> int:
         return self._next(self.hinge_defs.keys())
+
+    def next_spring(self) -> int:
+        return self._next(self.springs.keys())
+
+    def next_constraint(self) -> int:
+        return self._next(self.constraints.keys())
 
     def next_ground_motion(self) -> int:
         return self._next(self.ground_motions.keys())
@@ -804,6 +890,8 @@ class Project:
             "hinge_assignments": [
                 {"element": element, "hinge": hinge}
                 for element, hinge in self.hinge_assignments.items()],
+            "springs": [s.to_dict() for s in self.springs.values()],
+            "constraints": [c.to_dict() for c in self.constraints.values()],
             "ground_motions": [g.to_dict() for g in self.ground_motions.values()],
             "time_history": self.time_history.to_dict(),
             "response_spectrum": self.response_spectrum.to_dict(),
@@ -833,6 +921,10 @@ class Project:
                 continue
             if hinge in p.hinge_defs:
                 p.hinge_assignments[element] = hinge
+        p.springs = {s.tag: s for s in (
+            SpringSupport.from_dict(x) for x in d.get("springs", []))}
+        p.constraints = {c.tag: c for c in (
+            BoundaryConstraint.from_dict(x) for x in d.get("constraints", []))}
         p.time_history = TimeHistoryCase.from_dict(d.get("time_history", {}))
         p.ground_motions = {
             g.tag: g for g in (

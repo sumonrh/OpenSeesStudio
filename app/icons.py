@@ -524,6 +524,50 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.drawLine(QPointF(9.5, 12), QPointF(6.5, 15))
         p.drawLine(QPointF(12, 15), QPointF(17.5, 15))
 
+    elif name == "spring":
+        _pen(p, accent, 1.6)
+        p.drawLine(QPointF(3, 8), QPointF(7, 8))
+        path = [QPointF(7, 8), QPointF(8.5, 5), QPointF(11, 11),
+                QPointF(13.5, 5), QPointF(16, 11), QPointF(18, 8),
+                QPointF(21, 8)]
+        p.drawPolyline(QPolygonF(path))
+        _pen(p, INK, 1.4)
+        p.drawLine(QPointF(6, 12), QPointF(10, 12))
+        p.drawLine(QPointF(8, 12), QPointF(10, 15))
+        p.drawLine(QPointF(11, 12), QPointF(13, 15))
+        p.drawLine(QPointF(14, 12), QPointF(16, 15))
+
+    elif name == "rigid_link":
+        _pen(p, INK, 1.4)
+        p.drawLine(QPointF(5, 19), QPointF(19, 5))
+        _pen(p, accent, 3.0)
+        p.drawLine(QPointF(7, 17), QPointF(17, 7))
+        _fill(p, INK)
+        p.drawEllipse(QPointF(5, 19), 2.3, 2.3)
+        p.drawEllipse(QPointF(19, 5), 2.3, 2.3)
+
+    elif name == "equal_dof":
+        _pen(p, accent, 1.5)
+        p.drawLine(QPointF(5, 17), QPointF(19, 7))
+        _fill(p, INK)
+        p.drawEllipse(QPointF(5, 17), 2.2, 2.2)
+        p.drawEllipse(QPointF(19, 7), 2.2, 2.2)
+        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        p.setPen(QPen(QColor(accent)))
+        p.drawText(QPointF(10, 14), "=")
+
+    elif name == "diaphragm":
+        _pen(p, accent, 1.4)
+        poly = QPolygonF([QPointF(3, 18), QPointF(9, 5), QPointF(21, 9),
+                          QPointF(15, 21)])
+        p.drawPolygon(poly)
+        _pen(p, "#8ea6bd", 1.1, )
+        p.drawLine(QPointF(9, 5), QPointF(15, 21))
+        _fill(p, accent)
+        for point in (QPointF(3, 18), QPointF(9, 5), QPointF(21, 9),
+                      QPointF(15, 21)):
+            p.drawEllipse(point, 1.8, 1.8)
+
     elif name == "select_all":
         _pen(p, accent, 1.3)
         p.drawRect(QRectF(4, 4, 16, 16))

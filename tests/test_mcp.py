@@ -246,6 +246,22 @@ async def main():
             r = await call("import_tcl", {"path": tcl})
             check("import_tcl", r["nodes"] == 6, f"({r['nodes']} nodes)")
 
+            r = await call("add_point_spring",
+                           {"node": 2, "dof": 3, "kind": "linear", "k": 10.0})
+            spring = r["tag"]
+            check("add_point_spring", r["kind"] == "linear")
+            r = await call("add_constraint",
+                           {"kind": "equal_dof", "master": 1,
+                            "slaves": [2], "dofs": [1, 2]})
+            constraint = r["tag"]
+            check("add_constraint", r["kind"] == "equal_dof")
+            check("list_springs", len(await call("list_springs")) == 1)
+            check("list_constraints", len(await call("list_constraints")) == 1)
+            check("delete_point_spring",
+                  (await call("delete_point_spring", {"tag": spring}))["ok"])
+            check("delete_constraint",
+                  (await call("delete_constraint", {"tag": constraint}))["ok"])
+
             r = await call("gui_status")
             check("gui not connected", r["connected"] is False)
 

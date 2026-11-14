@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
-from . import dialogs, icons, opsgen, runcontrol, tablecopy, tcl, theme, wizards
+from . import (boundary_dialogs, dialogs, icons, opsgen, runcontrol,
+               tablecopy, tcl, theme, wizards)
 from .dnd import MODEL_ITEM_MIME
 from .faq import FaqDialog
 from .wizard_dialog import StructureWizard
@@ -25,8 +26,9 @@ from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .groundmotion_dialog import GroundMotionCatalogDialog
 from .hinges import AssignHingesDialog, HingeLibraryDialog
 from .hinge_catalog import MATERIALS as HINGE_MATERIALS
-from .model import (Element, LoadCase, LoadCombination, Material, NodalLoad,
-                    Node, Project, Section, default_project, fmt)
+from .model import (BoundaryConstraint, Element, LoadCase, LoadCombination,
+                    Material, NodalLoad, Node, Project, Section, SPRING_DOFS,
+                    SpringSupport, default_project, fmt)
 from .pushover import PushoverResultsDialog
 from .ribbon import Ribbon
 from .results import ResultsDialog
@@ -247,6 +249,18 @@ class MainWindow(QMainWindow):
                                   "Mirror selected nodes and elements about a "
                                   "coordinate plane")
         self.a_support = self._act("Supports", "support", self.assign_supports, "S")
+        self.a_spring = self._act(
+            "Point Spring", "spring", self.add_point_springs, "",
+            "Create zeroLength spring supports (linear, multi-linear or p-y)")
+        self.a_rigid_link = self._act(
+            "Rigid Link", "rigid_link", self.add_rigid_link, "",
+            "Connect master and slave nodes with a rigid beam or bar")
+        self.a_equal_dof = self._act(
+            "Equal DOF", "equal_dof", self.add_equal_dof, "",
+            "Tie selected DOFs of slave nodes to a master node")
+        self.a_diaphragm = self._act(
+            "Diaphragm", "diaphragm", self.add_diaphragm, "",
+            "Create a rigid diaphragm constraint about a global axis")
         self.a_material = self._act("Materials", "material", self.materials, "")
         self.a_section = self._act("Sections", "section", self.sections, "")
         self.a_tables = self._act("Tables", "tables", lambda: self.open_tables(0), "T")
@@ -390,6 +404,8 @@ class MainWindow(QMainWindow):
                              self.a_wiz_truss2d, self.a_wiz_truss3d, self.a_wiz_bridge,
                              self.a_copy, self.a_subdivide,
                              self.a_mirror, self.a_support, self.a_material,
+                             self.a_spring, self.a_rigid_link, self.a_equal_dof,
+                             self.a_diaphragm,
                              self.a_section, self.a_hinge_defs, self.a_hinge_assign,
                              self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
@@ -600,8 +616,13 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_tables)
 
         page = ribbon.add_tab("Boundary")
-        group = page.add_group("Supports")
+        group = page.add_group("Supports and springs")
         group.add_large(self.a_support)
+        group.add_large(self.a_spring)
+        group = page.add_group("Constraints")
+        group.add_large(self.a_rigid_link)
+        group.add_large(self.a_equal_dof)
+        group.add_large(self.a_diaphragm)
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Model data")
@@ -1328,6 +1349,21 @@ class MainWindow(QMainWindow):
         for label, key in (("Fixed", "fixed"), ("Pinned", "pinned"),
                            ("Roller Z", "roller_z")):
             add_child(g_preset, label, "support_preset", key)
+        g_spring = group("Point Springs", "springs", len(p.springs), b)
+        for s in sorted(p.springs.values(), key=lambda item: item.tag):
+            label = SPRING_DOFS[s.dof - 1] if 1 <= s.dof <= 6 else "?"
+            add_child(g_spring,
+                      f"S{s.tag}   node {s.node}   {label}   ({s.kind})",
+                      "spring", s.tag)
+        g_constraint = group("Constraints", "constraints", len(p.constraints), b)
+        labels = {"rigid_beam": "rigid beam", "rigid_bar": "rigid bar",
+                  "equal_dof": "equalDOF", "rigid_diaphragm": "diaphragm"}
+        for c in sorted(p.constraints.values(), key=lambda item: item.tag):
+            add_child(g_constraint,
+                      f"C{c.tag}   {labels.get(c.kind, c.kind)}   "
+                      f"{c.master} -> {len(c.slaves)} node(s)",
+                      "constraint", c.tag)
+        g_constraint.setToolTip(0, "Right-click a constraint to delete it.")
 
         ld = group("Loads", "loads")
         g_cases = group("Load Cases", "cases", len(p.cases), ld)
@@ -1512,6 +1548,12 @@ class MainWindow(QMainWindow):
             delete.triggered.connect(lambda: self._delete_load_case(tag))
             menu.exec(self.tree.viewport().mapToGlobal(pos))
             return
+        if kind in ("spring", "constraint"):
+            delete = menu.addAction("Delete")
+            delete.setEnabled(not self.model_locked)
+            delete.triggered.connect(lambda: self._delete_tree_entity(kind, tag))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
         if kind not in ("material", "section"):
             return
         select = menu.addAction("Select elements using this")
@@ -1607,6 +1649,18 @@ class MainWindow(QMainWindow):
         if self.model_locked:
             self._status("Model is locked - press Ctrl+L to unlock before editing.")
             return
+        if kind in ("spring", "constraint"):
+            collection = (self.project.springs if kind == "spring"
+                          else self.project.constraints)
+            if tag not in collection:
+                return
+            noun = "point spring" if kind == "spring" else "constraint"
+            if QMessageBox.question(self, f"Delete {noun}",
+                                    f"Delete {noun} {tag}?") != QMessageBox.Yes:
+                return
+            del collection[tag]
+            self._commit(f"Deleted {noun} {tag}")
+            return
         if kind == "material":
             collection = self.project.materials
             used = [e.tag for e in self.project.elements.values() if e.mat == tag]
@@ -1656,6 +1710,8 @@ class MainWindow(QMainWindow):
             f"<tr><td>Materials</td><td><b>{len(p.materials)}</b></td></tr>"
             f"<tr><td>Sections</td><td><b>{len(p.sections)}</b></td></tr>"
             f"<tr><td>Supports</td><td><b>{sum(1 for n in p.nodes.values() if any(n.support))}</b></td></tr>"
+            f"<tr><td>Point springs</td><td><b>{len(p.springs)}</b></td></tr>"
+            f"<tr><td>Constraints</td><td><b>{len(p.constraints)}</b></td></tr>"
             f"<tr><td>Load cases</td><td><b>{len(p.cases)}</b></td></tr>"
             f"<tr><td>Nodal loads</td><td><b>{len(p.nodal_loads)}</b></td></tr>"
             f"<tr><td>Element loads</td><td><b>{len(p.elem_loads)}</b></td></tr>"
@@ -1724,8 +1780,9 @@ class MainWindow(QMainWindow):
                       p.settings.get("length_unit", "m"))
         for attr in ("nodes", "elements", "materials", "sections", "cases",
                      "nodal_loads", "elem_loads", "self_weight", "combos",
-                     "hinge_defs", "hinge_assignments", "ground_motions",
-                     "time_history", "response_spectrum", "settings", "title"):
+                     "hinge_defs", "hinge_assignments", "springs", "constraints",
+                     "ground_motions", "time_history", "response_spectrum",
+                     "settings", "title"):
             setattr(p, attr, getattr(other, attr))
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
@@ -2226,6 +2283,8 @@ class MainWindow(QMainWindow):
             self.project.nodal_loads.clear()
             self.project.elem_loads.clear()
             self.project.hinge_assignments.clear()
+            self.project.springs.clear()
+            self.project.constraints.clear()
         self.viewport.clear_selection()
         nodes, elements = wizards.generate(self.project, spec)
         title = wizards.WIZARDS[kind][0]
@@ -2396,6 +2455,96 @@ class MainWindow(QMainWindow):
             if n:
                 n.support = list(support)
         self._commit(f"Assigned supports to {len(targets)} node(s)")
+
+    def add_point_springs(self) -> None:
+        if self.model_locked:
+            self._warn("The model is locked. Press Ctrl+L to unlock before editing.")
+            return
+        if not self.project.nodes:
+            self._warn("Create nodes first.")
+            return
+        dlg = boundary_dialogs.SpringDialog(
+            self.project, sorted(self.viewport.sel_nodes), self)
+        if not dlg.exec():
+            return
+        targets = dlg.targets()
+        if not targets:
+            self._warn("Specify at least one valid node for the spring.")
+            return
+        spec = dlg.spec()
+        if spec["kind"] == "py" and int(spec["dof"]) > 3:
+            self._warn("PySimple1 springs apply to translational DOFs only.")
+            return
+        if spec["kind"] == "multilinear" and len(spec["curve"]) < 2:
+            self._warn("Enter at least two force-deformation points.")
+            return
+        for node in targets:
+            for tag, spring in list(self.project.springs.items()):
+                if spring.node == node and spring.dof == spec["dof"]:
+                    del self.project.springs[tag]
+            tag = self.project.next_spring()
+            self.project.springs[tag] = SpringSupport(tag, node, **spec)
+        self._commit(
+            f"Created {len(targets)} point spring(s) on DOF {spec['dof']}")
+
+    def _add_constraint(self, dlg) -> None:
+        if self.model_locked:
+            self._warn("The model is locked. Press Ctrl+L to unlock before editing.")
+            return
+        spec = dlg.spec()
+        if not spec["slaves"]:
+            self._warn("Specify at least one valid slave node.")
+            return
+        if spec["kind"] == "equal_dof" and not spec["dofs"]:
+            self._warn("Select at least one DOF to tie.")
+            return
+        tag = self.project.next_constraint()
+        self.project.constraints[tag] = BoundaryConstraint(tag, **spec)
+        label = {
+            "rigid_beam": "rigid beam link",
+            "rigid_bar": "rigid bar link",
+            "equal_dof": "equalDOF constraint",
+            "rigid_diaphragm": "rigid diaphragm",
+        }.get(spec["kind"], spec["kind"])
+        self._commit(f"Created {label} {tag}")
+
+    def add_rigid_link(self) -> None:
+        if not self.project.nodes:
+            self._warn("Create nodes first.")
+            return
+        dlg = boundary_dialogs.RigidLinkDialog(
+            self.project, sorted(self.viewport.sel_nodes), self)
+        if dlg.exec():
+            self._add_constraint(dlg)
+
+    def add_equal_dof(self) -> None:
+        if not self.project.nodes:
+            self._warn("Create nodes first.")
+            return
+        dlg = boundary_dialogs.EqualDOFDialog(
+            self.project, sorted(self.viewport.sel_nodes), self)
+        if dlg.exec():
+            self._add_constraint(dlg)
+
+    def add_diaphragm(self) -> None:
+        if not self.project.nodes:
+            self._warn("Create nodes first.")
+            return
+        dlg = boundary_dialogs.DiaphragmDialog(
+            self.project, sorted(self.viewport.sel_nodes), self)
+        if dlg.exec():
+            self._add_constraint(dlg)
+
+    def _delete_boundary(self, kind: str, tag: int) -> None:
+        if self.model_locked:
+            self._warn("The model is locked. Press Ctrl+L to unlock before editing.")
+            return
+        if kind == "spring":
+            self.project.springs.pop(int(tag), None)
+            self._commit(f"Deleted point spring {tag}")
+        else:
+            self.project.constraints.pop(int(tag), None)
+            self._commit(f"Deleted constraint {tag}")
 
     def materials(self) -> None:
         dlg = dialogs.MaterialDialog(self.project, self)
