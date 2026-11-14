@@ -608,6 +608,9 @@ sd.kind.setCurrentIndex(sd.kind.findData("multilinear"))
 spec = sd.spec()
 check("spring dialog spec", spec["dof"] == 3 and spec["kind"] == "multilinear"
       and spec["k"] > 0 and len(spec["curve"]) == 3)
+check("spring curve converts display units",
+      spec["curve"][1] == [1000.0, 10.0],
+      f"({spec['curve'][1]})")
 sd.close()
 
 from app.model import BoundaryConstraint, SpringSupport

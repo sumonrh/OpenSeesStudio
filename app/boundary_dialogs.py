@@ -161,7 +161,10 @@ class SpringDialog(BaseDialog):
                 f = float(f_item.text())
             except ValueError:
                 continue
-            points.append([u, f])
+            if dof <= 3:
+                points.append([UNITS.length_base(u), UNITS.force_base(f)])
+            else:
+                points.append([u, UNITS.moment_base(f)])
         return {"dof": dof, "kind": kind, "k": k,
                 "curve": points, "pult": pult, "y50": y50,
                 "cd": self.cd.value(), "soil_type": int(self.soil.currentData())}

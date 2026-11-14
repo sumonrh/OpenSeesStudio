@@ -400,9 +400,12 @@ def build(project: Project, scenario: Optional[str] = None,
         elif spring.kind == "multilinear":
             points = sorted(([float(u), float(f)] for u, f in spring.curve
                              if float(u) > _EPS), key=lambda pair: pair[0])
-            if len(points) < 2:
+            if not points:
                 points = [[1.0, max(float(spring.k), 1e-12)],
                           [2.0, 2.0 * max(float(spring.k), 1e-12)]]
+            elif len(points) == 1:
+                u0, f0 = points[0]
+                points.append([2.0 * u0, 2.0 * f0])
             args = []
             for u, f in points:
                 args.extend([u, f])
@@ -1485,9 +1488,12 @@ def export_tcl(project: Project) -> str:
                 A(f"uniaxialMaterial Elastic {mat} {_num(max(spring.k, 1e-12))}")
             elif spring.kind == "multilinear":
                 pts = sorted((u, f) for u, f in spring.curve if u > 1e-9)
-                if len(pts) < 2:
+                if not pts:
                     pts = [(1.0, max(spring.k, 1e-12)),
                            (2.0, 2.0 * max(spring.k, 1e-12))]
+                elif len(pts) == 1:
+                    u0, f0 = pts[0]
+                    pts.append((2.0 * u0, 2.0 * f0))
                 args = " ".join(f"{_num(u)} {_num(f)}" for u, f in pts)
                 A(f"uniaxialMaterial MultiLinear {mat} {args}")
             else:

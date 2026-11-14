@@ -416,7 +416,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.6-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.7-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing
