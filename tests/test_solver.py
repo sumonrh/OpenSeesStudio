@@ -379,6 +379,34 @@ check("ground-motion catalog persists",
 check("response-spectrum case persists",
       len(cloned_rs.response_spectrum.periods), 4, 0)
 
+print("== structure wizard models solve ==")
+from app import wizards  # noqa: E402
+
+
+def wizard_model(kind):
+    p = default_project()
+    spec = {"kind": kind, "mat": 1}
+    if kind.startswith("frame"):
+        spec.update(bays_x=3, bays_y=2 if kind == "frame3d" else 0,
+                    bay_width=6000.0, bay_depth=5000.0, storeys=3,
+                    storey_height=3500.0, col_sec=1, beam_sec=1)
+    elif kind.startswith("truss"):
+        spec.update(panels=6, panel_width=4000.0, height=4000.0,
+                    width=4000.0, sec=1)
+    else:
+        spec.update(spans=3, span_length=30000.0, width=12000.0, girders=5,
+                    cross_spacing=5000.0, girder_sec=2, cross_sec=2)
+    wizards.generate(p, spec)
+    return p
+
+
+for kind in ("frame2d", "frame3d", "truss2d", "truss3d", "bridge"):
+    model = wizard_model(kind)
+    res = opsgen.run_static(model, "DL")
+    peak = max(abs(v) for vec in res.displacements.values() for v in vec)
+    check(f"{kind} wizard solves under self weight",
+          1 if math.isfinite(peak) and peak > 0.0 else 0, 1, 0)
+
 print()
 if FAILS:
     print("FAILURES:", FAILS)

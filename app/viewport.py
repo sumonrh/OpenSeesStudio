@@ -146,7 +146,8 @@ class Viewport(QWidget):
         self.show_elements = True
         self.show_supports = True
         self.show_loads = True
-        self.show_labels = False
+        self.show_node_labels = False
+        self.show_element_labels = False
         self.show_grid = True
         self.show_axes = True
         self.wireframe = True
@@ -593,26 +594,25 @@ class Viewport(QWidget):
                 p.drawEllipse(QPointF(s[0], s[1]), r, r)
 
         # ---- labels ----------------------------------------------------
-        if self.show_labels:
+        if self.show_node_labels and len(proj) <= 900:
             p.setFont(QFont("Segoe UI", 7))
             p.setPen(QPen(QColor("#41566e")))
             for tag, s in proj.items():
                 if not self.is_node_visible(tag):
                     continue
-                if len(proj) > 900:
-                    break
                 p.drawText(QPointF(s[0] + 6, s[1] - 5), str(tag))
-            if len(self.project.elements) <= 600:
-                p.setPen(QPen(QColor("#7b8ea3")))
-                for tag, e in self.project.elements.items():
-                    if not self.is_element_visible(tag, e):
-                        continue
-                    pts = [proj.get(t) for t in e.nodes]
-                    if any(s is None for s in pts) or not pts:
-                        continue
-                    mx = sum(s[0] for s in pts) / len(pts)
-                    my = sum(s[1] for s in pts) / len(pts)
-                    p.drawText(QPointF(mx + 3, my + 12), str(tag))
+        if self.show_element_labels and len(self.project.elements) <= 600:
+            p.setFont(QFont("Segoe UI", 7))
+            p.setPen(QPen(QColor("#7b8ea3")))
+            for tag, e in self.project.elements.items():
+                if not self.is_element_visible(tag, e):
+                    continue
+                pts = [proj.get(t) for t in e.nodes]
+                if any(s is None for s in pts) or not pts:
+                    continue
+                mx = sum(s[0] for s in pts) / len(pts)
+                my = sum(s[1] for s in pts) / len(pts)
+                p.drawText(QPointF(mx + 3, my + 12), str(tag))
 
         # ---- element drawing preview ----------------------------------
         if (self.draw_element_mode and self.project
@@ -1142,12 +1142,12 @@ class Viewport(QWidget):
         """Draw a uniform or trapezoidal beam load with a proper envelope."""
         dx, dy = b[0] - a[0], b[1] - a[1]
         px_len = math.hypot(dx, dy)
-        n = max(3, min(12, int(px_len / 38.0) + 1))
+        n = max(2, min(13, int(px_len / 38.0) + 1))
         peak = max(abs(v1), abs(v2), 1e-9)
         tails = []
         bases = []
         for i in range(n):
-            t = (i + 0.5) / n
+            t = i / (n - 1)
             value = v1 + (v2 - v1) * t
             sd = self._screen_dir(world_dir, value)
             if sd is None:
@@ -1275,6 +1275,15 @@ class Viewport(QWidget):
 
     def mousePressEvent(self, ev) -> None:
         self.setFocus()
+        if self.draw_element_mode and ev.button() == Qt.RightButton:
+            self.set_draw_element_mode(False)
+            self.drawModeCancelled.emit()
+            self.statusMessage.emit("Draw element finished.")
+            self._press = None
+            self._band = None
+            self._moved = False
+            self.update()
+            return
         if ev.button() == Qt.LeftButton and self.draw_element_mode:
             self._handle_draw_click(ev.position().toPoint())
             self._press = None

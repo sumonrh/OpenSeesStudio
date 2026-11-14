@@ -423,6 +423,89 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.setFont(QFont("Segoe UI", 7, QFont.Bold))
         p.drawText(QPointF(7.6, 15.5), "A")
 
+    elif name == "node_label":
+        _pen(p, INK, 1.3)
+        path = QPainterPath()
+        path.moveTo(3, 6); path.lineTo(14, 6); path.lineTo(21, 12)
+        path.lineTo(14, 18); path.lineTo(3, 18); path.closeSubpath()
+        _fill(p, "#ffffff")
+        p.drawPath(path)
+        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.drawText(QPointF(7.4, 15.5), "N")
+
+    elif name == "element_label":
+        _pen(p, INK, 1.3)
+        path = QPainterPath()
+        path.moveTo(3, 6); path.lineTo(14, 6); path.lineTo(21, 12)
+        path.lineTo(14, 18); path.lineTo(3, 18); path.closeSubpath()
+        _fill(p, "#ffffff")
+        p.drawPath(path)
+        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.drawText(QPointF(7.4, 15.5), "E")
+
+    elif name == "frame2d":
+        _pen(p, accent, 1.7)
+        p.drawLine(QPointF(4.5, 20.5), QPointF(4.5, 6.5))
+        p.drawLine(QPointF(19.5, 20.5), QPointF(19.5, 6.5))
+        p.drawLine(QPointF(4.5, 6.5), QPointF(19.5, 6.5))
+        _pen(p, "#8ea6bd", 1.5)
+        p.drawLine(QPointF(4.5, 13.5), QPointF(19.5, 13.5))
+
+    elif name == "frame3d":
+        _pen(p, accent, 1.5)
+        p.drawLine(QPointF(3.5, 20.0), QPointF(3.5, 9.0))
+        p.drawLine(QPointF(13.5, 20.0), QPointF(13.5, 9.0))
+        p.drawLine(QPointF(3.5, 9.0), QPointF(13.5, 9.0))
+        _pen(p, "#8ea6bd", 1.3)
+        p.drawLine(QPointF(9.5, 16.0), QPointF(9.5, 5.0))
+        p.drawLine(QPointF(19.5, 16.0), QPointF(19.5, 5.0))
+        p.drawLine(QPointF(9.5, 5.0), QPointF(19.5, 5.0))
+        p.drawLine(QPointF(3.5, 9.0), QPointF(9.5, 5.0))
+        p.drawLine(QPointF(13.5, 9.0), QPointF(19.5, 5.0))
+        p.drawLine(QPointF(3.5, 20.0), QPointF(9.5, 16.0))
+        p.drawLine(QPointF(13.5, 20.0), QPointF(19.5, 16.0))
+
+    elif name == "truss2d":
+        _pen(p, accent, 1.5)
+        p.drawLine(QPointF(3, 19.5), QPointF(21, 19.5))
+        p.drawLine(QPointF(3, 7.5), QPointF(21, 7.5))
+        for x in (3, 9, 15, 21):
+            p.drawLine(QPointF(x, 7.5), QPointF(x, 19.5))
+        p.drawLine(QPointF(3, 19.5), QPointF(9, 7.5))
+        p.drawLine(QPointF(9, 7.5), QPointF(15, 19.5))
+        p.drawLine(QPointF(15, 19.5), QPointF(21, 7.5))
+
+    elif name == "truss3d":
+        _pen(p, accent, 1.4)
+        p.drawLine(QPointF(2.5, 19.0), QPointF(15.5, 19.0))
+        p.drawLine(QPointF(2.5, 9.0), QPointF(15.5, 9.0))
+        p.drawLine(QPointF(2.5, 19.0), QPointF(2.5, 9.0))
+        p.drawLine(QPointF(15.5, 19.0), QPointF(15.5, 9.0))
+        p.drawLine(QPointF(2.5, 19.0), QPointF(9.0, 9.0))
+        p.drawLine(QPointF(9.0, 9.0), QPointF(15.5, 19.0))
+        _pen(p, "#8ea6bd", 1.2)
+        p.drawLine(QPointF(8.5, 15.0), QPointF(21.5, 15.0))
+        p.drawLine(QPointF(8.5, 5.0), QPointF(21.5, 5.0))
+        p.drawLine(QPointF(8.5, 15.0), QPointF(8.5, 5.0))
+        p.drawLine(QPointF(21.5, 15.0), QPointF(21.5, 5.0))
+        p.drawLine(QPointF(2.5, 9.0), QPointF(8.5, 5.0))
+        p.drawLine(QPointF(15.5, 9.0), QPointF(21.5, 5.0))
+        p.drawLine(QPointF(2.5, 19.0), QPointF(8.5, 15.0))
+        p.drawLine(QPointF(15.5, 19.0), QPointF(21.5, 15.0))
+
+    elif name == "bridge":
+        _pen(p, "#8ea6bd", 1.7)
+        p.drawLine(QPointF(7.0, 12.0), QPointF(7.0, 21.0))
+        p.drawLine(QPointF(17.0, 12.0), QPointF(17.0, 21.0))
+        p.drawLine(QPointF(3.5, 21.0), QPointF(20.5, 21.0))
+        _pen(p, accent, 2.2)
+        p.drawLine(QPointF(2.0, 11.0), QPointF(22.0, 11.0))
+        _pen(p, accent, 1.3)
+        p.drawLine(QPointF(2.0, 13.5), QPointF(22.0, 13.5))
+        for x in (7.0, 17.0):
+            p.drawLine(QPointF(x - 1.6, 13.5), QPointF(x + 1.6, 11.0))
+            p.drawLine(QPointF(x + 1.6, 13.5), QPointF(x - 1.6, 11.0))
+
     elif name == "select_all":
         _pen(p, accent, 1.3)
         p.drawRect(QRectF(4, 4, 16, 16))

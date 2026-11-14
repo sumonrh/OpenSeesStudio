@@ -64,8 +64,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Ribbon tabs (View, Structure, Node/Element, Properties, Boundary, Load, Analysis,
   Pushover, Results, Tools) with command groups and captions.
 - Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
-  vertical view strip (fit, iso, top, front, right, orbit, labels, grid, deformed,
-  extruded).
+  vertical view strip (fit, iso, top, front, right, orbit, node labels, element
+  labels, grid, deformed, extruded).
 - Model, Properties and Messages panels can be collapsed and restored from
   **View > Panels**.
 - **Clean View** hides deformation, loads and labels for a plain structural view.
@@ -77,6 +77,11 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 ![standard steel section library](docs/section_dialog.png)
 
 **Structure**
+- Structure tab wizards generate complete models: **2D Frame**, **3D Frame**,
+  **2D Truss**, **3D Truss**, and a multi-span **Girder Bridge** grillage with
+  longitudinal girders, transverse cross beams, pier supports and self weight.
+  Each wizard takes bays/panels, dimensions, spans, material and sections from the
+  project libraries and asks before replacing an existing model.
 - Create nodes by coordinates, with repetition and spacing.
 - Create beams (`elasticBeamColumn`), trusses and 4-node shells (`ShellMITC4`).
 - **Batch Element** creates beam/truss/shell elements from a selected node list;
@@ -228,7 +233,7 @@ and time-history analysis is in
 Press **O** (or the Orbit ribbon button) for AutoCAD-style orbit mode, where left-drag rotates
 the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the selection.
 In **Draw Element** mode, left-click a start node and then an end node; the end node
-becomes the next start. Esc or **Finish** ends the tool.
+becomes the next start. **Right-click**, **Esc** or **Finish** ends the tool.
 
 ## MCP server (AI agents)
 
@@ -362,7 +367,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.1-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.2-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

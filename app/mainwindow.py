@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
                                QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
-from . import dialogs, icons, opsgen, theme
+from . import dialogs, icons, opsgen, theme, wizards
 from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .groundmotion_dialog import GroundMotionCatalogDialog
 from .hinges import AssignHingesDialog, HingeLibraryDialog
@@ -123,7 +123,8 @@ class MainWindow(QMainWindow):
         self._log(f"OpenSees Studio ready. Display units: {UNITS.label()}.")
         self._log("Start with Structure > New Nodes (N), then Batch Element (E) "
                   "or Draw Element.")
-        self._log("Use the ribbon tabs above the viewport to create, load and analyse.")
+        self._log("Use the Structure tab wizards to generate frames, trusses "
+                  "and girder bridges.")
         self._shown = False
 
     def showEvent(self, event) -> None:
@@ -184,6 +185,21 @@ class MainWindow(QMainWindow):
             checkable=True)
         self.a_draw_element.triggered.disconnect()
         self.a_draw_element.toggled.connect(self.toggle_draw_element)
+        self.a_wiz_frame2d = self._act(
+            "2D Frame", "frame2d", lambda *_: self.run_wizard("frame2d"), "",
+            "Generate a 2D moment frame from bays, storeys and sections")
+        self.a_wiz_frame3d = self._act(
+            "3D Frame", "frame3d", lambda *_: self.run_wizard("frame3d"), "",
+            "Generate a 3D moment frame from bays, storeys and sections")
+        self.a_wiz_truss2d = self._act(
+            "2D Truss", "truss2d", lambda *_: self.run_wizard("truss2d"), "",
+            "Generate a simply supported planar truss")
+        self.a_wiz_truss3d = self._act(
+            "3D Truss", "truss3d", lambda *_: self.run_wizard("truss3d"), "",
+            "Generate a rectangular space truss")
+        self.a_wiz_bridge = self._act(
+            "Girder Bridge", "bridge", lambda *_: self.run_wizard("bridge"), "",
+            "Generate a multi-span concrete or steel girder bridge grillage")
         self.a_copy = self._act("Copy / Move", "copy", self.copy_move, "C")
         self.a_subdivide = self._act("Subdivide", "subdivide", self.subdivide, "",
                                      "Split selected beam or truss elements into "
@@ -222,8 +238,12 @@ class MainWindow(QMainWindow):
         self.a_orbit = self._act("Orbit", "rotate", self._toggle_orbit, "O",
                                  "3D orbit: left-drag rotates the model "
                                  "(Shift+left or Shift+middle always orbits)", checkable=True)
-        self.a_labels = self._act("Labels", "label", lambda on: self._toggle(labels=on),
-                                  "", checkable=True)
+        self.a_node_labels = self._act(
+            "Node Labels", "node_label", lambda on: self._toggle(node_labels=on), "",
+            "Show node tags in the viewport", checkable=True)
+        self.a_element_labels = self._act(
+            "Element Labels", "element_label", lambda on: self._toggle(element_labels=on), "",
+            "Show element tags in the viewport", checkable=True)
         self.a_grid = self._act("Grid", "grid", lambda on: self._toggle(grid=on),
                                 "", checkable=True)
         self.a_grid.setChecked(True)
@@ -321,6 +341,8 @@ class MainWindow(QMainWindow):
         self.a_about = self._act("About", "about", self.about, "")
 
         self.edit_actions = (self.a_nodes, self.a_elements, self.a_draw_element,
+                             self.a_wiz_frame2d, self.a_wiz_frame3d,
+                             self.a_wiz_truss2d, self.a_wiz_truss3d, self.a_wiz_bridge,
                              self.a_copy, self.a_subdivide,
                              self.a_mirror, self.a_support, self.a_material,
                              self.a_section, self.a_hinge_defs, self.a_hinge_assign,
@@ -330,11 +352,13 @@ class MainWindow(QMainWindow):
                              self.a_settings, self.a_ground_motion,
                              self.a_gm_catalog, self.a_spectrum_case)
 
-    def _toggle(self, labels=None, grid=None, deformed=None, loads=None, supports=None,
-                extruded=None, nodes=None) -> None:
+    def _toggle(self, node_labels=None, element_labels=None, grid=None, deformed=None,
+                loads=None, supports=None, extruded=None, nodes=None) -> None:
         kw = {}
-        if labels is not None:
-            kw["show_labels"] = labels
+        if node_labels is not None:
+            kw["show_node_labels"] = node_labels
+        if element_labels is not None:
+            kw["show_element_labels"] = element_labels
         if grid is not None:
             kw["show_grid"] = grid
         if deformed is not None:
@@ -375,10 +399,11 @@ class MainWindow(QMainWindow):
         self.viewport.stop_animation()
         self.viewport.clear_diagrams()
         self.viewport.set_show(show_deformed=False, show_loads=False,
-                               show_labels=False)
+                               show_node_labels=False, show_element_labels=False)
         for action, state in ((self.a_deformed, False),
                               (self.a_loads_visible, False),
-                              (self.a_labels, False),
+                              (self.a_node_labels, False),
+                              (self.a_element_labels, False),
                               (self.a_animate, False),
                               (self.a_beam_diagram, False),
                               (self.a_deformation, False)):
@@ -391,6 +416,10 @@ class MainWindow(QMainWindow):
         self.viewport.set_orbit_mode(bool(checked))
 
     def _escape(self) -> None:
+        if self.viewport.draw_element_mode:
+            self._cancel_draw_mode()
+            self._status("Draw element finished")
+            return
         if self.viewport.orbit_mode:
             self.a_orbit.setChecked(False)
             self.viewport.set_orbit_mode(False)
@@ -476,7 +505,8 @@ class MainWindow(QMainWindow):
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right):
             group.add_large(action)
         group = page.add_group("Display")
-        group.add_column((self.a_orbit, self.a_nodes_visible, self.a_labels, self.a_grid))
+        group.add_column((self.a_orbit, self.a_nodes_visible,
+                          self.a_node_labels, self.a_element_labels, self.a_grid))
         group = page.add_group("Visibility")
         group.add_large(self.a_activate)
         group.add_large(self.a_deactivate)
@@ -489,18 +519,14 @@ class MainWindow(QMainWindow):
         group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible))
 
         page = ribbon.add_tab("Structure")
-        group = page.add_group("Model")
-        group.add_large(self.a_nodes)
-        group.add_large(self.a_elements)
-        group.add_large(self.a_draw_element)
-        group = page.add_group("Edit")
-        group.add_large(self.a_copy)
-        group.add_large(self.a_subdivide)
-        group.add_large(self.a_mirror)
-        group = page.add_group("Selection")
-        group.add_column((self.a_sel_all, self.a_deselect, self.a_delete))
-        group = page.add_group("Model data")
-        group.add_large(self.a_tables)
+        group = page.add_group("Frame wizards")
+        group.add_large(self.a_wiz_frame2d)
+        group.add_large(self.a_wiz_frame3d)
+        group = page.add_group("Truss wizards")
+        group.add_large(self.a_wiz_truss2d)
+        group.add_large(self.a_wiz_truss3d)
+        group = page.add_group("Bridge wizard")
+        group.add_large(self.a_wiz_bridge)
 
         page = ribbon.add_tab("Node/Element")
         group = page.add_group("Nodes")
@@ -642,7 +668,8 @@ class MainWindow(QMainWindow):
         views.setToolButtonStyle(Qt.ToolButtonIconOnly)
         views.setIconSize(QSize(18, 18))
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right,
-                       None, self.a_orbit, self.a_labels, self.a_grid, self.a_deformed,
+                       None, self.a_orbit, self.a_node_labels, self.a_element_labels,
+                       self.a_grid, self.a_deformed,
                        self.a_extruded, self.a_clean_view, None, self.a_fit_sel):
             if action is None:
                 views.addSeparator()
@@ -880,21 +907,21 @@ class MainWindow(QMainWindow):
         draw_lay.setContentsMargins(8, 8, 8, 8)
         draw_lay.addWidget(dialogs.hint(
             "Click a start node, then an end node. The end node becomes the "
-            "next start; press Esc or Finish to stop."))
+            "next start. Right-click, Esc or Finish ends the tool."))
         draw_form = QFormLayout()
         self.draw_material = QComboBox()
         self.draw_section = QComboBox()
         draw_form.addRow("Material", self.draw_material)
         draw_form.addRow("Section", self.draw_section)
         draw_lay.addLayout(draw_form)
+        finish = QPushButton("Finish  (Esc / right-click)")
+        finish.clicked.connect(
+            lambda: self.a_draw_element.setChecked(False))
+        draw_lay.addWidget(finish)
         self.draw_info = QLabel("")
         self.draw_info.setWordWrap(True)
         self.draw_info.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
         draw_lay.addWidget(self.draw_info)
-        finish = QPushButton("Finish")
-        finish.clicked.connect(
-            lambda: self.a_draw_element.setChecked(False))
-        draw_lay.addWidget(finish)
         draw_lay.addStretch(1)
         draw_dock = QDockWidget("Draw Element", self)
         draw_dock.setObjectName("draw_dock")
@@ -1965,6 +1992,46 @@ class MainWindow(QMainWindow):
         self.viewport.select_elements([tag])
         self._status(f"Draw Element: created element {tag} from node {start} "
                      f"to node {end}; continue from node {end}.")
+
+    def run_wizard(self, kind: str) -> None:
+        if not self.project.materials or not self.project.sections:
+            self._warn("Create at least one material and section before "
+                       "using a structure wizard.")
+            return
+        self._cancel_draw_mode()
+        dlg = wizards.StructureWizard(self.project, kind, self)
+        if not dlg.exec():
+            return
+        spec = dlg.spec()
+        if spec["mat"] not in self.project.materials:
+            self._warn("Select a valid material in the wizard.")
+            return
+        for key in ("col_sec", "beam_sec", "sec", "girder_sec", "cross_sec"):
+            if key in spec and spec[key] not in self.project.sections:
+                self._warn("Select a valid section in the wizard.")
+                return
+        if self.project.nodes or self.project.elements:
+            answer = QMessageBox.question(
+                self, "Replace model?",
+                f"The current model has {len(self.project.nodes)} nodes and "
+                f"{len(self.project.elements)} elements.\n\n"
+                "Replace it with the wizard model? Loads and results are cleared.")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._cancel_draw_mode()
+            self.project.nodes.clear()
+            self.project.elements.clear()
+            self.project.nodal_loads.clear()
+            self.project.elem_loads.clear()
+            self.project.hinge_assignments.clear()
+        self.viewport.clear_selection()
+        nodes, elements = wizards.generate(self.project, spec)
+        title = wizards.WIZARDS[kind][0]
+        if self.project.title in ("", "Untitled"):
+            self.project.title = title
+        self.viewport.clear_visibility()
+        self._commit(f"Generated {title}: {nodes} nodes, {elements} elements")
+        self.viewport.fit()
 
     def subdivide(self) -> None:
         selected = sorted(self.viewport.sel_elements)

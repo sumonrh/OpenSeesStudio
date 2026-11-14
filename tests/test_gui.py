@@ -250,6 +250,16 @@ check("clean view moved to vertical sidebar",
       win.a_clean_view in win.quick_view_toolbar.actions()
       and all(b.defaultAction() is not win.a_clean_view
               for b in view_page.findChildren(QToolButton)))
+structure_page = win.ribbon._pages[1]
+structure_actions = [b.defaultAction() for b in structure_page.findChildren(QToolButton)]
+check("structure tab has five wizards",
+      all(a in structure_actions for a in
+          (win.a_wiz_frame2d, win.a_wiz_frame3d, win.a_wiz_truss2d,
+           win.a_wiz_truss3d, win.a_wiz_bridge)))
+check("structure tab has no duplicated node/element commands",
+      all(a not in structure_actions for a in
+          (win.a_nodes, win.a_elements, win.a_draw_element, win.a_copy,
+           win.a_subdivide, win.a_mirror, win.a_delete, win.a_tables)))
 check("nodes action on horizontal toolbar",
       win.a_nodes_visible in win.quick_toolbar.actions())
 nodes_before = win.viewport.show_nodes
@@ -316,7 +326,17 @@ win.a_extruded.trigger()
 win.clean_view()
 check("clean view hides results and loads",
       not win.viewport.show_deformed and not win.viewport.show_loads
-      and not win.viewport.show_labels)
+      and not win.viewport.show_node_labels
+      and not win.viewport.show_element_labels)
+win.a_node_labels.trigger()
+check("node labels toggle alone",
+      win.viewport.show_node_labels
+      and not win.viewport.show_element_labels)
+win.a_element_labels.trigger()
+check("element labels toggle independently",
+      win.viewport.show_node_labels and win.viewport.show_element_labels)
+win.a_node_labels.trigger()
+win.a_element_labels.trigger()
 win.viewport.set_show(show_deformed=True, show_loads=True)
 win.a_deformed.setChecked(True)
 win.a_loads_visible.setChecked(True)
@@ -934,15 +954,66 @@ before = len(win.project.elements)
 win._draw_element_between(base, base + 1)
 check("draw element creates a beam",
       len(win.project.elements) == before + 1)
-win.a_draw_element.setChecked(False)
-check("draw element mode closes",
-      not win.viewport.draw_element_mode and win.draw_dock.isHidden())
+win.viewport.mousePressEvent(QMouseEvent(
+    QEvent.MouseButtonPress, QPointF(10, 10), QPointF(10, 10),
+    Qt.RightButton, Qt.RightButton, Qt.NoModifier))
+check("right click ends drawing",
+      not win.viewport.draw_element_mode and win.draw_dock.isHidden()
+      and not win.a_draw_element.isChecked())
+win.a_draw_element.setChecked(True)
+win._escape()
+check("escape ends drawing",
+      not win.viewport.draw_element_mode and win.draw_dock.isHidden()
+      and not win.a_draw_element.isChecked())
 for tag, element in list(win.project.elements.items()):
     if set(element.nodes) == {base, base + 1}:
         del win.project.elements[tag]
 win.project.nodes.pop(base, None)
 win.project.nodes.pop(base + 1, None)
 win.refresh_all()
+
+print("== structure wizards ==")
+from app import wizards
+from app.model import default_project
+
+frame_spec = dict(kind="frame2d", mat=1, bays_x=3, bays_y=0, bay_width=6000.0,
+                  bay_depth=0.0, storeys=3, storey_height=3500.0,
+                  col_sec=1, beam_sec=1)
+p = default_project()
+counts = wizards.generate(p, frame_spec)
+check("2D frame wizard geometry", counts == (16, 21) and len(p.nodes) == 16,
+      f"({counts})")
+check("2D frame wizard supports fixed bases",
+      sum(1 for n in p.nodes.values() if all(n.support)) == 4)
+
+p = default_project()
+counts = wizards.generate(p, dict(frame_spec, kind="frame3d", bays_y=2,
+                                  bay_depth=5000.0))
+check("3D frame wizard geometry", counts == (48, 87), f"({counts})")
+
+truss_spec = dict(kind="truss2d", mat=1, panels=6, panel_width=4000.0,
+                  height=4000.0, width=0.0, sec=1)
+p = default_project()
+counts = wizards.generate(p, truss_spec)
+check("2D truss wizard geometry", counts == (14, 25), f"({counts})")
+check("2D truss uses truss elements and restrains out-of-plane DOF",
+      all(e.kind == "truss" for e in p.elements.values())
+      and all(n.support[1] and n.support[4] for n in p.nodes.values()))
+
+p = default_project()
+counts = wizards.generate(p, dict(truss_spec, kind="truss3d", width=4000.0))
+check("3D truss wizard geometry", counts == (28, 88), f"({counts})")
+
+bridge_spec = dict(kind="bridge", mat=2, spans=3, span_length=30000.0,
+                   width=12000.0, girders=5, cross_spacing=5000.0,
+                   girder_sec=2, cross_sec=2)
+p = default_project()
+counts = wizards.generate(p, bridge_spec)
+check("bridge wizard geometry", counts == (95, 166), f"({counts})")
+check("bridge wizard supports every girder at each pier line",
+      sum(1 for n in p.nodes.values() if n.support[2]) == 20
+      and sum(1 for n in p.nodes.values() if n.support[1]) == 4)
+check("bridge wizard sets deck self weight", p.self_weight.get("DL") == 1.0)
 
 print("== disconnected nodes are rejected ==")
 from app import opsgen
