@@ -407,6 +407,48 @@ for kind in ("frame2d", "frame3d", "truss2d", "truss3d", "bridge"):
     check(f"{kind} wizard solves under self weight",
           1 if math.isfinite(peak) and peak > 0.0 else 0, 1, 0)
 
+print("== script console model capture ==")
+from app import scriptmodel, tcl  # noqa: E402
+
+script = '''
+import openseespy.opensees as ops
+ops.wipe()
+ops.model("basic", "-ndm", 2, "-ndf", 3)
+ops.node(1, 0.0, 0.0)
+ops.node(2, 0.0, 3.0)
+ops.node(3, 4.0, 3.0)
+ops.fix(1, 1, 1, 1)
+ops.geomTransf("Linear", 1)
+ops.element("elasticBeamColumn", 1, 1, 2, 0.25, 34e6, 0.0052, 1)
+ops.element("elasticBeamColumn", 2, 2, 3, 0.25, 34e6, 0.0052, 1)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.eleLoad("-ele", 2, "-type", "-beamUniform", -25.0)
+ops.load(3, 0.0, -10.0, 0.0)
+'''
+recorder = scriptmodel.ScriptModelRecorder("m")
+tcl.run_python(script, recorder=recorder)
+captured = recorder.build()
+check("script capture node count", len(captured.nodes), 3, 0)
+check("script capture element count", len(captured.elements), 2, 0)
+check("script capture converts metres to mm",
+      captured.nodes[2].z, 3000.0, 1e-9)
+section = captured.section_of(captured.elements[1])
+check("script capture converts area", section.A, 250000.0, 1e-12)
+check("script capture converts inertia", section.Iz, 5.2e9, 1e-6)
+check("script capture converts E", captured.material_of(captured.elements[1]).E,
+      34.0, 1e-12)
+check("script capture fixes 2D out-of-plane modes",
+      1 if all(captured.nodes[1].support) else 0, 1, 0)
+check("script capture converts beam UDL",
+      captured.elem_loads[0].value, -0.025, 1e-12)
+check("script capture converts nodal load",
+      captured.nodal_loads[0].values[2], -10.0, 1e-12)
+captured_res = opsgen.run_static(captured, "Pattern 1")
+peak = max(abs(v) for vec in captured_res.displacements.values() for v in vec)
+check("script captured model solves",
+      1 if math.isfinite(peak) and 0.0 < peak < 1000.0 else 0, 1, 0)
+
 print()
 if FAILS:
     print("FAILURES:", FAILS)

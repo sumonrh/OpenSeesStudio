@@ -229,7 +229,7 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.3",
+    version="1.0.4",
     instructions=(
         "OpenSees Studio is a graphical model generator and analysis GUI for "
         "OpenSees. Use these tools to build structural models and analyse them.\n\n"

@@ -321,18 +321,28 @@ def import_text(text: str, title: str = "Imported Tcl") -> Tuple[Project, dict]:
 # --------------------------------------------------------------------------- #
 # console runners
 # --------------------------------------------------------------------------- #
-def run_python(code: str) -> dict:
-    """Execute Python with OpenSeesPy as ``ops`` and return captured output."""
+def run_python(code: str, recorder=None) -> dict:
+    """Execute Python with OpenSeesPy as ``ops`` and return captured output.
+
+    When a :class:`app.scriptmodel.ScriptModelRecorder` is passed, the
+    model-building calls are recorded so the console can load the model.
+    """
     from openseespy import opensees as ops
 
     buffer = io.StringIO()
     namespace = {"ops": ops, "opensees": ops, "__name__": "__console__"}
-    with redirect_stdout(buffer):
-        exec(compile(code, "<script console>", "exec"), namespace)
+    if recorder is not None:
+        recorder.attach(ops)
+    try:
+        with redirect_stdout(buffer):
+            exec(compile(code, "<script console>", "exec"), namespace)
+    finally:
+        if recorder is not None:
+            recorder.detach()
     return {"output": buffer.getvalue(), "ok": True}
 
 
-def run_tcl(code: str) -> dict:
+def run_tcl(code: str, recorder=None) -> dict:
     """Execute the supported Tcl command subset in the OpenSees domain."""
     from openseespy import opensees as ops
 
@@ -354,6 +364,8 @@ def run_tcl(code: str) -> dict:
     def dispatch(cmd: str, args: List) -> None:
         nonlocal executed
         name = cmd.lower()
+        if recorder is not None and name not in ("puts",):
+            recorder.record(cmd, args)
         if name == "puts":
             print(" ".join(str(a) for a in args))
             return

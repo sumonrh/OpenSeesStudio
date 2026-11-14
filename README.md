@@ -200,7 +200,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Export an OpenSees Tcl input file; **Import Tcl** reads nodes, supports,
   materials, sections, elements and load patterns from a Tcl model.
 - **Script Console** runs OpenSeesPy Python or OpenSees Tcl model commands in one
-  window, with the current model one click away as Tcl.
+  window, captures the model in metres or millimetres, and loads it into Studio;
+  the current model is one click away as Tcl.
 - Undo / redo (100 steps).
 - Built-in 3-storey steel frame example.
 
@@ -243,9 +244,15 @@ becomes the next start. **Right-click**, **Esc** or **Finish** ends the tool.
 ## Script console and Tcl import
 
 **Tools > Script Console** opens one window with a language selector for
-**Python (OpenSeesPy)** and **Tcl (OpenSees commands)**. The editor runs against the
-shared OpenSees domain, not the Studio project, so experiments do not alter the saved
-model; **Load Current Model (Tcl)** inserts the current model as a Tcl script.
+**Python (OpenSeesPy)** and **Tcl (OpenSees commands)**. Scripts run in the
+shared OpenSees domain. While they run, the console captures model commands
+(`node`, `element`, `fix`, materials, sections, patterns, nodal and element
+loads); choose the script **Units** first (metres/kN or millimetres/kN), then
+**Load captured model into Studio** converts the captured model to Studio's
+kN-mm base and displays it. The checkbox loads it automatically after a run, and
+replacing an existing model asks for confirmation. Analysis-only experiments
+that build no model do not touch the Studio project. **Current Studio Model
+(Tcl)** inserts the current model as a Tcl script.
 
 **File > Import Tcl** (nine-dot menu) reads an OpenSees Tcl model: nodes, supports,
 uniaxial/nD materials, PlateFiber sections, `geomTransf`, beam/truss/ShellMITC4
@@ -386,7 +393,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.3-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.4-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

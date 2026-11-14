@@ -1882,10 +1882,37 @@ class MainWindow(QMainWindow):
 
         if self.console_dialog is None:
             self.console_dialog = ScriptConsoleDialog(self.project, self)
+            self.console_dialog.modelReady.connect(self.load_script_model)
         self.console_dialog.project = self.project
         self.console_dialog.show()
         self.console_dialog.raise_()
         self.console_dialog.activateWindow()
+
+    def load_script_model(self, project, summary: str = "") -> None:
+        """Adopt a model captured by a script console run."""
+        if not project.nodes:
+            self._warn("The script did not build any nodes.")
+            return
+        if self.project.nodes or self.project.elements:
+            answer = QMessageBox.question(
+                self, "Replace model?",
+                f"The current model has {len(self.project.nodes)} nodes and "
+                f"{len(self.project.elements)} elements.\n\n"
+                "Replace it with the script model?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._cancel_draw_mode()
+        self._adopt(project)
+        self.history = History(self.project)
+        self._clear_results()
+        self._set_locked(False)
+        self.viewport.set_project(self.project)
+        self.refresh_all()
+        self.viewport.fit()
+        message = f"Loaded script model: {summary}" if summary else \
+            "Loaded script model into Studio"
+        self._status(message)
+        self._log(message)
 
     # ================================================================== undo
     def undo(self) -> None:

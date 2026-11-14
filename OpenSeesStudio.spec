@@ -9,6 +9,7 @@ hidden = [
     "openseespywin.opensees",
     "app.analysis_child",
     "app.console",
+    "app.scriptmodel",
     "app.tablecopy",
     "app.tcl",
     "app.wizard_dialog",

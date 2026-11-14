@@ -1008,6 +1008,10 @@ console.editor.setPlainText("wipe\nmodel BasicBuilder -ndm 3 -ndf 6\n"
 console.run()
 check("script console runs Tcl",
       "console-ok" in console.output.toPlainText())
+check("script console captures Tcl model",
+      console._last_project is not None
+      and len(console._last_project.nodes) == 1
+      and console.import_button.isEnabled())
 console.language.setCurrentIndex(console.language.findData("python"))
 console.editor.setPlainText("print('console-python-ok')")
 console.run()
