@@ -9,6 +9,7 @@ hidden = [
     "openseespy",
     "openseespywin",
     "openseespywin.opensees",
+    "app.tcl",
 ]
 
 excludes = [

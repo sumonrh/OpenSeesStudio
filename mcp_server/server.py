@@ -49,10 +49,11 @@ if str(ROOT) not in sys.path:
 
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
 
-from app import opsgen  # noqa: E402
-from app.model import (Element, ElementLoad, LoadCase, LoadCombination,  # noqa: E402
-                       Material, NodalLoad, Node, Project, Section,
-                       default_project)
+from app import groundmotion, hinge_catalog, opsgen, tcl, wizards  # noqa: E402
+from app.model import (Element, ElementLoad, GroundMotionRecord,  # noqa: E402
+                       HingeDefinition, LoadCase, LoadCombination, Material,
+                       NodalLoad, Node, Project, ResponseSpectrumCase, Section,
+                       TimeHistoryCase, default_project)
 from mcp_server.gui import GuiClient  # noqa: E402
 
 # --------------------------------------------------------------------------- #
@@ -65,6 +66,9 @@ class State:
         self.path: str = ""
         self.static: Optional[opsgen.StaticResults] = None
         self.modal: Optional[opsgen.ModalResults] = None
+        self.pushover: Optional[opsgen.PushoverResults] = None
+        self.time_history: Optional[opsgen.TimeHistoryResults] = None
+        self.spectrum: Optional[opsgen.ResponseSpectrumResults] = None
         self.gui = GuiClient()
         self.synced_nodes: int = 0
 
@@ -171,6 +175,9 @@ def _summary() -> dict:
         "bbox": {"min": [x0, y0, z0], "max": [x1, y1, z1]},
         "has_static_results": STATE.static is not None,
         "has_modal_results": STATE.modal is not None,
+        "has_pushover_results": STATE.pushover is not None,
+        "has_time_history_results": STATE.time_history is not None,
+        "has_response_spectrum_results": STATE.spectrum is not None,
         "gui_connected": STATE.gui.connected,
     }
 
@@ -191,6 +198,9 @@ def _sync_gui(fit: bool = False) -> None:
 def _changed(label: str, sync: bool = True) -> dict:
     STATE.static = None
     STATE.modal = None
+    STATE.pushover = None
+    STATE.time_history = None
+    STATE.spectrum = None
     if sync:
         _sync_gui()
     return {"ok": True, "action": label}
@@ -219,10 +229,10 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.0",
+    version="1.0.3",
     instructions=(
-        "OpenSees Studio is a graphical model generator for OpenSees. "
-        "Use these tools to build structural models and analyse them.\n\n"
+        "OpenSees Studio is a graphical model generator and analysis GUI for "
+        "OpenSees. Use these tools to build structural models and analyse them.\n\n"
         "Units are always kN, mm, tonne, s. E is in kN/mm^2 (200 = 200 GPa), "
         "density in t/mm^3 (steel 7.85e-9), distributed loads in kN/mm "
         "(10 kN/m = 0.01).\n\n"
@@ -230,8 +240,16 @@ server = MCPServer(
         "assign_supports -> add_load_case -> add_nodal_loads / add_element_loads / "
         "set_self_weight -> add_load_combination -> check_model -> run_static -> "
         "get_static_results. Use run_modal for periods and mode shapes.\n\n"
+        "For nonlinear work call list_hinge_materials, add_hinge_definition and "
+        "assign_hinges, then run_pushover (requires a lateral case and hinges). "
+        "Dynamic work uses add_ground_motion, configure_time_history, "
+        "run_time_history, configure_response_spectrum and run_response_spectrum. "
+        "generate_frame_2d/3d, generate_truss_2d/3d and generate_bridge create "
+        "complete models from parameters. import_tcl/export_tcl exchange models; "
+        "run_python and run_tcl execute scripts in the shared OpenSees domain.\n\n"
         "A running GUI can be attached with gui_connect (the app must be started "
-        "with the --bridge flag); the model is then mirrored live and "
+        "with the --bridge flag); the model is then mirrored live. "
+        "gui_set_visibility and gui_set_labels control the view, and "
         "gui_screenshot returns the viewport image.\n\n"
         "Node/element tags are assigned automatically and returned by the tools."
     ),
@@ -569,6 +587,256 @@ def delete_elements(tags: List[int]) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# structure wizards
+# --------------------------------------------------------------------------- #
+def _replace_geometry() -> Project:
+    p = _p()
+    p.nodes.clear()
+    p.elements.clear()
+    p.nodal_loads.clear()
+    p.elem_loads.clear()
+    p.hinge_assignments.clear()
+    return p
+
+
+def _wizard_result(kind: str, spec: dict, replace: bool) -> dict:
+    p = _p()
+    if spec.get("mat") not in p.materials:
+        raise ValueError(f"Unknown material {spec.get('mat')}.")
+    for key in ("col_sec", "beam_sec", "sec", "girder_sec", "cross_sec"):
+        if key in spec and spec[key] not in p.sections:
+            raise ValueError(f"Unknown section {spec[key]}.")
+    if replace:
+        _replace_geometry()
+    nodes, elements = wizards.generate(p, spec)
+    if p.title in ("", "Untitled"):
+        p.title = wizards.WIZARDS[kind][0]
+    _changed(f"generate {wizards.WIZARDS[kind][0]}")
+    return {"ok": True, "wizard": kind, "nodes": nodes, "elements": elements,
+            "replaced": bool(replace)}
+
+
+@server.tool()
+@_locked
+def generate_frame_2d(bays_x: int = 3, bay_width: float = 6000.0,
+                      storeys: int = 3, storey_height: float = 3500.0,
+                      material: int = 1, column_section: int = 1,
+                      beam_section: int = 2, replace: bool = True) -> dict:
+    """Generate a 2D moment frame in the X-Z plane (mm units)."""
+    return _wizard_result("frame2d", {
+        "kind": "frame2d", "mat": material, "bays_x": int(bays_x),
+        "bays_y": 0, "bay_width": float(bay_width), "bay_depth": 0.0,
+        "storeys": int(storeys), "storey_height": float(storey_height),
+        "col_sec": column_section, "beam_sec": beam_section}, replace)
+
+
+@server.tool()
+@_locked
+def generate_frame_3d(bays_x: int = 3, bays_y: int = 2,
+                      bay_width: float = 6000.0, bay_depth: float = 5000.0,
+                      storeys: int = 3, storey_height: float = 3500.0,
+                      material: int = 1, column_section: int = 1,
+                      beam_section: int = 2, replace: bool = True) -> dict:
+    """Generate a 3D moment frame with bays in X and Y (mm units)."""
+    return _wizard_result("frame3d", {
+        "kind": "frame3d", "mat": material, "bays_x": int(bays_x),
+        "bays_y": int(bays_y), "bay_width": float(bay_width),
+        "bay_depth": float(bay_depth), "storeys": int(storeys),
+        "storey_height": float(storey_height), "col_sec": column_section,
+        "beam_sec": beam_section}, replace)
+
+
+@server.tool()
+@_locked
+def generate_truss_2d(panels: int = 6, panel_width: float = 4000.0,
+                      height: float = 4000.0, material: int = 1,
+                      section: int = 1, replace: bool = True) -> dict:
+    """Generate a simply supported planar truss with Pratt diagonals."""
+    return _wizard_result("truss2d", {
+        "kind": "truss2d", "mat": material, "panels": int(panels),
+        "panel_width": float(panel_width), "height": float(height),
+        "width": 0.0, "sec": section}, replace)
+
+
+@server.tool()
+@_locked
+def generate_truss_3d(panels: int = 6, panel_width: float = 4000.0,
+                      height: float = 4000.0, width: float = 4000.0,
+                      material: int = 1, section: int = 1,
+                      replace: bool = True) -> dict:
+    """Generate a rectangular space truss with four chords."""
+    return _wizard_result("truss3d", {
+        "kind": "truss3d", "mat": material, "panels": int(panels),
+        "panel_width": float(panel_width), "height": float(height),
+        "width": float(width), "sec": section}, replace)
+
+
+@server.tool()
+@_locked
+def generate_bridge(spans: int = 3, span_length: float = 30000.0,
+                    width: float = 12000.0, girders: int = 5,
+                    cross_spacing: float = 5000.0, material: int = 2,
+                    girder_section: int = 2, cross_section: int = 2,
+                    replace: bool = True) -> dict:
+    """Generate a multi-span girder bridge grillage with pier supports."""
+    return _wizard_result("bridge", {
+        "kind": "bridge", "mat": material, "spans": int(spans),
+        "span_length": float(span_length), "width": float(width),
+        "girders": int(girders), "cross_spacing": float(cross_spacing),
+        "girder_sec": girder_section, "cross_sec": cross_section}, replace)
+
+
+@server.tool()
+@_locked
+def subdivide_elements(tags: List[int], parts: int = 2) -> dict:
+    """Split beam or truss elements into equal parts, carrying loads over."""
+    _require_elements(tags)
+    if int(parts) < 2:
+        raise ValueError("parts must be at least 2.")
+    created_nodes, created_elements = _p().subdivide_elements(
+        [int(t) for t in tags], int(parts))
+    _changed(f"subdivide {len(tags)} element(s)")
+    return {"ok": True, "created_nodes": created_nodes,
+            "created_elements": created_elements}
+
+
+# --------------------------------------------------------------------------- #
+# hinges
+# --------------------------------------------------------------------------- #
+@server.tool()
+@_locked
+def list_hinge_materials() -> List[dict]:
+    """List the OpenSees hinge material catalogue with parameter definitions."""
+    return [{
+        "key": spec.key, "label": spec.label, "family": spec.family,
+        "kind": spec.kind, "note": spec.note,
+        "params": [dict(param.__dict__) for param in spec.params],
+    } for spec in hinge_catalog.MATERIALS.values()]
+
+
+@server.tool()
+@_locked
+def add_hinge_definition(name: str = "Hinge", material: str = "Steel01",
+                         length_ratio: float = 0.10,
+                         params: Optional[Dict[str, float]] = None) -> dict:
+    """Create a reusable hinge definition using an OpenSees material name."""
+    spec = hinge_catalog.MATERIALS.get(material)
+    if spec is None:
+        raise ValueError(f"Unknown hinge material '{material}'. "
+                         "Call list_hinge_materials for the names.")
+    values = hinge_catalog.defaults(material)
+    for key, value in (params or {}).items():
+        if key not in values:
+            raise ValueError(f"'{key}' is not a parameter of {material}.")
+        values[key] = float(value)
+    tag = _p().next_hinge()
+    hinge = HingeDefinition(int(tag), str(name), material, spec.family,
+                            float(length_ratio), values)
+    _p().hinge_defs[tag] = hinge
+    _changed(f"add hinge {tag}")
+    return {"ok": True, **hinge.to_dict()}
+
+
+@server.tool()
+@_locked
+def list_hinge_definitions() -> List[dict]:
+    """List hinge definitions with their material, family and parameters."""
+    return [h.to_dict() for h in sorted(_p().hinge_defs.values(),
+                                        key=lambda h: h.tag)]
+
+
+@server.tool()
+@_locked
+def update_hinge_definition(tag: int, name: Optional[str] = None,
+                            material: Optional[str] = None,
+                            length_ratio: Optional[float] = None,
+                            params: Optional[Dict[str, float]] = None) -> dict:
+    """Update a hinge definition; changing the material resets its parameters."""
+    hinge = _p().hinge_defs.get(int(tag))
+    if hinge is None:
+        raise ValueError(f"Unknown hinge definition {tag}.")
+    if material is not None and material != hinge.material:
+        spec = hinge_catalog.MATERIALS.get(material)
+        if spec is None:
+            raise ValueError(f"Unknown hinge material '{material}'.")
+        hinge.material = material
+        hinge.family = spec.family
+        hinge.params = hinge_catalog.defaults(material)
+    if name is not None:
+        hinge.name = str(name)
+    if length_ratio is not None:
+        hinge.length_ratio = float(length_ratio)
+    for key, value in (params or {}).items():
+        if key not in hinge.params:
+            raise ValueError(f"'{key}' is not a parameter of {hinge.material}.")
+        hinge.params[key] = float(value)
+    _changed(f"update hinge {tag}")
+    return {"ok": True, **hinge.to_dict()}
+
+
+@server.tool()
+@_locked
+def delete_hinge_definition(tag: int) -> dict:
+    """Delete a hinge definition and every element assignment using it."""
+    p = _p()
+    if int(tag) not in p.hinge_defs:
+        raise ValueError(f"Unknown hinge definition {tag}.")
+    p.hinge_defs.pop(int(tag), None)
+    p.hinge_assignments = {e: h for e, h in p.hinge_assignments.items()
+                           if h != int(tag)}
+    _changed(f"delete hinge {tag}")
+    return {"ok": True}
+
+
+@server.tool()
+@_locked
+def assign_hinges(element_tags: List[int], hinge: int) -> dict:
+    """Assign a hinge definition to beam elements (fibre hinges)."""
+    _require_elements(element_tags)
+    if int(hinge) not in _p().hinge_defs:
+        raise ValueError(f"Unknown hinge definition {hinge}.")
+    bad = [t for t in element_tags if _p().elements[t].kind != "beam"]
+    if bad:
+        raise ValueError(f"Hinges apply to beam elements only; invalid: {bad}.")
+    for tag in element_tags:
+        _p().hinge_assignments[int(tag)] = int(hinge)
+    _changed(f"assign hinge {hinge} to {len(element_tags)} element(s)")
+    return {"ok": True, "hinge": int(hinge),
+            "elements": [int(t) for t in element_tags]}
+
+
+@server.tool()
+@_locked
+def list_hinge_assignments() -> List[dict]:
+    """List element hinge assignments."""
+    out = []
+    for element, hinge in sorted(_p().hinge_assignments.items()):
+        definition = _p().hinge_defs.get(hinge)
+        out.append({
+            "element": element, "hinge": hinge,
+            "name": definition.name if definition else "",
+            "material": definition.material if definition else "",
+        })
+    return out
+
+
+@server.tool()
+@_locked
+def clear_hinge_assignments(element_tags: Optional[List[int]] = None) -> dict:
+    """Remove hinge assignments (all of them, or from the given elements)."""
+    p = _p()
+    if element_tags is None:
+        removed = list(p.hinge_assignments)
+        p.hinge_assignments.clear()
+    else:
+        removed = [t for t in element_tags if t in p.hinge_assignments]
+        for tag in removed:
+            p.hinge_assignments.pop(tag, None)
+    _changed(f"clear {len(removed)} hinge assignment(s)")
+    return {"ok": True, "removed": removed}
+
+
+# --------------------------------------------------------------------------- #
 # properties
 # --------------------------------------------------------------------------- #
 @server.tool()
@@ -738,6 +1006,45 @@ def set_self_weight(case: str, factor: float = 1.0) -> dict:
 
 @server.tool()
 @_locked
+def list_loads(case: str = "") -> dict:
+    """List nodal and element loads, optionally filtered by load case."""
+    p = _p()
+    nodal = [l.to_dict() for l in p.nodal_loads if not case or l.case == case]
+    element = [l.to_dict() for l in p.elem_loads if not case or l.case == case]
+    self_weight = {c: f for c, f in p.self_weight.items()
+                   if not case or c == case}
+    return {"case": case or "all", "nodal_loads": nodal,
+            "element_loads": element, "self_weight": self_weight}
+
+
+@server.tool()
+@_locked
+def get_settings() -> dict:
+    """Return analysis settings and the stored pushover configuration."""
+    return {"settings": dict(_p().settings),
+            "pushover": _p().pushover_settings()}
+
+
+@server.tool()
+@_locked
+def set_settings(static_steps: Optional[float] = None,
+                 modal_modes: Optional[int] = None,
+                 mass_from_density: Optional[bool] = None) -> dict:
+    """Update static/modal analysis settings."""
+    p = _p()
+    if static_steps is not None:
+        if float(static_steps) <= 0:
+            raise ValueError("static_steps must be positive.")
+        p.settings["static_steps"] = float(static_steps)
+    if modal_modes is not None:
+        p.settings["modal_modes"] = int(modal_modes)
+    if mass_from_density is not None:
+        p.settings["mass_from_density"] = bool(mass_from_density)
+    return {"ok": True, "settings": dict(p.settings)}
+
+
+@server.tool()
+@_locked
 def add_load_combination(name: str, factors: Dict[str, float]) -> dict:
     """Create a load combination, e.g. {"DL": 1.4, "LL": 1.6}."""
     if not factors:
@@ -776,6 +1083,7 @@ def run_static(scenario: str = "") -> dict:
     res = opsgen.run_static(_p(), name)
     STATE.static = res
     STATE.modal = None
+    STATE.pushover = STATE.time_history = STATE.spectrum = None
     STATE.project.settings["last_case"] = name
     if STATE.gui.connected:
         try:
@@ -825,6 +1133,7 @@ def run_modal(n_modes: int = 6) -> dict:
     res = opsgen.run_modal(_p(), int(n_modes))
     STATE.modal = res
     STATE.static = None
+    STATE.pushover = STATE.time_history = STATE.spectrum = None
     if STATE.gui.connected:
         try:
             STATE.gui.call("show_mode", _modal_payload(res, 1), timeout=20.0)
@@ -868,6 +1177,349 @@ def export_tcl(path: str) -> dict:
     text = opsgen.export_tcl(_p())
     target.write_text(text, encoding="utf-8")
     return {"ok": True, "path": str(target), "lines": len(text.splitlines())}
+
+
+@server.tool()
+@_locked
+def import_tcl(path: str) -> dict:
+    """Replace the model with nodes, elements, supports and loads from Tcl."""
+    source = Path(path)
+    if not source.exists():
+        raise ValueError(f"Tcl file not found: {source}")
+    project, info = tcl.import_text(source.read_text(encoding="utf-8",
+                                                     errors="replace"),
+                                    source.name)
+    if not project.nodes and not project.elements:
+        raise ValueError("No model commands were found in the Tcl file.")
+    STATE.project = project
+    STATE.static = STATE.modal = None
+    STATE.pushover = STATE.time_history = STATE.spectrum = None
+    _changed(f"import Tcl {source.name}", sync=True)
+    return {"ok": True, "path": str(source), **info}
+
+
+@server.tool()
+@_locked
+def run_python(code: str) -> dict:
+    """Run Python against OpenSeesPy in the shared analysis domain.
+
+    The Studio project is not modified; this is for model experiments and
+    OpenSeesPy commands with ``ops`` available.
+    """
+    return tcl.run_python(code)
+
+
+@server.tool()
+@_locked
+def run_tcl(code: str) -> dict:
+    """Run OpenSees Tcl model commands (no loops, procedures or variables)."""
+    return tcl.run_tcl(code)
+
+
+# --------------------------------------------------------------------------- #
+# pushover
+# --------------------------------------------------------------------------- #
+@server.tool()
+@_locked
+def run_pushover(gravity_case: str = "", lateral_case: str = "",
+                 control_node: int = 0, control_dof: int = 1,
+                 target_displacement: float = 0.0,
+                 steps: int = 20) -> dict:
+    """Run a displacement-controlled pushover with the assigned hinges."""
+    config: Dict[str, Any] = {"gravity_case": gravity_case,
+                              "lateral_case": lateral_case}
+    if int(control_node) > 0:
+        config["control_node"] = int(control_node)
+    config["control_dof"] = int(control_dof)
+    if float(target_displacement) > 0.0:
+        config["target_displacement"] = float(target_displacement)
+    config["steps"] = int(steps)
+    if not config["lateral_case"]:
+        raise ValueError("lateral_case is required.")
+    res = opsgen.run_pushover(_p(), config)
+    STATE.pushover = res
+    STATE.static = STATE.modal = None
+    return {"ok": True, "hinge_model": res.hinge_model,
+            "control_node": res.control_node, "control_dof": res.control_dof,
+            "steps": int(steps), "points": len(res.steps),
+            "peak_base_shear": max((abs(s.base_shear) for s in res.steps),
+                                   default=0.0),
+            "peak_displacement": max((abs(s.displacement) for s in res.steps),
+                                     default=0.0),
+            "hinges_yielded": len(res.hinge_yield)}
+
+
+@server.tool()
+@_locked
+def get_pushover_results(include_steps: bool = True) -> dict:
+    """Return the pushover curve, hinge yielding and optional step details."""
+    if STATE.pushover is None:
+        raise ValueError("No pushover results. Call run_pushover first.")
+    res = STATE.pushover
+    out: Dict[str, Any] = {
+        "hinge_model": res.hinge_model,
+        "gravity_case": res.gravity_case,
+        "lateral_case": res.lateral_case,
+        "control_node": res.control_node,
+        "control_dof": res.control_dof,
+        "hinge_yield": {str(k): v for k, v in res.hinge_yield.items()},
+    }
+    if include_steps:
+        out["steps"] = [{"step": s.step, "displacement": s.displacement,
+                         "base_shear": s.base_shear} for s in res.steps]
+    return out
+
+
+@server.tool()
+@_locked
+def get_pushover_step(step: int = -1) -> dict:
+    """Return displacements and hinge rotations at one pushover step."""
+    if STATE.pushover is None:
+        raise ValueError("No pushover results. Call run_pushover first.")
+    data = STATE.pushover
+    try:
+        entry = data.steps[int(step)]
+    except IndexError as exc:
+        raise ValueError(f"Pushover step {step} is out of range.") from exc
+    return {"step": entry.step, "displacement": entry.displacement,
+            "base_shear": entry.base_shear,
+            "node_displacements": {str(k): v
+                                   for k, v in entry.displacements.items()},
+            "hinge_rotations": {str(k): v
+                                for k, v in entry.hinge_rotations.items()},
+            "hinge_moments": {str(k): v
+                              for k, v in entry.hinge_moments.items()}}
+
+
+# --------------------------------------------------------------------------- #
+# ground motions, time history and response spectrum
+# --------------------------------------------------------------------------- #
+@server.tool()
+@_locked
+def list_ground_motions() -> List[dict]:
+    """List the ground-motion catalog."""
+    return [rec.to_dict() for rec in
+            sorted(_p().ground_motions.values(), key=lambda r: r.tag)]
+
+
+@server.tool()
+@_locked
+def add_ground_motion(path: str, name: str = "", scale: float = 1.0,
+                      format: str = "auto", note: str = "") -> dict:
+    """Add a record to the catalog and detect its time step and point count."""
+    source = Path(path)
+    if not source.exists():
+        raise ValueError(f"Ground-motion file not found: {source}")
+    try:
+        data = groundmotion.read_file(source, format, 0.01)
+    except Exception as exc:  # noqa: BLE001 - report the reader error
+        raise ValueError(f"Could not read ground motion: {exc}") from exc
+    tag = _p().next_ground_motion()
+    record = GroundMotionRecord(
+        tag=tag, name=name or source.stem, path=str(source),
+        format=data.format, dt=data.dt, npts=data.npts,
+        scale=float(scale), note=note or data.note)
+    _p().ground_motions[tag] = record
+    _changed(f"add ground motion {tag}")
+    return {"ok": True, **record.to_dict()}
+
+
+@server.tool()
+@_locked
+def delete_ground_motion(tag: int) -> dict:
+    """Remove a record from the ground-motion catalog."""
+    if int(tag) not in _p().ground_motions:
+        raise ValueError(f"Unknown ground-motion record {tag}.")
+    _p().ground_motions.pop(int(tag), None)
+    _changed(f"delete ground motion {tag}")
+    return {"ok": True}
+
+
+@server.tool()
+@_locked
+def record_response_spectrum(tag: int, periods: List[float],
+                             damping_ratio: float = 0.05) -> dict:
+    """Compute a pseudo-acceleration spectrum from a catalog record."""
+    record = _p().ground_motions.get(int(tag))
+    if record is None:
+        raise ValueError(f"Unknown ground-motion record {tag}.")
+    values = groundmotion.spectrum_from_record(
+        record, [float(t) for t in periods], float(damping_ratio))
+    return {"ok": True, "record": int(tag), "name": record.name,
+            "periods": [float(t) for t in periods],
+            "accelerations": values}
+
+
+@server.tool()
+@_locked
+def configure_time_history(name: Optional[str] = None,
+                           source: Optional[str] = None,
+                           path: Optional[str] = None,
+                           format: Optional[str] = None,
+                           record: Optional[int] = None,
+                           dt: Optional[float] = None,
+                           n_steps: Optional[int] = None,
+                           direction: Optional[int] = None,
+                           scale: Optional[float] = None,
+                           damping_ratio: Optional[float] = None,
+                           damping_mode: Optional[int] = None,
+                           gravity_case: Optional[str] = None,
+                           sine_amplitude: Optional[float] = None,
+                           sine_period: Optional[float] = None) -> dict:
+    """Update the stored time-history case (source: sine, file or catalog)."""
+    case = _p().time_history
+    updates = {
+        "name": name, "source": source, "path": path, "format": format,
+        "record": record, "dt": dt, "n_steps": n_steps,
+        "direction": direction, "scale": scale,
+        "damping_ratio": damping_ratio, "damping_mode": damping_mode,
+        "gravity_case": gravity_case, "sine_amplitude": sine_amplitude,
+        "sine_period": sine_period,
+    }
+    for key, value in updates.items():
+        if value is not None:
+            setattr(case, key, value)
+    if case.source == "catalog" and case.record not in _p().ground_motions:
+        raise ValueError(f"Catalog record {case.record} does not exist.")
+    _changed("configure time history")
+    return {"ok": True, **case.to_dict()}
+
+
+@server.tool()
+@_locked
+def get_time_history_settings() -> dict:
+    """Return the stored time-history case."""
+    return _p().time_history.to_dict()
+
+
+@server.tool()
+@_locked
+def run_time_history() -> dict:
+    """Run the stored time-history case and return peak response values."""
+    res = opsgen.run_time_history(_p())
+    STATE.time_history = res
+    STATE.static = STATE.modal = None
+    return {"ok": True, "case": res.case_name, "dt": res.dt,
+            "steps": res.n_steps, "steps_requested": res.n_steps_requested,
+            "peak_disp": res.peak_disp, "peak_vel": res.peak_vel,
+            "peak_accel": res.peak_accel,
+            "early_stop": res.early_stop}
+
+
+@server.tool()
+@_locked
+def get_time_history_results(step: int = -1,
+                             node_tags: Optional[List[int]] = None,
+                             element_tags: Optional[List[int]] = None) -> dict:
+    """Return time-history histories, or all node/element values at one step."""
+    if STATE.time_history is None:
+        raise ValueError("No time-history results. Call run_time_history first.")
+    res = STATE.time_history
+    nodes = node_tags if node_tags is not None else list(res.node_disp)
+    elems = element_tags if element_tags is not None else list(res.element_forces)
+    out: Dict[str, Any] = {"case": res.case_name, "dt": res.dt,
+                           "steps": res.n_steps, "time": res.time}
+    if step is None or int(step) < 0:
+        out["node_disp"] = {str(t): res.node_disp.get(t, []) for t in nodes}
+        out["node_vel"] = {str(t): res.node_vel.get(t, []) for t in nodes}
+        out["node_accel"] = {str(t): res.node_accel.get(t, []) for t in nodes}
+        out["element_forces"] = {str(t): res.element_forces.get(t, [])
+                                 for t in elems}
+    else:
+        index = min(int(step), res.n_steps - 1)
+        out["step"] = index
+        out["node_disp"] = {str(t): res.node_disp[t][index]
+                            for t in nodes if t in res.node_disp}
+        out["node_vel"] = {str(t): res.node_vel[t][index]
+                           for t in nodes if t in res.node_vel}
+        out["node_accel"] = {str(t): res.node_accel[t][index]
+                             for t in nodes if t in res.node_accel}
+        out["element_forces"] = {str(t): res.element_forces[t][index]
+                                 for t in elems if t in res.element_forces}
+    return out
+
+
+@server.tool()
+@_locked
+def configure_response_spectrum(name: Optional[str] = None,
+                                direction: Optional[int] = None,
+                                damping_ratio: Optional[float] = None,
+                                combination: Optional[str] = None,
+                                n_modes: Optional[int] = None,
+                                scale: Optional[float] = None,
+                                record: Optional[int] = None,
+                                periods: Optional[List[float]] = None,
+                                accelerations: Optional[List[float]] = None) -> dict:
+    """Update the stored response-spectrum case and its curve."""
+    case = _p().response_spectrum
+    if name is not None:
+        case.name = str(name)
+    if direction is not None:
+        case.direction = int(direction)
+    if damping_ratio is not None:
+        case.damping_ratio = float(damping_ratio)
+    if combination is not None:
+        if combination.upper() not in ("SRSS", "CQC"):
+            raise ValueError("combination must be SRSS or CQC.")
+        case.combination = combination.upper()
+    if n_modes is not None:
+        case.n_modes = int(n_modes)
+    if scale is not None:
+        case.scale = float(scale)
+    if record is not None:
+        case.record = int(record)
+    if periods is not None:
+        case.periods = [float(v) for v in periods]
+    if accelerations is not None:
+        case.accelerations = [float(v) for v in accelerations]
+    if len(case.periods) != len(case.accelerations):
+        raise ValueError("periods and accelerations must have the same length.")
+    _changed("configure response spectrum")
+    return {"ok": True, **case.to_dict()}
+
+
+@server.tool()
+@_locked
+def get_response_spectrum_settings() -> dict:
+    """Return the stored response-spectrum case."""
+    return _p().response_spectrum.to_dict()
+
+
+@server.tool()
+@_locked
+def run_response_spectrum() -> dict:
+    """Run the stored response-spectrum case with SRSS or CQC combination."""
+    res = opsgen.run_response_spectrum(_p())
+    STATE.spectrum = res
+    STATE.static = STATE.modal = None
+    return {"ok": True, "case": res.case_name, "modes": res.n_modes,
+            "combination": res.combination, "peak_disp": res.peak_disp,
+            "modal_periods": res.modal_periods,
+            "modal_mass_ratios": res.modal_mass_ratios}
+
+
+@server.tool()
+@_locked
+def get_response_spectrum_results(node_tags: Optional[List[int]] = None,
+                                  element_tags: Optional[List[int]] = None,
+                                  include_forces: bool = False) -> dict:
+    """Return combined response-spectrum displacements and element forces."""
+    if STATE.spectrum is None:
+        raise ValueError("No response-spectrum results. "
+                         "Call run_response_spectrum first.")
+    res = STATE.spectrum
+    nodes = node_tags if node_tags is not None else list(res.node_disp)
+    elems = element_tags if element_tags is not None else list(res.element_forces)
+    out: Dict[str, Any] = {
+        "case": res.case_name, "direction": res.direction,
+        "combination": res.combination, "peak_disp": res.peak_disp,
+        "node_disp": {str(t): res.node_disp[t] for t in nodes
+                      if t in res.node_disp},
+    }
+    if include_forces:
+        out["element_forces"] = {str(t): res.element_forces.get(t, [])
+                                 for t in elems}
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -974,6 +1626,39 @@ def gui_deformed_scale(scale: float = 0) -> dict:
     if not STATE.gui.connected:
         raise ValueError("No GUI attached. Call gui_connect first.")
     result = STATE.gui.call("set_deformed_scale", {"scale": float(scale)})
+    return {"ok": True, **result}
+
+
+@server.tool()
+@_locked
+def gui_set_visibility(mode: str = "activate",
+                       nodes: Optional[List[int]] = None,
+                       elements: Optional[List[int]] = None) -> dict:
+    """Activate, deactivate or restore visibility in the attached GUI.
+
+    mode: "activate" (show only the selection), "deactivate" (hide the
+    selection) or "all" (show everything).
+    """
+    if not STATE.gui.connected:
+        raise ValueError("No GUI attached. Call gui_connect first.")
+    result = STATE.gui.call("set_visibility", {
+        "mode": mode, "nodes": nodes or [], "elements": elements or []})
+    return {"ok": True, **result}
+
+
+@server.tool()
+@_locked
+def gui_set_labels(node_labels: Optional[bool] = None,
+                   element_labels: Optional[bool] = None) -> dict:
+    """Show or hide node and element tags in the attached GUI."""
+    if not STATE.gui.connected:
+        raise ValueError("No GUI attached. Call gui_connect first.")
+    params = {}
+    if node_labels is not None:
+        params["node_labels"] = bool(node_labels)
+    if element_labels is not None:
+        params["element_labels"] = bool(element_labels)
+    result = STATE.gui.call("set_labels", params)
     return {"ok": True, **result}
 
 

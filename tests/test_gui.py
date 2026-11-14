@@ -10,7 +10,9 @@ os.environ["OPENSEES_STUDIO_IN_PROCESS"] = "1"
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import (QApplication, QLabel, QTableWidgetSelectionRange,
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (QApplication, QLabel, QTableWidget,
+                               QTableWidgetItem, QTableWidgetSelectionRange,
                                QToolButton)
 
 app = QApplication.instance() or QApplication([])
@@ -250,6 +252,17 @@ check("clean view moved to vertical sidebar",
       win.a_clean_view in win.quick_view_toolbar.actions()
       and all(b.defaultAction() is not win.a_clean_view
               for b in view_page.findChildren(QToolButton)))
+from app.ribbon import RibbonGroup
+view_groups = {g.findChild(QLabel, "ribbonCaption").text(): g
+               for g in view_page.findChildren(RibbonGroup)}
+check("orbit moved under Navigate",
+      any(b.defaultAction() is win.a_orbit
+          for b in view_groups["Navigate"].findChildren(QToolButton)))
+check("display group has two columns",
+      view_groups["Display"].row.count() == 2)
+check("display group is wide enough",
+      view_groups["Display"].sizeHint().width() > 150,
+      f"({view_groups['Display'].sizeHint().width()} px)")
 structure_page = win.ribbon._pages[1]
 structure_actions = [b.defaultAction() for b in structure_page.findChildren(QToolButton)]
 check("structure tab has five wizards",
@@ -943,6 +956,65 @@ win.activate_all()
 check("quick toolbar has visibility actions",
       all(action in win.quick_toolbar.actions()
           for action in (win.a_activate, win.a_deactivate, win.a_activate_all)))
+
+print("== keyboard selection ==")
+hidden_node = next(iter(win.project.nodes))
+win.viewport.select_nodes([hidden_node])
+win.deactivate_selection()
+win.viewport.clear_selection()
+QTest.keyClick(win.viewport, Qt.Key_A, Qt.ControlModifier)
+expected_nodes = {t for t in win.project.nodes if win.viewport.is_node_visible(t)}
+expected_elements = {t for t in win.project.elements
+                     if win.viewport.is_element_visible(t)}
+check("Ctrl+A selects visible nodes only",
+      win.viewport.sel_nodes == expected_nodes
+      and hidden_node not in win.viewport.sel_nodes)
+check("Ctrl+A selects visible elements only",
+      win.viewport.sel_elements == expected_elements)
+win.activate_all()
+
+print("== table clipboard ==")
+grid = QTableWidget(3, 3)
+for gr in range(3):
+    for gc in range(3):
+        grid.setItem(gr, gc, QTableWidgetItem(f"{gr}{gc}"))
+grid.show()
+app.processEvents()
+grid.setRangeSelected(QTableWidgetSelectionRange(0, 1, 1, 2), True)
+QApplication.clipboard().clear()
+QTest.keyClick(grid, Qt.Key_C, Qt.ControlModifier)
+check("Ctrl+C copies only selected cells",
+      QApplication.clipboard().text() == "01\t02\n11\t12",
+      f"({QApplication.clipboard().text()!r})")
+grid.deleteLater()
+
+print("== tcl import and script console ==")
+from app import opsgen, tcl
+from app.console import ScriptConsoleDialog
+exported = opsgen.export_tcl(win.project)
+imported, info = tcl.import_text(exported)
+check("Tcl import round trip",
+      info["nodes"] == len(win.project.nodes)
+      and info["elements"] == len(win.project.elements), f"({info})")
+check("Tcl import keeps supports",
+      sum(1 for n in imported.nodes.values() if any(n.support))
+      == sum(1 for n in win.project.nodes.values() if any(n.support)))
+check("import Tcl in nine-dot menu",
+      win.a_import_tcl in win.ribbon.app_menu.actions())
+console = ScriptConsoleDialog(win.project)
+console.language.setCurrentIndex(console.language.findData("tcl"))
+console.editor.setPlainText("wipe\nmodel BasicBuilder -ndm 3 -ndf 6\n"
+                            "node 1 0 0 0\nputs console-ok")
+console.run()
+check("script console runs Tcl",
+      "console-ok" in console.output.toPlainText())
+console.language.setCurrentIndex(console.language.findData("python"))
+console.editor.setPlainText("print('console-python-ok')")
+console.run()
+check("script console runs Python",
+      "console-python-ok" in console.output.toPlainText())
+console.close()
+
 win.a_draw_element.setChecked(True)
 check("draw element panel opens",
       win.viewport.draw_element_mode and not win.draw_dock.isHidden())

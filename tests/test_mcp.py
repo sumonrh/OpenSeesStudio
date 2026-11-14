@@ -20,17 +20,22 @@ def check(name, cond, detail=""):
 
 def payload(res):
     sc = getattr(res, "structuredContent", None)
+    if sc is None:
+        sc = getattr(res, "structured_content", None)
     if sc:
         if isinstance(sc, dict) and set(sc) == {"result"}:
             return sc["result"]
         return sc
+    items = []
     for c in res.content:
         if getattr(c, "type", "") == "text":
             try:
-                return json.loads(c.text)
+                items.append(json.loads(c.text))
             except Exception:
-                return c.text
-    return None
+                items.append(c.text)
+    if len(items) == 1:
+        return items[0]
+    return items
 
 
 async def main():
@@ -146,6 +151,100 @@ async def main():
             r = await call("export_tcl", {"path": tcl})
             text = open(tcl, encoding="utf-8").read()
             check("export_tcl", "elasticBeamColumn" in text, f"({r['lines']} lines)")
+
+            print("== wizards, hinges and dynamics ==")
+            r = await call("generate_frame_2d", {"bays_x": 2, "storeys": 2,
+                                                 "replace": True})
+            check("generate_frame_2d", r["nodes"] == 9 and r["elements"] == 10,
+                  f"({r['nodes']} nodes, {r['elements']} elements)")
+            r = await call("generate_frame_3d", {"bays_x": 2, "bays_y": 1,
+                                                 "storeys": 1})
+            check("generate_frame_3d", r["nodes"] == 12 and r["elements"] == 13,
+                  f"({r['nodes']} nodes, {r['elements']} elements)")
+            r = await call("generate_truss_2d", {"panels": 4})
+            check("generate_truss_2d", r["nodes"] == 10 and r["elements"] == 17,
+                  f"({r['nodes']} nodes, {r['elements']} elements)")
+            r = await call("generate_truss_3d", {"panels": 3})
+            check("generate_truss_3d", r["nodes"] == 16 and r["elements"] == 46,
+                  f"({r['nodes']} nodes, {r['elements']} elements)")
+            r = await call("generate_bridge", {"spans": 2, "girders": 3,
+                                               "span_length": 20000,
+                                               "cross_spacing": 5000})
+            check("generate_bridge", r["nodes"] == 27 and r["elements"] == 42,
+                  f"({r['nodes']} nodes, {r['elements']} elements)")
+
+            r = await call("generate_frame_2d", {"bays_x": 2, "storeys": 2,
+                                                 "replace": True})
+            materials = await call("list_hinge_materials")
+            check("list_hinge_materials", len(materials) >= 10)
+            r = await call("add_hinge_definition",
+                           {"name": "Steel hinge", "material": "Steel01",
+                            "params": {"fy": 0.235}})
+            hinge = r["tag"]
+            check("add_hinge_definition", r["material"] == "Steel01")
+            r = await call("assign_hinges", {"element_tags": [1, 2], "hinge": hinge})
+            check("assign_hinges", r["elements"] == [1, 2])
+            r = await call("list_hinge_assignments")
+            check("list_hinge_assignments", len(r) == 2)
+            r = await call("update_hinge_definition",
+                           {"tag": hinge, "name": "H1", "length_ratio": 0.15})
+            check("update_hinge_definition", r["length_ratio"] == 0.15)
+
+            await call("add_load_case", {"name": "LAT", "kind": "Wind"})
+            nodes = await call("list_nodes")
+            top = max(nodes, key=lambda n: n["z"])["tag"]
+            await call("add_nodal_loads", {"node_tags": [top], "case": "LAT",
+                                           "values": [10, 0, 0, 0, 0, 0]})
+            r = await call("run_pushover",
+                           {"gravity_case": "DL", "lateral_case": "LAT",
+                            "control_node": top, "target_displacement": 20,
+                            "steps": 3})
+            check("run_pushover", r["steps"] == 3 and r["points"] >= 4,
+                  f"({r['points']} points)")
+            r = await call("get_pushover_results", {"include_steps": True})
+            check("get_pushover_results", len(r["steps"]) >= 3,
+                  f"({len(r['steps'])} points)")
+            r = await call("get_pushover_step", {"step": -1})
+            check("get_pushover_step", "node_displacements" in r)
+            check("delete_hinge_definition",
+                  (await call("delete_hinge_definition", {"tag": hinge}))["ok"])
+
+            r = await call("configure_time_history",
+                           {"source": "sine", "dt": 0.01, "n_steps": 20,
+                            "sine_amplitude": 0.1, "sine_period": 1.0})
+            check("configure_time_history", r["n_steps"] == 20)
+            r = await call("run_time_history")
+            check("run_time_history", r["steps"] == 20, f"({r['steps']} steps)")
+            r = await call("get_time_history_results", {"step": 5})
+            check("get_time_history_results", r["step"] == 5)
+
+            r = await call("configure_response_spectrum",
+                           {"periods": [0.0, 0.2, 0.5], 
+                            "accelerations": [0.4, 0.8, 0.5],
+                            "n_modes": 3})
+            check("configure_response_spectrum", r["n_modes"] == 3)
+            r = await call("run_response_spectrum")
+            check("run_response_spectrum", r["modes"] >= 1,
+                  f"({r['modes']} modes)")
+            r = await call("get_response_spectrum_results", {"include_forces": True})
+            check("get_response_spectrum_results", r["peak_disp"] > 0)
+
+            gm_path = os.path.join(os.environ.get("TEMP", "."), "mcp_motion.txt")
+            with open(gm_path, "w", encoding="utf-8") as fh:
+                for i in range(40):
+                    fh.write(f"{i * 0.01:.2f} {0.05 * (1 if i % 2 else -1):.4f}\n")
+            r = await call("add_ground_motion", {"path": gm_path,
+                                                 "name": "Test motion"})
+            gm = r["tag"]
+            check("add_ground_motion", r["npts"] == 40 and r["dt"] > 0)
+            r = await call("record_response_spectrum",
+                           {"tag": gm, "periods": [0.0, 0.2, 0.5]})
+            check("record_response_spectrum", len(r["accelerations"]) == 3)
+            check("delete_ground_motion",
+                  (await call("delete_ground_motion", {"tag": gm}))["ok"])
+
+            r = await call("import_tcl", {"path": tcl})
+            check("import_tcl", r["nodes"] == 6, f"({r['nodes']} nodes)")
 
             r = await call("gui_status")
             check("gui not connected", r["connected"] is False)

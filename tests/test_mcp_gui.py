@@ -126,6 +126,17 @@ async def main():
                 r = await call("gui_sync", {"fit": True})
                 check("gui_sync", r["ok"] is True)
 
+                r = await call("gui_set_labels",
+                               {"node_labels": True, "element_labels": True})
+                check("gui_set_labels", r["node_labels"] and r["element_labels"])
+                r = await call("gui_set_visibility",
+                               {"mode": "deactivate", "nodes": [n1]})
+                check("gui_set_visibility deactivate", r["hidden_nodes"] >= 1)
+                r = await call("gui_set_visibility", {"mode": "all"})
+                check("gui_set_visibility all", r["hidden_nodes"] == 0)
+                await call("gui_set_labels",
+                           {"node_labels": False, "element_labels": False})
+
                 print()
                 if FAILS:
                     print("FAILURES:", FAILS)

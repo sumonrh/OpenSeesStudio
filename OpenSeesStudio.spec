@@ -8,6 +8,10 @@ hidden = [
     "openseespywin",
     "openseespywin.opensees",
     "app.analysis_child",
+    "app.console",
+    "app.tablecopy",
+    "app.tcl",
+    "app.wizard_dialog",
 ]
 
 excludes = [

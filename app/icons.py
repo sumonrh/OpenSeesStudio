@@ -506,6 +506,24 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
             p.drawLine(QPointF(x - 1.6, 13.5), QPointF(x + 1.6, 11.0))
             p.drawLine(QPointF(x + 1.6, 13.5), QPointF(x - 1.6, 11.0))
 
+    elif name == "import_tcl":
+        _pen(p, accent, 1.8)
+        p.drawLine(QPointF(12, 3.5), QPointF(12, 14))
+        p.drawLine(QPointF(8.5, 10.5), QPointF(12, 14))
+        p.drawLine(QPointF(15.5, 10.5), QPointF(12, 14))
+        _pen(p, INK, 1.5)
+        p.drawLine(QPointF(4, 16.5), QPointF(4, 20.5))
+        p.drawLine(QPointF(4, 20.5), QPointF(20, 20.5))
+        p.drawLine(QPointF(20, 20.5), QPointF(20, 16.5))
+
+    elif name == "console":
+        _pen(p, INK, 1.4)
+        p.drawRoundedRect(QRectF(3, 4.5, 18, 15), 2, 2)
+        _pen(p, accent, 1.7)
+        p.drawLine(QPointF(6.5, 9), QPointF(9.5, 12))
+        p.drawLine(QPointF(9.5, 12), QPointF(6.5, 15))
+        p.drawLine(QPointF(12, 15), QPointF(17.5, 15))
+
     elif name == "select_all":
         _pen(p, accent, 1.3)
         p.drawRect(QRectF(4, 4, 16, 16))

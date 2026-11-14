@@ -192,12 +192,15 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 ![results and model lock](docs/results_lock.png)
 
 **AI integration**
-- MCP server (43 tools) so AI agents can build models, run analyses and read
-  results; optional live GUI bridge with screenshots.
+- MCP server (80 tools) so AI agents can build models, run analyses and read
+  results; optional live GUI bridge with screenshots, visibility and labels.
 
-**Project**
+**Project and scripting**
 - Save / open `.ospj` JSON projects.
-- Export an OpenSees Tcl input file.
+- Export an OpenSees Tcl input file; **Import Tcl** reads nodes, supports,
+  materials, sections, elements and load patterns from a Tcl model.
+- **Script Console** runs OpenSeesPy Python or OpenSees Tcl model commands in one
+  window, with the current model one click away as Tcl.
 - Undo / redo (100 steps).
 - Built-in 3-storey steel frame example.
 
@@ -227,6 +230,8 @@ and time-history analysis is in
 | O | 3D orbit mode (left-drag rotates) |
 | Ctrl+L | Lock / unlock model editing |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
+| Ctrl+A | Select all visible nodes and elements |
+| Ctrl+C | Copy selected table cells (right-click also copies) |
 | Del | Delete selection |
 
 **Mouse:** left = select (drag = box select), middle = pan, right = orbit, wheel = zoom.
@@ -235,19 +240,33 @@ the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the 
 In **Draw Element** mode, left-click a start node and then an end node; the end node
 becomes the next start. **Right-click**, **Esc** or **Finish** ends the tool.
 
+## Script console and Tcl import
+
+**Tools > Script Console** opens one window with a language selector for
+**Python (OpenSeesPy)** and **Tcl (OpenSees commands)**. The editor runs against the
+shared OpenSees domain, not the Studio project, so experiments do not alter the saved
+model; **Load Current Model (Tcl)** inserts the current model as a Tcl script.
+
+**File > Import Tcl** (nine-dot menu) reads an OpenSees Tcl model: nodes, supports,
+uniaxial/nD materials, PlateFiber sections, `geomTransf`, beam/truss/ShellMITC4
+elements and `pattern` loads. Loops, procedures and `expr` are not evaluated; skipped
+commands are reported in the message log.
+
 ## MCP server (AI agents)
 
 `mcp_server/` exposes OpenSees Studio to AI agents over the **Model Context
-Protocol** (stdio transport, 43 tools). Agents can build the whole model,
+Protocol** (stdio transport, 80 tools). Agents can build the whole model,
 run analyses and read results.
 
-**Tools** (grouped): project new/open/save/summary, node creation (single,
-list, line), element creation (beam/truss/shell chains), copy/move/mirror/delete,
-supports, material and section libraries, load cases, nodal loads, element
-loads, self weight, load combinations, model check, static analysis, modal
-analysis, displacements/reactions/forces, mode shapes, Tcl export, and GUI
-control (`gui_launch`, `gui_connect`, `gui_sync`, `gui_screenshot`,
-`gui_show_results`).
+**Tools** (grouped): project new/open/save/summary; nodes (single, list, line,
+move, copy, mirror, delete); elements (beam/truss/shell, update, delete,
+subdivide); material and section libraries; supports; load cases, nodal and
+element loads, self weight, combinations; hinge material catalogue, hinge
+definitions and assignments; static, modal, pushover, time-history and
+response-spectrum analyses with result tools; ground-motion catalog and record
+spectra; frame/truss/bridge wizards; model check; Tcl import/export; Python and
+Tcl script execution; and GUI control (`gui_launch`, `gui_connect`, `gui_sync`,
+`gui_screenshot`, `gui_show_results`, `gui_set_visibility`, `gui_set_labels`).
 
 ### Run it
 
@@ -367,7 +386,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.2-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.3-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

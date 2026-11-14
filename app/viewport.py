@@ -1418,6 +1418,9 @@ class Viewport(QWidget):
                 self.set_orbit_mode(False)
             else:
                 self.clear_selection()
+        elif (ev.key() == Qt.Key_A
+              and ev.modifiers() & Qt.ControlModifier):
+            self.select_all()
         elif ev.key() == Qt.Key_F:
             self.fit()
         else:

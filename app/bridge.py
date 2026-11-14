@@ -141,6 +141,34 @@ class GuiBridge(QObject):
             if elems:
                 w.viewport.select_elements(elems, additive=True)
             return True
+        if cmd == "set_visibility":
+            mode = str(params.get("mode", "all")).lower()
+            nodes = [int(t) for t in params.get("nodes", [])]
+            elems = [int(t) for t in params.get("elements", [])]
+            if mode == "all":
+                w.viewport.clear_visibility()
+            else:
+                w.viewport.clear_selection()
+                if nodes:
+                    w.viewport.select_nodes(nodes)
+                if elems:
+                    w.viewport.select_elements(elems, additive=True)
+                if mode == "activate":
+                    w.activate_selection()
+                elif mode == "deactivate":
+                    w.deactivate_selection()
+                else:
+                    raise ValueError(f"unknown visibility mode '{mode}'")
+            return {"hidden_nodes": len(w.viewport.hidden_nodes),
+                    "hidden_elements": len(w.viewport.hidden_elements)}
+        if cmd == "set_labels":
+            for action, key in ((w.a_node_labels, "node_labels"),
+                                (w.a_element_labels, "element_labels")):
+                value = params.get(key)
+                if value is not None and bool(action.isChecked()) != bool(value):
+                    action.trigger()
+            return {"node_labels": bool(w.viewport.show_node_labels),
+                    "element_labels": bool(w.viewport.show_element_labels)}
         raise ValueError(f"unknown command '{cmd}'")
 
 

@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, 
                                QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
-from . import dialogs, icons, opsgen, theme, wizards
+from . import dialogs, icons, opsgen, tablecopy, tcl, theme, wizards
+from .wizard_dialog import StructureWizard
 from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .groundmotion_dialog import GroundMotionCatalogDialog
 from .hinges import AssignHingesDialog, HingeLibraryDialog
@@ -84,6 +85,7 @@ class History:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        tablecopy.install(QApplication.instance())
         self.project = default_project()
         UNITS.set(self.project.settings.get("force_unit", "kN"),
                   self.project.settings.get("length_unit", "mm"))
@@ -94,6 +96,7 @@ class MainWindow(QMainWindow):
         self.time_history_results: Optional[opsgen.TimeHistoryResults] = None
         self.response_spectrum_results: Optional[opsgen.ResponseSpectrumResults] = None
         self.analysis_runner: Optional[AnalysisRunner] = None
+        self.console_dialog = None
         self.time_history_dialog = None
         self.time_history_step_scenario = ""
         self.response_spectrum_dialog = None
@@ -157,6 +160,12 @@ class MainWindow(QMainWindow):
         self.a_save_as = self._act("Save As", "save_as", self.file_save_as, "Ctrl+Shift+S")
         self.a_export_tcl = self._act("Export Tcl", "export", self.export_tcl, "",
                                       "Write an OpenSees Tcl input file")
+        self.a_import_tcl = self._act(
+            "Import Tcl", "import_tcl", self.import_tcl, "",
+            "Import nodes, elements, supports and loads from an OpenSees Tcl file")
+        self.a_console = self._act(
+            "Script Console", "console", self.open_console, "",
+            "Write and run OpenSeesPy Python or OpenSees Tcl model scripts")
         self.a_example = self._act("Example Frame", "example", self.load_example, "",
                                    "Load the built-in three-storey steel frame")
         self.a_exit = self._act("Exit", "exit", self.close, "Alt+F4")
@@ -350,7 +359,8 @@ class MainWindow(QMainWindow):
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings, self.a_ground_motion,
-                             self.a_gm_catalog, self.a_spectrum_case)
+                             self.a_gm_catalog, self.a_spectrum_case,
+                             self.a_import_tcl)
 
     def _toggle(self, node_labels=None, element_labels=None, grid=None, deformed=None,
                 loads=None, supports=None, extruded=None, nodes=None) -> None:
@@ -483,6 +493,7 @@ class MainWindow(QMainWindow):
         menu.addAction(self.a_save_as)
         menu.addSeparator()
         menu.addAction(self.a_export_tcl)
+        menu.addAction(self.a_import_tcl)
         menu.addAction(self.a_example)
         menu.addSeparator()
         menu.addAction(self.a_exit)
@@ -502,11 +513,12 @@ class MainWindow(QMainWindow):
 
         page = ribbon.add_tab("View")
         group = page.add_group("Navigate")
-        for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right):
+        for action in (self.a_fit, self.a_iso, self.a_top, self.a_front,
+                       self.a_right, self.a_orbit):
             group.add_large(action)
         group = page.add_group("Display")
-        group.add_column((self.a_orbit, self.a_nodes_visible,
-                          self.a_node_labels, self.a_element_labels, self.a_grid))
+        group.add_column((self.a_nodes_visible, self.a_node_labels))
+        group.add_column((self.a_element_labels, self.a_grid))
         group = page.add_group("Visibility")
         group.add_large(self.a_activate)
         group.add_large(self.a_deactivate)
@@ -633,6 +645,10 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_save)
         group = page.add_group("Exchange")
         group.add_large(self.a_export_tcl)
+        group.add_large(self.a_import_tcl)
+        group = page.add_group("Scripting")
+        group.add_large(self.a_console)
+        group = page.add_group("Example")
         group.add_large(self.a_example)
         group = page.add_group("Help")
         group.add_large(self.a_quick)
@@ -1820,6 +1836,57 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Export complete",
                                 f"OpenSees Tcl input written to:\n{path}")
 
+    def import_tcl(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Tcl", "", "Tcl files (*.tcl);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            imported, info = tcl.import_text(text, os.path.basename(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+            return
+        if not imported.nodes and not imported.elements:
+            self._warn("No nodes or elements were found in this Tcl file.\n"
+                       "Only model commands are imported; analysis commands "
+                       "and procedures are skipped.")
+            return
+        if self.project.nodes or self.project.elements:
+            answer = QMessageBox.question(
+                self, "Replace model?",
+                f"The current model has {len(self.project.nodes)} nodes and "
+                f"{len(self.project.elements)} elements.\n\n"
+                "Replace it with the Tcl model?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._cancel_draw_mode()
+        self._adopt(imported)
+        self.history = History(self.project)
+        self._clear_results()
+        self._set_locked(False)
+        self.viewport.set_project(self.project)
+        self.refresh_all()
+        self.viewport.fit()
+        message = (f"Imported {info['nodes']} nodes, {info['elements']} elements, "
+                   f"{info['loads']} loads")
+        if info["warnings"]:
+            message += f" ({len(info['warnings'])} item(s) skipped)"
+            self._log("Tcl import warnings: " + "; ".join(info["warnings"]))
+        self._log(f"Tcl imported from {path}: {message}")
+        self._status(message)
+
+    def open_console(self) -> None:
+        from .console import ScriptConsoleDialog
+
+        if self.console_dialog is None:
+            self.console_dialog = ScriptConsoleDialog(self.project, self)
+        self.console_dialog.project = self.project
+        self.console_dialog.show()
+        self.console_dialog.raise_()
+        self.console_dialog.activateWindow()
+
     # ================================================================== undo
     def undo(self) -> None:
         state = self.history.undo()
@@ -1999,7 +2066,7 @@ class MainWindow(QMainWindow):
                        "using a structure wizard.")
             return
         self._cancel_draw_mode()
-        dlg = wizards.StructureWizard(self.project, kind, self)
+        dlg = StructureWizard(self.project, kind, self)
         if not dlg.exec():
             return
         spec = dlg.spec()
