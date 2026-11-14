@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import QWidget
 from . import theme
 from .beamdiagram import (COMPONENTS, MOMENT_COMPONENTS, beam_load_records,
                           diagram_series, series_extreme)
+from .dnd import MODEL_ITEM_MIME
 from .model import Project, fmt
 from .opsgen import auto_vecxz, local_axes, ModalResults, StaticResults
 from .units import UNITS
@@ -122,6 +124,7 @@ class Viewport(QWidget):
     cameraChanged = Signal()
     elementDrawRequested = Signal(int, int)
     drawModeCancelled = Signal()
+    modelItemDropped = Signal(str, object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -129,6 +132,7 @@ class Viewport(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.ArrowCursor)
+        self.setAcceptDrops(True)
 
         self.project: Optional[Project] = None
         self.camera = Camera()
@@ -1272,6 +1276,32 @@ class Viewport(QWidget):
         self.statusMessage.emit(
             f"Draw element: {start}-{node}; continue from node {node} or press Esc.")
         self.update()
+
+    # ---------------------------------------------------------------- drop
+    def dragEnterEvent(self, ev) -> None:
+        if ev.mimeData().hasFormat(MODEL_ITEM_MIME):
+            ev.acceptProposedAction()
+        else:
+            super().dragEnterEvent(ev)
+
+    def dragMoveEvent(self, ev) -> None:
+        if ev.mimeData().hasFormat(MODEL_ITEM_MIME):
+            ev.acceptProposedAction()
+        else:
+            super().dragMoveEvent(ev)
+
+    def dropEvent(self, ev) -> None:
+        if not ev.mimeData().hasFormat(MODEL_ITEM_MIME):
+            super().dropEvent(ev)
+            return
+        raw = bytes(ev.mimeData().data(MODEL_ITEM_MIME)).decode("utf-8")
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return
+        self.modelItemDropped.emit(str(payload.get("kind", "")),
+                                   payload.get("value"))
+        ev.acceptProposedAction()
 
     def mousePressEvent(self, ev) -> None:
         self.setFocus()

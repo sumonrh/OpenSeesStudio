@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox,
+from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import (QAction, QBrush, QColor, QDesktopServices, QFont,
+                           QKeySequence)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
+                               QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QSpinBox, QStackedWidget,
                                QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
-from . import dialogs, icons, opsgen, tablecopy, tcl, theme, wizards
+from . import dialogs, icons, opsgen, runcontrol, tablecopy, tcl, theme, wizards
+from .dnd import MODEL_ITEM_MIME
+from .faq import FaqDialog
 from .wizard_dialog import StructureWizard
 from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .groundmotion_dialog import GroundMotionCatalogDialog
@@ -34,6 +39,11 @@ from .viewport import Viewport
 
 APP_NAME = "OpenSees Studio"
 PROJECT_FILTER = "OpenSees Studio project (*.ospj);;JSON files (*.json);;All files (*)"
+SUPPORT_PRESETS = {
+    "fixed": [True] * 6,
+    "pinned": [True, True, True, False, False, False],
+    "roller_z": [True, True, False, False, False, False],
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -81,6 +91,25 @@ class History:
         return Project.from_dict(self._states[self._index])
 
 
+class ModelTree(QTreeWidget):
+    """Model tree that exports draggable material/section/hinge/support items."""
+
+    def mimeData(self, items):
+        data = QMimeData()
+        if not items:
+            return data
+        item_data = items[0].data(0, Qt.UserRole)
+        if not item_data:
+            return data
+        kind, value = item_data
+        if kind not in ("material", "section", "hinge", "support_preset"):
+            return data
+        data.setData(MODEL_ITEM_MIME,
+                     json.dumps({"kind": kind, "value": value}).encode("utf-8"))
+        data.setText(f"{kind}: {value}")
+        return data
+
+
 # --------------------------------------------------------------------------- #
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -112,6 +141,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.viewport)
         self.viewport.selectionChanged.connect(self._on_selection)
         self.viewport.statusMessage.connect(self._status)
+        self.viewport.modelItemDropped.connect(self._apply_tree_drop)
 
         self._make_actions()
         self._make_ribbon()
@@ -230,8 +260,9 @@ class MainWindow(QMainWindow):
         self.a_settings = self._act("Settings", "settings", self.analysis_settings, "")
         self.a_check = self._act("Check Model", "check", self.check_model, "F9",
                                  "Validate the model before analysis")
-        self.a_run = self._act("Run Static", "run_static", self.run_static, "F5",
-                               "Run a static analysis for the active load case")
+        self.a_run = self._act("Run Analysis", "run", self.run_analysis_control, "F5",
+                               "Choose the analyses to run (static, modal, pushover, "
+                               "time history, response spectrum)")
         self.a_modal = self._act("Modal", "modal", self.run_modal, "F6",
                                  "Run an eigenvalue analysis")
         self.a_results = self._act("Results", "results", self.show_results, "F7")
@@ -341,12 +372,17 @@ class MainWindow(QMainWindow):
         self.a_props_visible = self._act("Properties", "panel_props",
                                          lambda on: self.props_dock.setVisible(on), "",
                                          "Show or hide the properties panel", checkable=True)
-        self.a_props_visible.setChecked(True)
+        self.a_props_visible.setChecked(False)
         self.a_log_visible = self._act("Messages", "panel_log",
                                        lambda on: self.log_dock.setVisible(on), "",
                                        "Show or hide the messages panel", checkable=True)
         self.a_log_visible.setChecked(True)
         self.a_quick = self._act("Quick Start", "help", self.quick_start, "F1")
+        self.a_faq = self._act("FAQ", "help", self.show_faq, "",
+                               "Frequently asked questions and OpenSees help")
+        self.a_opensees_help = self._act(
+            "OpenSees Help", "open", self.open_opensees_help, "",
+            "Open the official OpenSees wiki and documentation")
         self.a_about = self._act("About", "about", self.about, "")
 
         self.edit_actions = (self.a_nodes, self.a_elements, self.a_draw_element,
@@ -519,6 +555,7 @@ class MainWindow(QMainWindow):
         group = page.add_group("Display")
         group.add_column((self.a_nodes_visible, self.a_node_labels))
         group.add_column((self.a_element_labels, self.a_grid))
+        group.add_column((self.a_supports_visible,))
         group = page.add_group("Visibility")
         group.add_large(self.a_activate)
         group.add_large(self.a_deactivate)
@@ -565,8 +602,6 @@ class MainWindow(QMainWindow):
         page = ribbon.add_tab("Boundary")
         group = page.add_group("Supports")
         group.add_large(self.a_support)
-        group = page.add_group("Display")
-        group.add_column((self.a_supports_visible,))
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Model data")
@@ -650,9 +685,14 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_console)
         group = page.add_group("Example")
         group.add_large(self.a_example)
-        group = page.add_group("Help")
+
+        page = ribbon.add_tab("Help")
+        group = page.add_group("OpenSees Studio")
         group.add_large(self.a_quick)
+        group.add_large(self.a_faq)
         group.add_large(self.a_about)
+        group = page.add_group("OpenSees")
+        group.add_large(self.a_opensees_help)
 
         ribbon.set_current("Structure")
 
@@ -902,10 +942,13 @@ class MainWindow(QMainWindow):
     # ==================================================================== docks
     def _make_docks(self) -> None:
         # ---- model tree ------------------------------------------------
-        self.tree = QTreeWidget()
+        self.tree = ModelTree()
         self.tree.setHeaderHidden(True)
         self.tree.setColumnCount(1)
         self.tree.setMinimumWidth(220)
+        self.tree.setDragEnabled(True)
+        self.tree.setDragDropMode(QAbstractItemView.DragOnly)
+        self.tree.setDefaultDropAction(Qt.CopyAction)
         self.tree.itemClicked.connect(self._tree_clicked)
         self.tree.itemDoubleClicked.connect(self._tree_double)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -972,6 +1015,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock4)
         self.tabifyDockWidget(dock2, dock4)
         dock4.hide()
+        dock2.hide()
         self.results_dock = dock4
         self.results_dock.visibilityChanged.connect(self._results_dock_visibility)
 
@@ -1234,9 +1278,13 @@ class MainWindow(QMainWindow):
                 item.setData(0, Qt.UserRole, (kind, tag))
             if kind in ("material", "section"):
                 item.setToolTip(0, "Double-click: select elements using this. "
+                                   "Drag onto selected elements to assign. "
                                    "Right-click: delete.")
             elif kind == "hinge":
-                item.setToolTip(0, "Double-click: open the hinge assignment table.")
+                item.setToolTip(0, "Double-click: open the hinge assignment table. "
+                                   "Drag onto selected beam elements to assign.")
+            elif kind == "support_preset":
+                item.setToolTip(0, "Drag onto selected nodes to apply this support.")
             parent.addChild(item)
             return item
 
@@ -1276,6 +1324,10 @@ class MainWindow(QMainWindow):
         for n in p.nodes.values():
             if any(n.support):
                 add_child(g_sup, f"{n.tag}   {n.support_code()}", "node", n.tag)
+        g_preset = group("Presets", "support_presets", parent=b)
+        for label, key in (("Fixed", "fixed"), ("Pinned", "pinned"),
+                           ("Roller Z", "roller_z")):
+            add_child(g_preset, label, "support_preset", key)
 
         ld = group("Loads", "loads")
         g_cases = group("Load Cases", "cases", len(p.cases), ld)
@@ -1380,6 +1432,62 @@ class MainWindow(QMainWindow):
         self.viewport.select_elements(tags)
         self.viewport.fit_selection()
         self._status(f"Selected {len(tags)} element(s) using hinge {tag}")
+
+    def _apply_tree_drop(self, kind: str, value) -> None:
+        """Apply a material/section/hinge/support dragged from the model tree."""
+        if self.model_locked:
+            self._warn("The model is locked. Press Ctrl+L to unlock before editing.")
+            return
+        if kind in ("material", "section", "hinge"):
+            tags = sorted(self.viewport.sel_elements)
+            if not tags:
+                self._warn("Select the target elements first, then drag onto the view.")
+                return
+            if kind == "material" and int(value) not in self.project.materials:
+                self._warn(f"Material {value} no longer exists.")
+                return
+            if kind == "section" and int(value) not in self.project.sections:
+                self._warn(f"Section {value} no longer exists.")
+                return
+            if kind == "hinge" and int(value) not in self.project.hinge_defs:
+                self._warn(f"Hinge {value} no longer exists.")
+                return
+            applied = skipped = 0
+            for tag in tags:
+                element = self.project.elements.get(tag)
+                if element is None:
+                    continue
+                if kind == "material":
+                    element.mat = int(value)
+                elif kind == "section":
+                    element.sec = int(value)
+                else:
+                    if element.kind != "beam":
+                        skipped += 1
+                        continue
+                    self.project.hinge_assignments[int(tag)] = int(value)
+                applied += 1
+            if not applied:
+                self._warn("No compatible selected elements for this item.")
+                return
+            label = f"Assigned {kind} {value} to {applied} element(s)"
+            if skipped:
+                label += f" ({skipped} non-beam skipped)"
+            self._commit(label)
+            return
+        if kind == "support_preset":
+            flags = SUPPORT_PRESETS.get(str(value))
+            if flags is None:
+                return
+            nodes = sorted(self.viewport.sel_nodes)
+            if not nodes:
+                self._warn("Select the target nodes first, then drag onto the view.")
+                return
+            for tag in nodes:
+                node = self.project.nodes.get(tag)
+                if node is not None:
+                    node.support = list(flags)
+            self._commit(f"Applied {value} support to {len(nodes)} node(s)")
 
     def _tree_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -2493,6 +2601,46 @@ class MainWindow(QMainWindow):
             on_finished(runner.result)
         self.analysis_runner = None
 
+    def run_analysis_control(self) -> None:
+        if self.analysis_runner is not None and self.analysis_runner.is_running:
+            self._warn("An analysis is already running.")
+            return
+        if not self.project.elements:
+            self._warn("The model has no elements.")
+            return
+        dlg = runcontrol.RunControlDialog(
+            self.project, self.scenario_combo.currentText(), self)
+        if not dlg.exec():
+            return
+        selected = dlg.selected()
+        if not selected:
+            self._warn("Select at least one available analysis.")
+            return
+        jobs = []
+        if "static" in selected:
+            jobs.append(("static", {"scenario": dlg.static_scenario},
+                         "Static analysis", self._static_finished))
+        if "modal" in selected:
+            modes = int(self.project.settings.get("modal_modes", 6))
+            jobs.append(("modal", {"nmodes": modes}, "Modal analysis",
+                         self._modal_finished))
+        if "pushover" in selected:
+            jobs.append(("pushover", dlg.pushover_config(),
+                         "Pushover analysis", self._pushover_finished))
+        if "time_history" in selected:
+            jobs.append(("time_history", {}, "Time-history analysis",
+                         self._time_history_finished))
+        if "response_spectrum" in selected:
+            jobs.append(("response_spectrum", {},
+                         "Response-spectrum analysis",
+                         self._response_spectrum_finished))
+        self._log("Run control: " + ", ".join(selected))
+        for kind, config, title, callback in jobs:
+            if self.analysis_runner is not None and self.analysis_runner.is_running:
+                break
+            self._run_analysis(kind, config, title, callback)
+        self._status(f"Analysis run control finished ({len(jobs)} job(s))")
+
     def run_static(self) -> None:
         scenario = self._scenario()
         if not scenario:
@@ -2988,11 +3136,19 @@ class MainWindow(QMainWindow):
             "<li><b>Supports (S)</b> — fixed, pinned or roller restraints.</li>"
             "<li><b>Load Cases</b>, <b>Nodal Loads (L)</b>, <b>Element Loads</b>, <b>Self Weight</b>.</li>"
             "<li><b>Combinations (K)</b> — factor each case.</li>"
-            "<li><b>Run Static (F5)</b> or <b>Run Modal (F6)</b>, then inspect results (F7).</li>"
+            "<li><b>Run Analysis (F5)</b> — choose static, modal, pushover, time history "
+            "or response spectrum; <b>Modal (F6)</b>, then results (F7).</li>"
             "</ol>"
             "<p>The active load case is chosen in the status bar; loads are drawn for it.</p>"
             "<p><b>Mouse:</b> left = select / box-select, middle = pan, right = orbit, wheel = zoom.<br>"
             "<b>Tables (T)</b> edits every entity in a spreadsheet.</p>"))
+
+    def show_faq(self) -> None:
+        FaqDialog(self).exec()
+
+    def open_opensees_help(self) -> None:
+        QDesktopServices.openUrl(
+            QUrl("https://opensees.berkeley.edu/wiki/index.php/Main_Page"))
 
     def about(self) -> None:
         QMessageBox.about(self, f"About {APP_NAME}", (

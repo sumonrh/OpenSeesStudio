@@ -1399,11 +1399,11 @@ class ElementLoadDialog(BaseDialog):
         self.kind = QComboBox()
         self.kind.addItems(["Uniform load", "Trapezoidal load", "Point load"])
         self.direction = QComboBox(); self.direction.addItems(LOAD_DIRECTIONS)
-        self.value = spin(UNITS.dist(10.0), UNITS.dist(-1e9), UNITS.dist(1e9), 5,
+        self.value = spin(0.0, UNITS.dist(-1e9), UNITS.dist(1e9), 2,
                           UNITS.dist(1.0), UNITS.dist_unit)
-        self.value2 = spin(0.0, UNITS.dist(-1e9), UNITS.dist(1e9), 5,
+        self.value2 = spin(0.0, UNITS.dist(-1e9), UNITS.dist(1e9), 2,
                            UNITS.dist(1.0), UNITS.dist_unit)
-        self.position = spin(0.5, 0.0, 1.0, 3, 0.05)
+        self.position = spin(0.5, 0.0, 1.0, 2, 0.05)
         form.addRow("Load case", self.case)
         form.addRow("Type", self.kind)
         form.addRow("Direction", self.direction)

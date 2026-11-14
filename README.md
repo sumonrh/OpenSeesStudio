@@ -62,12 +62,18 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 
 **Interface**
 - Ribbon tabs (View, Structure, Node/Element, Properties, Boundary, Load, Analysis,
-  Pushover, Results, Tools) with command groups and captions.
+  Dynamic, Pushover, Results, Tools, Help) with command groups and captions.
 - Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
   vertical view strip (fit, iso, top, front, right, orbit, node labels, element
   labels, grid, deformed, extruded).
-- Model, Properties and Messages panels can be collapsed and restored from
-  **View > Panels**.
+- Model and Messages panels are shown by default; the Properties panel is hidden by
+  default and can be opened from **View > Panels**.
+- **Run Analysis (F5)** opens a run-control checklist: static, modal, pushover, time
+  history and response spectrum, with unavailable analyses disabled and explained.
+- Materials, sections, hinges and support presets can be dragged from the model tree
+  onto the viewport and are applied to the selected elements or nodes.
+- **Help** tab with Quick Start, a FAQ, About, and links to the official
+  OpenSees wiki and documentation.
 - **Clean View** hides deformation, loads and labels for a plain structural view.
   It is on the vertical sidebar on the right.
 - **Extruded** mode draws beams and columns with their real section sizes.
@@ -224,7 +230,7 @@ and time-history analysis is in
 | L | Nodal loads |
 | K | Load combinations |
 | T | Tables |
-| F5 / F6 | Run static / modal |
+| F5 / F6 | Run analysis control / modal |
 | F7 | Results |
 | F9 | Model check |
 | F | Fit view |
@@ -240,6 +246,16 @@ Press **O** (or the Orbit ribbon button) for AutoCAD-style orbit mode, where lef
 the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the selection.
 In **Draw Element** mode, left-click a start node and then an end node; the end node
 becomes the next start. **Right-click**, **Esc** or **Finish** ends the tool.
+
+## Help and FAQ
+
+The **Help** tab contains **Quick Start**, **FAQ**, **About** and **OpenSees Help**.
+OpenSeesPy has no embedded help engine, so the FAQ summarizes the official OpenSees
+documentation (model building, supports, singular-matrix errors, mass and modal
+analysis, convergence, hinges, ground motions, SRSS/CQC) and links to the
+[OpenSees Wiki](https://opensees.berkeley.edu/wiki/index.php/Main_Page), the
+[Command Language Manual](https://opensees.berkeley.edu/OpenSees/manuals/usermanual/OpenSeesCommandLanguageManualJune2006.pdf)
+and the [OpenSees documentation](https://opensees.github.io/OpenSeesDocumentation/).
 
 ## Script console and Tcl import
 
@@ -393,7 +409,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.4-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.5-Setup.exe` – Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing
@@ -430,6 +446,12 @@ app/
   dialogs.py      node / element / copy / load / combination dialogs
   tables.py       spreadsheet model tables and load-case filter
   results.py      result viewer and CSV export
+  runcontrol.py   analysis run-control checklist
+  faq.py          FAQ dialog and official OpenSees links
+  console.py      Python/Tcl script console
+  scriptmodel.py  capture script-built models into a project
+  tcl.py          Tcl model import and command runner
+  dnd.py          drag-and-drop payload for tree items
   example.py      built-in demo frame
   theme.py        light professional theme
   icons.py        vector ribbon icons

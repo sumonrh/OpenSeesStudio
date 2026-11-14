@@ -219,7 +219,7 @@ print("== ribbon ==")
 titles = [win.ribbon.tabs.tabText(i) for i in range(win.ribbon.tabs.count())]
 check("ribbon tabs", titles == ["View", "Structure", "Node/Element", "Properties",
                                 "Boundary", "Load", "Analysis", "Dynamic",
-                                "Pushover", "Results", "Tools"],
+                                "Pushover", "Results", "Tools", "Help"],
       f"({titles})")
 check("default ribbon tab", win.ribbon.current_title() == "Structure",
       f"({win.ribbon.current_title()})")
@@ -258,11 +258,25 @@ view_groups = {g.findChild(QLabel, "ribbonCaption").text(): g
 check("orbit moved under Navigate",
       any(b.defaultAction() is win.a_orbit
           for b in view_groups["Navigate"].findChildren(QToolButton)))
-check("display group has two columns",
-      view_groups["Display"].row.count() == 2)
+check("display group has three columns",
+      view_groups["Display"].row.count() == 3)
 check("display group is wide enough",
-      view_groups["Display"].sizeHint().width() > 150,
+      view_groups["Display"].sizeHint().width() > 300,
       f"({view_groups['Display'].sizeHint().width()} px)")
+view_actions = [b.defaultAction() for b in view_page.findChildren(QToolButton)]
+boundary_page = win.ribbon._pages[4]
+boundary_actions = [b.defaultAction() for b in boundary_page.findChildren(QToolButton)]
+check("show supports moved to View tab",
+      win.a_supports_visible in view_actions
+      and win.a_supports_visible not in boundary_actions)
+help_page = win.ribbon._pages[11]
+help_actions = [b.defaultAction() for b in help_page.findChildren(QToolButton)]
+check("help tab has quick start, FAQ, about and OpenSees help",
+      all(a in help_actions for a in
+          (win.a_quick, win.a_faq, win.a_about, win.a_opensees_help)))
+check("quick start/about removed from Tools",
+      all(a not in [b.defaultAction() for b in win.ribbon._pages[10].findChildren(QToolButton)]
+          for a in (win.a_quick, win.a_about)))
 structure_page = win.ribbon._pages[1]
 structure_actions = [b.defaultAction() for b in structure_page.findChildren(QToolButton)]
 check("structure tab has five wizards",
@@ -304,11 +318,12 @@ check("dynamic tab has ground motion, time-history and spectrum actions",
       win.a_gm_catalog in dynamic_actions
       and win.a_time_history in dynamic_actions
       and win.a_spectrum in dynamic_actions)
-check("properties panel action", win.a_props_visible.isChecked())
-win.a_props_visible.trigger()
-check("properties panel collapses", win.props_dock.isHidden())
+check("properties panel action", not win.a_props_visible.isChecked())
+check("properties panel hidden by default", win.props_dock.isHidden())
 win.a_props_visible.trigger()
 check("properties panel restores", not win.props_dock.isHidden())
+win.a_props_visible.trigger()
+check("properties panel collapses", win.props_dock.isHidden())
 root = win.tree.topLevelItem(0)
 tree_items = {root.child(i).text(0).split("   ")[0]: root.child(i)
               for i in range(root.childCount())}
@@ -529,6 +544,58 @@ try:
     check("table validation rejects text", False)
 except ValueError:
     check("table validation rejects text", True)
+
+print("== element loads, help and run control ==")
+from app.dialogs import ElementLoadDialog
+eld = ElementLoadDialog(win.project, [])
+check("element load default is zero", eld.value.value() == 0.0)
+check("element load shows two decimals",
+      eld.value.decimals() == 2 and eld.value2.decimals() == 2
+      and eld.position.decimals() == 2)
+eld.close()
+
+from app.faq import FaqDialog
+faq = FaqDialog(win)
+check("FAQ includes official OpenSees links",
+      "opensees.berkeley.edu" in faq.browser.toHtml())
+faq.close()
+
+from app.runcontrol import RunControlDialog
+rc = RunControlDialog(win.project, win.scenario_combo.currentText())
+avail = rc.availability()
+check("run control enables static and modal", avail["static"] and avail["modal"])
+check("run control disables pushover without hinges", not avail["pushover"])
+check("run control selects available analyses",
+      "static" in rc.selected() and "modal" in rc.selected())
+rc.close()
+
+print("== tree drag and drop ==")
+from app.dnd import MODEL_ITEM_MIME
+root_now = win.tree.topLevelItem(0)
+materials_group = next(root_now.child(i) for i in range(root_now.childCount())
+                       if root_now.child(i).text(0).startswith("Materials"))
+material_item = materials_group.child(0)
+check("tree exports a drag payload",
+      win.tree.mimeData([material_item]).hasFormat(MODEL_ITEM_MIME))
+target_elements = sorted(win.project.elements)[:2]
+material_tag = next(iter(win.project.materials))
+win.viewport.select_elements(target_elements)
+win._apply_tree_drop("material", material_tag)
+check("dragging a material assigns selected elements",
+      all(win.project.elements[t].mat == material_tag for t in target_elements))
+win.undo()
+section_tag = next(iter(win.project.sections))
+win.viewport.select_elements(target_elements)
+win._apply_tree_drop("section", section_tag)
+check("dragging a section assigns selected elements",
+      all(win.project.elements[t].sec == section_tag for t in target_elements))
+win.undo()
+target_node = next(iter(win.project.nodes))
+win.viewport.select_nodes([target_node])
+win._apply_tree_drop("support_preset", "fixed")
+check("dragging a support preset fixes selected nodes",
+      all(win.project.nodes[target_node].support))
+win.undo()
 
 print("== save / load ==")
 tmp = os.path.join(tempfile.gettempdir(), "oss_roundtrip.ospj")
