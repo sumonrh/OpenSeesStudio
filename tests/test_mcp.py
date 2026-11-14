@@ -219,7 +219,7 @@ async def main():
             check("get_time_history_results", r["step"] == 5)
 
             r = await call("configure_response_spectrum",
-                           {"periods": [0.0, 0.2, 0.5], 
+                           {"periods": [0.0, 0.2, 0.5],
                             "accelerations": [0.4, 0.8, 0.5],
                             "n_modes": 3})
             check("configure_response_spectrum", r["n_modes"] == 3)
