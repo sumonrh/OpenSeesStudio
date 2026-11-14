@@ -232,7 +232,7 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.7",
+    version="1.0.8",
     instructions=(
         "OpenSees Studio is a graphical model generator and analysis GUI for "
         "OpenSees. Use these tools to build structural models and analyse them.\n\n"
@@ -243,6 +243,9 @@ server = MCPServer(
         "assign_supports -> add_load_case -> add_nodal_loads / add_element_loads / "
         "set_self_weight -> add_load_combination -> check_model -> run_static -> "
         "get_static_results. Use run_modal for periods and mode shapes.\n\n"
+        "add_elements supports beam, truss (behavior '', tension or compression), "
+        "cable (tension-only corotTruss) and shell. Point springs use "
+        "add_point_spring; node constraints use add_constraint.\n\n"
         "For nonlinear work call list_hinge_materials, add_hinge_definition and "
         "assign_hinges, then run_pushover (requires a lateral case and hinges). "
         "Point springs use add_point_spring (Elastic, MultiLinear or PySimple1 p-y); "
@@ -508,17 +511,22 @@ def delete_nodes(tags: List[int]) -> dict:
 @_locked
 def add_elements(kind: str, node_tags: List[int], material: int = 1,
                  section: int = 1, vecxz: Optional[List[float]] = None,
-                 thickness: float = 100.0) -> dict:
-    """Create elements. kind = beam | truss | shell.
+                 thickness: float = 100.0, behavior: str = "") -> dict:
+    """Create elements. kind = beam | truss | cable | shell.
 
-    For beam/truss, 3+ node tags create a chain between consecutive nodes.
+    For beam/truss/cable, 3+ node tags create a chain between consecutive nodes.
     For shell, tags are taken in groups of four (i, j, k, l).
     vecxz is the beam local z axis; omit for automatic (global Z, or global X
-    for vertical members).
+    for vertical members). behavior is '', tension or compression for truss
+    elements; cable elements are always tension-only corotTruss elements.
     """
     kind = kind.lower()
-    if kind not in ("beam", "truss", "shell"):
-        raise ValueError("kind must be beam, truss or shell.")
+    if kind not in ("beam", "truss", "cable", "shell"):
+        raise ValueError("kind must be beam, truss, cable or shell.")
+    if behavior not in ("", "tension", "compression"):
+        raise ValueError("behavior must be '', tension or compression.")
+    if behavior and kind != "truss":
+        raise ValueError("behavior applies to truss elements only.")
     _require_nodes(node_tags)
     if material not in _p().materials:
         raise ValueError(f"Unknown material {material}. Available: {list(_p().materials)}")
@@ -544,7 +552,8 @@ def add_elements(kind: str, node_tags: List[int], material: int = 1,
         if len(set(group)) != len(group):
             raise ValueError("An element cannot reference the same node twice.")
         tag = _p().next_element()
-        _p().elements[tag] = Element(tag, kind, group, material, section, vx, thickness)
+        _p().elements[tag] = Element(tag, kind, group, material, section, vx,
+                                     thickness, behavior=behavior)
         created.append(tag)
     _changed(f"add {len(created)} element(s)")
     return {"ok": True, "elements": created, "kind": kind}
@@ -931,12 +940,13 @@ def add_point_spring(node: int, dof: int = 1, kind: str = "linear",
                      k: float = 10.0,
                      curve: Optional[List[List[float]]] = None,
                      pult: float = 100.0, y50: float = 10.0,
-                     cd: float = 0.5, soil_type: int = 1) -> dict:
+                     cd: float = 0.5, soil_type: int = 1,
+                     behavior: str = "") -> dict:
     """Add a zeroLength point spring at a node (linear, multilinear or p-y).
 
     dof: 1..6 (UX, UY, UZ, RX, RY, RZ). curve contains [displacement, force]
     backbone points and is used for kind='multilinear'. PySimple1 is used for
-    kind='py' with translational DOFs.
+    kind='py' with translational DOFs. behavior: '', 'tension' or 'compression'.
     """
     p = _p()
     if int(node) not in p.nodes:
@@ -945,8 +955,15 @@ def add_point_spring(node: int, dof: int = 1, kind: str = "linear",
         raise ValueError("dof must be between 1 and 6.")
     if kind not in ("linear", "multilinear", "py"):
         raise ValueError("kind must be linear, multilinear or py.")
+    if behavior not in ("", "tension", "compression"):
+        raise ValueError("behavior must be '', tension or compression.")
     if kind == "py" and int(dof) > 3:
         raise ValueError("PySimple1 springs need a translational DOF (1-3).")
+    if kind == "py" and behavior:
+        raise ValueError("P-Y springs do not use a tension/compression wrapper.")
+    if kind == "multilinear" and behavior == "compression":
+        raise ValueError("OpenSees has no compression-only wrapper for a "
+                         "multi-linear curve.")
     points = [[float(u), float(f)] for u, f in (curve or [[0.0, 0.0], [1.0, 10.0]])]
     if kind == "multilinear" and len(points) < 2:
         raise ValueError("curve needs at least two points.")
@@ -957,7 +974,7 @@ def add_point_spring(node: int, dof: int = 1, kind: str = "linear",
     p.springs[tag] = SpringSupport(
         tag, int(node), dof=int(dof), kind=kind, k=float(k),
         curve=points, pult=float(pult), y50=float(y50), cd=float(cd),
-        soil_type=int(soil_type))
+        soil_type=int(soil_type), behavior=behavior)
     _changed(f"add point spring {tag}")
     return {"ok": True, **p.springs[tag].to_dict()}
 

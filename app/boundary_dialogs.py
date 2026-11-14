@@ -37,8 +37,13 @@ class SpringDialog(BaseDialog):
         self.kind.addItem("Linear (Elastic)", "linear")
         self.kind.addItem("Nonlinear force-deformation (MultiLinear)", "multilinear")
         self.kind.addItem("P-Y spring (PySimple1)", "py")
+        self.behavior = QComboBox()
+        self.behavior.addItem("Standard (tension and compression)", "")
+        self.behavior.addItem("Tension only", "tension")
+        self.behavior.addItem("Compression only", "compression")
         form.addRow("DOF", self.dof)
         form.addRow("Type", self.kind)
+        form.addRow("Behaviour", self.behavior)
         self.body.addLayout(form)
 
         self.linear_box = QWidget()
@@ -120,6 +125,9 @@ class SpringDialog(BaseDialog):
         self.linear_box.setVisible(kind == "linear")
         self.curve_box.setVisible(kind == "multilinear")
         self.py_box.setVisible(kind == "py")
+        self.behavior.setEnabled(kind != "py")
+        if kind == "py":
+            self.behavior.setCurrentIndex(0)
         if kind == "py" and int(self.dof.currentData() or 1) > 3:
             self.py_box.setToolTip("PySimple1 requires UX, UY or UZ.")
         self._units_changed_suffixes()
@@ -167,7 +175,8 @@ class SpringDialog(BaseDialog):
                 points.append([u, UNITS.moment_base(f)])
         return {"dof": dof, "kind": kind, "k": k,
                 "curve": points, "pult": pult, "y50": y50,
-                "cd": self.cd.value(), "soil_type": int(self.soil.currentData())}
+                "cd": self.cd.value(), "soil_type": int(self.soil.currentData()),
+                "behavior": "" if kind == "py" else str(self.behavior.currentData())}
 
 
 class RigidLinkDialog(BaseDialog):

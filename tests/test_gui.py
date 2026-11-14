@@ -605,9 +605,11 @@ check("spring dialog default", sd.dof.currentData() == 1
       and sd.kind.currentData() == "linear")
 sd.dof.setCurrentIndex(sd.dof.findData(3))
 sd.kind.setCurrentIndex(sd.kind.findData("multilinear"))
+sd.behavior.setCurrentIndex(sd.behavior.findData("tension"))
 spec = sd.spec()
 check("spring dialog spec", spec["dof"] == 3 and spec["kind"] == "multilinear"
       and spec["k"] > 0 and len(spec["curve"]) == 3)
+check("spring tension-only behavior", spec["behavior"] == "tension")
 check("spring curve converts display units",
       spec["curve"][1] == [1000.0, 10.0],
       f"({spec['curve'][1]})")
@@ -703,6 +705,13 @@ check("node dialog converts", abs(nd.positions()[0][0] - 2000.0) < 1e-9)
 ed = dialogs.ElementDialog(win.project, [])
 ed.thickness.setValue(0.05)
 check("element dialog converts", abs(ed.spec()["thickness"] - 50.0) < 1e-9)
+ed.kind.setCurrentIndex(ed.kind.findData("truss_tension"))
+check("element dialog tension-only truss",
+      ed.spec()["kind"] == "truss" and ed.spec()["behavior"] == "tension")
+ed.kind.setCurrentIndex(ed.kind.findData("cable"))
+cable_spec = ed.spec()
+check("element dialog cable type", cable_spec["kind"] == "cable")
+ed.close()
 
 md = dialogs.MaterialDialog(win.project)
 mtag = next(iter(md.materials))

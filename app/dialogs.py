@@ -161,6 +161,9 @@ class ElementDialog(BaseDialog):
         self.kind = QComboBox()
         self.kind.addItem("Beam  (elasticBeamColumn, 2 nodes)", "beam")
         self.kind.addItem("Truss (2 nodes)", "truss")
+        self.kind.addItem("Tension-only truss (2 nodes)", "truss_tension")
+        self.kind.addItem("Compression-only truss (2 nodes)", "truss_compression")
+        self.kind.addItem("Cable (corotTruss, tension-only, 2 nodes)", "cable")
         self.kind.addItem("Shell (ShellMITC4, 4 nodes)", "shell")
         self.kind.currentIndexChanged.connect(self._sync)
         self.body.addWidget(self.kind)
@@ -202,10 +205,13 @@ class ElementDialog(BaseDialog):
         sb.addWidget(self.thickness)
         self.body.addWidget(self.shell_box)
         self.shell_box.setVisible(False)
+
         self.orient_box.setVisible(True)
 
         self.body.addWidget(hint("Tip: select nodes in the viewport first; their tags "
-                                 "are filled in automatically."))
+                                 "are filled in automatically. Cable elements use "
+                                 "corotTruss with TensionOnly; give them a sag or lateral "
+                                 "restraint so they are not perfectly straight."))
         self.kind.currentIndexChanged.connect(self._sync)
         self.buttons("Create")
 
@@ -217,9 +223,15 @@ class ElementDialog(BaseDialog):
     def spec(self) -> dict:
         tags = parse_tags(self.nodes.text())
         vec = None if self.auto.isChecked() else [self.vx.value(), self.vy.value(), self.vz.value()]
-        return {"kind": self.kind.currentData(), "nodes": tags,
+        kind = self.kind.currentData()
+        behavior = {"truss_tension": "tension",
+                    "truss_compression": "compression"}.get(kind, "")
+        real_kind = "truss" if kind in ("truss_tension", "truss_compression") else kind
+        return {"kind": real_kind, "nodes": tags,
                 "mat": self.mat.currentData(), "sec": self.sec.currentData(),
-                "vecxz": vec, "thickness": UNITS.length_base(self.thickness.value())}
+                "vecxz": vec if real_kind == "beam" else None,
+                "thickness": UNITS.length_base(self.thickness.value()),
+                "behavior": behavior}
 
 
 class SubdivideDialog(BaseDialog):

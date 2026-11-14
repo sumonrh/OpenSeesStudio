@@ -394,10 +394,24 @@ def build(project: Project, scenario: Optional[str] = None,
         xyz = project.node_xyz(spring.node)
         ops.node(ground_tag, *xyz)
         ops.fix(ground_tag, 1, 1, 1, 1, 1, 1)
-        mat_tag = 6_000_000 + index
+        base_tag = 6_000_000 + index * 2
+        mat_tag = base_tag
+        behavior = str(getattr(spring, "behavior", "") or "")
         if spring.kind == "linear":
-            ops.uniaxialMaterial("Elastic", mat_tag, max(float(spring.k), 1e-12))
+            if behavior == "compression":
+                ops.uniaxialMaterial("ENT", base_tag,
+                                     max(float(spring.k), 1e-12))
+            else:
+                ops.uniaxialMaterial("Elastic", base_tag,
+                                     max(float(spring.k), 1e-12))
+                if behavior == "tension":
+                    ops.uniaxialMaterial("TensionOnly", base_tag + 1, base_tag)
+                    mat_tag = base_tag + 1
         elif spring.kind == "multilinear":
+            if behavior == "compression":
+                log.append(f"Spring {spring.tag} skipped: a compression-only "
+                           "multi-linear wrapper is not available in OpenSees")
+                continue
             points = sorted(([float(u), float(f)] for u, f in spring.curve
                              if float(u) > _EPS), key=lambda pair: pair[0])
             if not points:
@@ -409,13 +423,20 @@ def build(project: Project, scenario: Optional[str] = None,
             args = []
             for u, f in points:
                 args.extend([u, f])
-            ops.uniaxialMaterial("MultiLinear", mat_tag, *args)
+            ops.uniaxialMaterial("MultiLinear", base_tag, *args)
+            if behavior == "tension":
+                ops.uniaxialMaterial("TensionOnly", base_tag + 1, base_tag)
+                mat_tag = base_tag + 1
         elif spring.kind == "py":
+            if behavior:
+                log.append(f"Spring {spring.tag} skipped: P-Y springs do not "
+                           "use a tension/compression wrapper")
+                continue
             if int(spring.dof) > 3:
                 log.append(f"Spring {spring.tag} skipped: PySimple1 needs a "
                            "translational DOF")
                 continue
-            ops.uniaxialMaterial("PySimple1", mat_tag,
+            ops.uniaxialMaterial("PySimple1", base_tag,
                                  int(spring.soil_type), float(spring.pult),
                                  float(spring.y50), float(spring.cd))
         else:
@@ -468,9 +489,28 @@ def build(project: Project, scenario: Optional[str] = None,
         mat = project.material_of(e)
         sec = _ensure_section(project.section_of(e))
 
-        if e.kind == "truss":
-            area = sec.A
-            ops.element("truss", e.tag, e.nodes[0], e.nodes[1], area, mat.tag)
+        if e.kind == "cable":
+            wrapper = 4_000_000 + e.tag
+            ops.uniaxialMaterial("TensionOnly", wrapper, mat.tag)
+            ops.element("corotTruss", e.tag, e.nodes[0], e.nodes[1],
+                        sec.A, wrapper)
+            continue
+
+        if e.kind in ("truss", "cable"):
+            truss_mat = mat.tag
+            if e.kind == "cable":
+                wrapper = 4_000_000 + e.tag
+                ops.uniaxialMaterial("TensionOnly", wrapper, mat.tag)
+                truss_mat = wrapper
+            elif e.behavior == "tension":
+                wrapper = 4_000_000 + e.tag
+                ops.uniaxialMaterial("TensionOnly", wrapper, mat.tag)
+                truss_mat = wrapper
+            elif e.behavior == "compression":
+                wrapper = 4_000_000 + e.tag
+                ops.uniaxialMaterial("ENT", wrapper, mat.E)
+                truss_mat = wrapper
+            ops.element("truss", e.tag, e.nodes[0], e.nodes[1], sec.A, truss_mat)
             continue
 
         if e.kind == "shell":
@@ -602,6 +642,10 @@ def _apply_case_loads(project: Project, case: str, log: List[str],
         e = project.elements.get(el.elem)
         if e is None or len(e.nodes) < 2:
             continue
+        if e.kind == "cable":
+            log.append(f"Element load on cable {e.tag} skipped: cable loads "
+                       "are applied as nodal/self weight")
+            continue
         # --- distributed ------------------------------------------------
         if el.kind == "uniform":
             if e.kind == "shell":
@@ -662,7 +706,7 @@ def _apply_self_weight(project: Project, factor: float, log: List[str]) -> None:
             for t in e.nodes[:4]:
                 ops.load(t, 0.0, 0.0, f, 0.0, 0.0, 0.0)
             applied += 1
-        elif e.kind == "truss":
+        elif e.kind in ("truss", "cable"):
             length = project.element_length(e)
             f = -w_unit * sec.A * length / 2.0
             for t in e.nodes[:2]:
@@ -759,6 +803,11 @@ def check_model(project: Project):
             errors.append(f"Element {t} references missing section {e.sec}.")
         if len(e.nodes) >= 2 and project.element_length(e) < 1e-9:
             errors.append(f"Element {t} has zero length.")
+        if e.kind == "truss" and e.behavior not in ("", "tension", "compression"):
+            errors.append(f"Element {t} has an invalid truss behaviour.")
+        if e.kind == "cable":
+            if len(e.nodes) != 2:
+                errors.append(f"Cable {t} needs exactly two nodes.")
 
     used.update(s.node for s in project.springs.values()
                 if s.node in project.nodes)
@@ -785,6 +834,16 @@ def check_model(project: Project):
                 errors.append(f"Spring {tag}: PySimple1 needs a translational DOF.")
             if spring.pult <= 0 or spring.y50 <= 0:
                 errors.append(f"Spring {tag} needs positive pult and y50.")
+            if spring.behavior:
+                errors.append(f"Spring {tag}: P-Y springs do not use a "
+                              "tension/compression wrapper.")
+        if spring.behavior not in ("", "tension", "compression"):
+            errors.append(f"Spring {tag} has an invalid tension/compression "
+                          "behaviour.")
+        if spring.behavior == "compression" and spring.kind == "multilinear":
+            errors.append(f"Spring {tag}: OpenSees has no compression-only "
+                          "wrapper for a multi-linear curve; use linear "
+                          "compression-only or ENT.")
 
     for tag, constraint in project.constraints.items():
         if constraint.master not in project.nodes:
@@ -824,7 +883,13 @@ def run_static(project: Project, scenario: str) -> StaticResults:
     ops.constraints("Transformation" if project.constraints else "Plain")
     ops.numberer("RCM")
     ops.system("BandGen")
-    ops.algorithm("Linear")
+    nonlinear = bool(project.springs) or any(
+        e.behavior or e.kind == "cable" for e in project.elements.values())
+    if nonlinear:
+        ops.test("NormDispIncr", 1e-8, 25, 0)
+        ops.algorithm("Newton")
+    else:
+        ops.algorithm("Linear")
     steps = float(project.settings.get("static_steps", 1.0) or 1.0)
     ops.integrator("LoadControl", steps)
     ops.analysis("Static")
@@ -841,6 +906,8 @@ def run_static(project: Project, scenario: str) -> StaticResults:
         res.element_kind[tag] = e.kind
         try:
             if e.kind == "truss":
+                r = ops.eleResponse(tag, "axialForce")
+            elif e.kind == "cable":
                 r = ops.eleResponse(tag, "axialForce")
             elif e.kind == "shell":
                 r = ops.eleResponse(tag, "forces")
@@ -1480,12 +1547,20 @@ def export_tcl(project: Project) -> str:
         for index, spring in enumerate(sorted(project.springs.values(),
                                               key=lambda s: s.tag)):
             ground = 10_000_000 + index
-            mat = 6_000_000 + index
+            mat = 6_000_000 + index * 2
+            use_mat = mat
+            behavior = str(getattr(spring, "behavior", "") or "")
             xyz = project.node_xyz(spring.node)
             A(f"node {ground} {_num(xyz[0])} {_num(xyz[1])} {_num(xyz[2])}")
             A(f"fix {ground} 1 1 1 1 1 1")
             if spring.kind == "linear":
-                A(f"uniaxialMaterial Elastic {mat} {_num(max(spring.k, 1e-12))}")
+                if behavior == "compression":
+                    A(f"uniaxialMaterial ENT {mat} {_num(max(spring.k, 1e-12))}")
+                else:
+                    A(f"uniaxialMaterial Elastic {mat} {_num(max(spring.k, 1e-12))}")
+                    if behavior == "tension":
+                        A(f"uniaxialMaterial TensionOnly {mat + 1} {mat}")
+                        use_mat = mat + 1
             elif spring.kind == "multilinear":
                 pts = sorted((u, f) for u, f in spring.curve if u > 1e-9)
                 if not pts:
@@ -1496,19 +1571,36 @@ def export_tcl(project: Project) -> str:
                     pts.append((2.0 * u0, 2.0 * f0))
                 args = " ".join(f"{_num(u)} {_num(f)}" for u, f in pts)
                 A(f"uniaxialMaterial MultiLinear {mat} {args}")
+                if behavior == "tension":
+                    A(f"uniaxialMaterial TensionOnly {mat + 1} {mat}")
+                    use_mat = mat + 1
             else:
                 A(f"uniaxialMaterial PySimple1 {mat} {spring.soil_type} "
                   f"{_num(spring.pult)} {_num(spring.y50)} {_num(spring.cd)}")
             A(f"element zeroLength {7_000_000 + index} {spring.node} {ground} "
-              f"-mat {mat} -dir {spring.dof}")
+              f"-mat {use_mat} -dir {spring.dof}")
         A("")
     A("# ---------------- elements -----------------")
     tag = 1
     for e in project.elements.values():
         mat = project.material_of(e)
         sec = _ensure_section(project.section_of(e))
+        if e.kind == "cable":
+            wrapper = 4_000_000 + e.tag
+            A(f"uniaxialMaterial TensionOnly {wrapper} {mat.tag}")
+            A(f"element corotTruss {e.tag} {e.nodes[0]} {e.nodes[1]} "
+              f"{_num(sec.A)} {wrapper}")
+            continue
         if e.kind == "truss":
-            A(f"element truss {e.tag} {e.nodes[0]} {e.nodes[1]} {_num(sec.A)} {mat.tag}")
+            truss_mat = mat.tag
+            if e.behavior == "tension":
+                A(f"uniaxialMaterial TensionOnly {4_000_000 + e.tag} {mat.tag}")
+                truss_mat = 4_000_000 + e.tag
+            elif e.behavior == "compression":
+                A(f"uniaxialMaterial ENT {4_000_000 + e.tag} {_num(mat.E)}")
+                truss_mat = 4_000_000 + e.tag
+            A(f"element truss {e.tag} {e.nodes[0]} {e.nodes[1]} "
+              f"{_num(sec.A)} {truss_mat}")
         elif e.kind == "shell":
             st = 900000 + e.tag
             A(f"nDMaterial ElasticIsotropic {st} {_num(mat.E)} {_num(mat.nu)} {_num(mat.rho)}")

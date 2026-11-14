@@ -482,7 +482,8 @@ class TablesDialog(QDialog):
             elements[t] = Element(t, kind, ns, mt, st,
                                   list(old.vecxz) if (old and old.vecxz) else None,
                                   UNITS.length_base(num(row[8], f"Element {t} thickness", 100.0)),
-                                  old.group if old else "")
+                                  old.group if old else "",
+                                  old.behavior if old else "")
 
         # ---- cases -----------------------------------------------------
         cases: Dict[str, LoadCase] = {}

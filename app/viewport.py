@@ -525,6 +525,7 @@ class Viewport(QWidget):
             for depth, tag, e, pts in items:
                 selected = tag in self.sel_elements
                 base = {"beam": theme.ELEM_BEAM, "truss": theme.ELEM_TRUSS,
+                        "cable": theme.ELEM_TRUSS,
                         "shell": theme.ELEM_SHELL}.get(e.kind, theme.ELEM_BEAM)
                 if selected:
                     pen = QPen(theme.SELECTED, 3.4)

@@ -315,7 +315,7 @@ def _rect_torsion(a: float, b: float) -> float:
     return a * b ** 3 * (1.0 / 3.0 - 0.21 * r * (1.0 - r ** 4 / 12.0))
 
 
-ELEMENT_KINDS = ("beam", "truss", "shell")
+ELEMENT_KINDS = ("beam", "truss", "cable", "shell")
 
 
 @dataclass
@@ -328,6 +328,7 @@ class Element:
     vecxz: Optional[List[float]] = None   # None = automatic local z axis
     thickness: float = 100.0
     group: str = ""
+    behavior: str = ""                    # "", tension, compression (truss)
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -416,13 +417,15 @@ class SpringSupport:
     y50: float = 10.0            # PySimple1 displacement at 50% capacity
     cd: float = 0.5              # PySimple1 drag coefficient
     soil_type: int = 1           # PySimple1 soil type (1 sand, 2 clay)
+    behavior: str = ""           # "", tension, compression
     note: str = ""
 
     def to_dict(self) -> dict:
         return {"tag": self.tag, "node": self.node, "dof": self.dof,
                 "kind": self.kind, "k": self.k, "curve": [list(p) for p in self.curve],
                 "pult": self.pult, "y50": self.y50, "cd": self.cd,
-                "soil_type": self.soil_type, "note": self.note}
+                "soil_type": self.soil_type, "behavior": self.behavior,
+                "note": self.note}
 
     @staticmethod
     def from_dict(d: dict) -> "SpringSupport":
@@ -440,6 +443,8 @@ class SpringSupport:
                 s.kind = str(value)
             elif key == "note":
                 s.note = str(value)
+            elif key == "behavior":
+                s.behavior = str(value)
             elif key == "curve":
                 s.curve = [[_f(v) for v in pair] for pair in value]
         return s
@@ -797,7 +802,8 @@ class Project:
                 new_tag = self.next_element()
                 self.elements[new_tag] = Element(
                     new_tag, e.kind, [chain[i], chain[i + 1]], e.mat, e.sec,
-                    list(e.vecxz) if e.vecxz else None, e.thickness, e.group)
+                    list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
+                    e.behavior)
                 new_tags.append(new_tag)
             self.elements.pop(tag, None)
             self.elem_loads = [loader for loader in self.elem_loads

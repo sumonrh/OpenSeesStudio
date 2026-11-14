@@ -247,9 +247,11 @@ async def main():
             check("import_tcl", r["nodes"] == 6, f"({r['nodes']} nodes)")
 
             r = await call("add_point_spring",
-                           {"node": 2, "dof": 3, "kind": "linear", "k": 10.0})
+                           {"node": 2, "dof": 3, "kind": "linear", "k": 10.0,
+                            "behavior": "tension"})
             spring = r["tag"]
-            check("add_point_spring", r["kind"] == "linear")
+            check("add_point_spring", r["kind"] == "linear"
+                  and r["behavior"] == "tension")
             r = await call("add_constraint",
                            {"kind": "equal_dof", "master": 1,
                             "slaves": [2], "dofs": [1, 2]})

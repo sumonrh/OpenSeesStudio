@@ -89,8 +89,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   Each wizard takes bays/panels, dimensions, spans, material and sections from the
   project libraries and asks before replacing an existing model.
 - Create nodes by coordinates, with repetition and spacing.
-- Create beams (`elasticBeamColumn`), trusses and 4-node shells (`ShellMITC4`).
-- **Batch Element** creates beam/truss/shell elements from a selected node list;
+- Create beams (`elasticBeamColumn`), standard/tension-only/compression-only
+  trusses, tension-only `corotTruss` cables and 4-node shells (`ShellMITC4`).
+- **Batch Element** creates beam/truss/cable/shell elements from a selected node list;
   **Draw Element** opens a side panel with material and section lists and draws
   beams by clicking from node to node (the end node becomes the next start).
 - **Activate** shows only the selected nodes/elements, **Deactivate** hides the
@@ -105,9 +106,15 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Supports: fixed, pinned, roller Z, or any combination of 6 DOF.
 - **Point springs** (`zeroLength`): linear Elastic stiffness, multi-linear
   force-deformation (`MultiLinear`), and **PySimple1** p-y springs for piles.
-  Springs are drawn at the node and connect to an automatically fixed ground point.
+  Linear/multi-linear springs can be standard, **tension-only** or
+  **compression-only**; springs are drawn at the node and connect to an
+  automatically fixed ground point.
+- **Truss behaviour**: standard, tension-only (`TensionOnly`) or compression-only
+  (`ENT`). **Cable** elements use `corotTruss` with `TensionOnly`.
 - **Constraints**: `rigidLink` beam/bar, `equalDOF`, and `rigidDiaphragm`, created
   from selected master/slave nodes and listed in the model tree.
+- The full OpenSees element/constraint inventory and the planned implementation
+  sequence are in [docs/OPENSEES_TYPES.md](docs/OPENSEES_TYPES.md).
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with a standard steel database and custom shapes. The database
   contains AISC (USA) and CISC (Canada) W, HP, M, S, rectangular/square hollow,
@@ -288,7 +295,7 @@ Protocol** (stdio transport, 86 tools). Agents can build the whole model,
 run analyses and read results.
 
 **Tools** (grouped): project new/open/save/summary; nodes (single, list, line,
-move, copy, mirror, delete); elements (beam/truss/shell, update, delete,
+move, copy, mirror, delete); elements (beam/truss/cable/shell, update, delete,
 subdivide); material and section libraries; supports, point springs and node
 constraints (rigid links, equalDOF, diaphragms); load cases, nodal and
 element loads, self weight, combinations; hinge material catalogue, hinge
@@ -416,7 +423,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.7-Setup.exe` – Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.8-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

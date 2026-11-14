@@ -2190,7 +2190,8 @@ class MainWindow(QMainWindow):
         for group in groups:
             tag = self.project.next_element()
             e = Element(tag, kind, group, spec["mat"], spec["sec"],
-                        spec["vecxz"], spec["thickness"])
+                        spec["vecxz"], spec["thickness"], "",
+                        spec.get("behavior", ""))
             self.project.elements[tag] = e
             created.append(tag)
         self._commit(f"Created {len(created)} element(s)")
@@ -2372,7 +2373,8 @@ class MainWindow(QMainWindow):
                 tag = self.project.next_element()
                 self.project.elements[tag] = Element(
                     tag, e.kind, [mapping[n] for n in e.nodes], e.mat, e.sec,
-                    list(e.vecxz) if e.vecxz else None, e.thickness, e.group)
+                    list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
+                    e.behavior)
         self._commit(f"Copied {len(node_set)} node(s) ×{count}")
         if dlg.keep_selection.isChecked():
             self.viewport.select_nodes(new_nodes)
@@ -2427,7 +2429,9 @@ class MainWindow(QMainWindow):
                     nodes = list(reversed(nodes))
                 tag = self.project.next_element()
                 self.project.elements[tag] = Element(
-                    tag, e.kind, nodes, e.mat, e.sec, list(e.vecxz) if e.vecxz else None, e.thickness, e.group)
+                    tag, e.kind, nodes, e.mat, e.sec,
+                    list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
+                    e.behavior)
             self._commit(f"Mirrored {len(node_set)} node(s)")
             self.viewport.select_nodes(new_nodes)
         else:
@@ -2477,6 +2481,10 @@ class MainWindow(QMainWindow):
             return
         if spec["kind"] == "multilinear" and len(spec["curve"]) < 2:
             self._warn("Enter at least two force-deformation points.")
+            return
+        if spec["behavior"] == "compression" and spec["kind"] == "multilinear":
+            self._warn("OpenSees has no compression-only wrapper for a "
+                       "multi-linear curve. Use linear compression-only or ENT.")
             return
         for node in targets:
             for tag, spring in list(self.project.springs.items()):

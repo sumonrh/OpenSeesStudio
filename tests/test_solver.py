@@ -463,6 +463,61 @@ check("spring and constraint persistence",
       and round_trip.springs[1].kind == "multilinear",
       1, 0)
 
+print("== unilateral springs, trusses and cable ==")
+
+
+def spring_direction(behavior: str, load: float):
+    project = default_project()
+    project.nodes = {1: Node(1, 0.0, 0.0, 0.0), 2: Node(2, 1000.0, 0.0, 0.0)}
+    project.nodes[1].support = [True] * 6
+    project.elements = {1: Element(1, "beam", [1, 2], 1, 1,
+                                   [0.0, 0.0, 1.0])}
+    project.cases = {"DL": LoadCase("DL", "Dead")}
+    project.nodal_loads = [NodalLoad(1, 2, "DL", [0.0, 0.0, load, 0, 0, 0])]
+    project.springs = {1: SpringSupport(1, 2, dof=3, kind="linear", k=10.0,
+                                        behavior=behavior)}
+    return opsgen.run_static(project, "DL").displacements[2][2]
+
+
+tension_engaged = abs(spring_direction("tension", -10.0))
+tension_released = abs(spring_direction("tension", 10.0))
+compression_engaged = abs(spring_direction("compression", 10.0))
+compression_released = abs(spring_direction("compression", -10.0))
+check("tension-only spring engages tension only",
+      tension_engaged < tension_released, 1, 0)
+check("compression-only spring engages compression only",
+      compression_engaged < compression_released, 1, 0)
+
+
+def truss_behavior(behavior: str, load: float):
+    project = default_project()
+    project.nodes = {1: Node(1, 0.0, 0.0, 0.0), 2: Node(2, 1000.0, 0.0, 0.0)}
+    project.nodes[1].support = [True] * 6
+    project.nodes[2].support = [False, True, True, True, True, True]
+    project.elements = {1: Element(1, "truss", [1, 2], 1, 1,
+                                   behavior=behavior)}
+    project.cases = {"DL": LoadCase("DL", "Dead")}
+    project.nodal_loads = [NodalLoad(1, 2, "DL", [load, 0, 0, 0, 0, 0])]
+    return opsgen.run_static(project, "DL").displacements[2][0]
+
+
+check("tension-only truss solves in tension",
+      1 if abs(truss_behavior("tension", 10.0)) > 0 else 0, 1, 0)
+check("compression-only truss solves in compression",
+      1 if abs(truss_behavior("compression", -10.0)) > 0 else 0, 1, 0)
+
+cable_project = default_project()
+cable_project.nodes = {1: Node(1, 0.0, 0.0, 0.0),
+                       2: Node(2, 1000.0, 0.0, -100.0)}
+cable_project.nodes[1].support = [True] * 6
+cable_project.nodes[2].support = [False, True, False, True, True, True]
+cable_project.elements = {1: Element(1, "cable", [1, 2], 1, 1)}
+cable_project.cases = {"DL": LoadCase("DL", "Dead")}
+cable_project.nodal_loads = [NodalLoad(1, 2, "DL", [0, 0, -10, 0, 0, 0])]
+cable_res = opsgen.run_static(cable_project, "DL")
+check("cable element solves",
+      1 if math.isfinite(cable_res.displacements[2][2]) else 0, 1, 0)
+
 print("== script console model capture ==")
 from app import scriptmodel, tcl  # noqa: E402
 
