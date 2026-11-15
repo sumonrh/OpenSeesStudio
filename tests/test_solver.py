@@ -518,6 +518,94 @@ cable_res = opsgen.run_static(cable_project, "DL")
 check("cable element solves",
       1 if math.isfinite(cable_res.displacements[2][2]) else 0, 1, 0)
 
+print("== nonlinear frame members and devices ==")
+
+
+def frame_member(kind: str):
+    project = default_project()
+    project.materials[1].E = 200.0
+    project.sections[1].shape = "Rectangle"
+    project.sections[1].b, project.sections[1].h = 300.0, 600.0
+    project.sections[1].compute()
+    project.nodes = {1: Node(1, 0.0, 0.0, 0.0, support=[True] * 6),
+                     2: Node(2, 4000.0, 0.0, 0.0)}
+    project.elements = {1: Element(1, kind, [1, 2], 1, 1, vecxz=[0, 0, 1])}
+    project.cases = {"DL": LoadCase("DL", "Dead")}
+    project.nodal_loads = [NodalLoad(1, 2, "DL", [0.0, 0.0, 10.0, 0, 0, 0])]
+    result = opsgen.run_static(project, "DL")
+    want = 10.0 * 4000.0 ** 3 / (3.0 * 200.0 * project.sections[1].Iy)
+    return result.displacements[2][2], want
+
+
+for member in ("force_beam", "disp_beam"):
+    got, want = frame_member(member)
+    check(f"{member} cantilever", got, want, 0.01)
+
+
+def bearing_support(device: dict):
+    project = default_project()
+    project.nodes = {
+        1: Node(1, 0.0, 0.0, 0.0, support=[True] * 6),
+        2: Node(2, 0.0, 0.0, 0.0,
+                support=[True, True, False, True, True, True]),
+    }
+    kind = "isolator" if device.get("type") == "isolator" else "bearing"
+    project.elements = {1: Element(1, kind, [1, 2], 1, 1, device=device)}
+    project.cases = {"DL": LoadCase("DL", "Dead")}
+    project.nodal_loads = [NodalLoad(1, 2, "DL", [0, 0, -100.0, 0, 0, 0])]
+    return opsgen.run_static(project, "DL").displacements[2][2]
+
+
+bearing = {"type": "bearing", "k_init": 2.0, "qd": 100.0,
+           "alpha1": 0.02, "alpha2": 0.05, "mu": 2.0, "eta": 1.0,
+           "beta": 0.5, "gamma": 0.5, "kv": 1000.0, "kt": 1e6,
+           "kry": 1e8, "krz": 1e8}
+check("elastomeric bearing vertical stiffness", bearing_support(bearing),
+      -0.1, 1e-6)
+
+isolator = {"type": "isolator", "fy": 500.0, "alpha": 0.1, "gr": 4e-4,
+            "kbulk": 2.0, "d1": 200.0, "d2": 400.0, "ts": 3.0,
+            "tr": 8.0, "n": 10}
+check("LeadRubberX isolator solves",
+      1 if math.isfinite(bearing_support(isolator)) else 0, 1, 0)
+
+damper_project = default_project()
+damper_project.nodes = {
+    1: Node(1, 0.0, 0.0, 0.0, support=[True] * 6),
+    2: Node(2, 0.0, 0.0, 3000.0),
+    3: Node(3, 0.0, 0.0, 0.0, support=[True] * 6),
+}
+damper_project.elements = {
+    1: Element(1, "beam", [1, 2], 1, 1, vecxz=[1, 0, 0]),
+    2: Element(2, "damper", [3, 2], 1, 1,
+               device={"type": "damper_viscous", "k_el": 500.0,
+                       "cd": 10.0, "alpha": 0.5, "gap": 0.0,
+                       "nm": 1, "direction": 1}),
+}
+damper_project.cases = {"DL": LoadCase("DL", "Dead")}
+damper_project.nodal_loads = [NodalLoad(1, 2, "DL", [10.0, 0, 0, 0, 0, 0])]
+import openseespy.opensees as ops  # noqa: E402
+
+opsgen.build(damper_project, "DL")
+check("damper builds as twoNodeLink",
+      1 if ops.eleType(2) == "TwoNodeLink" else 0, 1, 0)
+
+export_project = default_project()
+export_project.nodes = {
+    1: Node(1, 0.0, 0.0, 0.0, support=[True] * 6),
+    2: Node(2, 1000.0, 0.0, 0.0),
+    3: Node(3, 1000.0, 0.0, 0.0),
+}
+export_project.elements = {
+    1: Element(1, "force_beam", [1, 2], 1, 1, vecxz=[0, 0, 1]),
+    2: Element(2, "isolator", [2, 3], 1, 1, device=isolator),
+}
+tcl_text = opsgen.export_tcl(export_project)
+check("tcl export writes forceBeamColumn",
+      1 if "element forceBeamColumn 1 1 2" in tcl_text else 0, 1, 0)
+check("tcl export writes LeadRubberX",
+      1 if "element LeadRubberX 2 2 3" in tcl_text else 0, 1, 0)
+
 print("== script console model capture ==")
 from app import scriptmodel, tcl  # noqa: E402
 

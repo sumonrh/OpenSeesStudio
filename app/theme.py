@@ -26,6 +26,9 @@ NODE_HALO = QColor("#ffffff")
 ELEM_BEAM = QColor("#2b3f57")
 ELEM_TRUSS = QColor("#5a7391")
 ELEM_SHELL = QColor("#7188a5")
+ELEM_DEVICE = QColor("#a65b1f")
+ELEM_ISOLATOR = QColor("#7a4b9e")
+ELEM_DAMPER = QColor("#b03a2e")
 SELECTED = QColor("#e8622c")
 LOAD_COLOR = QColor("#0f6fb8")
 SUPPORT_COLOR = QColor("#2f9e5f")
@@ -174,6 +177,11 @@ QToolButton#ribbonQuick:hover {{ background: #ffffff; border: 1px solid #b9c8d8;
 QToolButton#ribbonApp {{ background: #ffffff; border: 1px solid #b9c8d8;
                          border-radius: 4px; padding: 1px; }}
 QToolButton#ribbonApp:hover {{ background: #fff4e8; border-color: #e0a37a; }}
+QToolButton#updateBadge {{ background: {GREEN}; border: 1px solid #0f7d3a;
+                           border-radius: 4px; color: #ffffff; font-weight: 600;
+                           padding: 2px 9px; min-width: 0; }}
+QToolButton#updateBadge:hover {{ background: #128a42; border-color: #0b6a31; }}
+QToolButton#updateBadge:pressed {{ background: #0d7537; }}
 
 /* ------------------------------------------------------- quick toolbars */
 QToolBar#quick_toolbar {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,

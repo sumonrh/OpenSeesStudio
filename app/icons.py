@@ -793,6 +793,52 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.setPen(QPen(QColor(accent), 2.0, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(12, 11), QPointF(12, 17))
 
+    elif name == "bearing":
+        _fill(p, "#c9d8e8")
+        p.drawRect(QRectF(3, 3.5, 18, 3.2))
+        p.drawRect(QRectF(3, 17.3, 18, 3.2))
+        _pen(p, accent, 1.3)
+        for y in (8.0, 11.2, 14.4):
+            p.drawRect(QRectF(5, y, 14, 2.4))
+        _pen(p, INK, 1.2)
+        p.drawLine(QPointF(12, 0.5), QPointF(12, 23.5))
+
+    elif name == "isolator":
+        _pen(p, accent, 1.4)
+        for y in (4.0, 8.0, 12.0, 16.0):
+            p.drawEllipse(QPointF(12, y + 2.0), 8.5, 2.4)
+        _fill(p, ORANGE)
+        p.drawEllipse(QPointF(12, 12), 2.6, 2.6)
+        _pen(p, INK, 1.1)
+        p.drawLine(QPointF(12, 12), QPointF(19, 12))
+
+    elif name == "damper":
+        _pen(p, INK, 1.5)
+        p.drawRoundedRect(QRectF(3, 7, 12, 10), 2, 2)
+        _pen(p, accent, 2.0)
+        p.drawLine(QPointF(15, 12), QPointF(23, 12))
+        p.drawLine(QPointF(3, 12), QPointF(0.5, 12))
+        _fill(p, ORANGE)
+        p.drawRect(QRectF(7, 9, 2.0, 6))
+        _pen(p, accent, 1.2)
+        p.drawLine(QPointF(19, 9), QPointF(22, 9))
+        p.drawLine(QPointF(19, 15), QPointF(22, 15))
+
+    elif name == "update":
+        _pen(p, "#ffffff", 2.2)
+        path = QPainterPath()
+        path.arcMoveTo(QRectF(3.5, 3.5, 17, 17), 40)
+        path.arcTo(QRectF(3.5, 3.5, 17, 17), 40, 290)
+        p.drawPath(path)
+        _fill(p, "#ffffff")
+        p.drawPolygon(QPolygonF([QPointF(17.6, 2.6), QPointF(22.2, 5.8),
+                                  QPointF(17.4, 8.0)]))
+        _pen(p, "#ffffff", 2.2)
+        p.drawLine(QPointF(12, 8), QPointF(12, 16))
+        _fill(p, "#ffffff")
+        p.drawPolygon(QPolygonF([QPointF(8.8, 13.3), QPointF(15.2, 13.3),
+                                  QPointF(12, 18.0)]))
+
     else:  # generic square
         _pen(p, "#8ea6bd")
         p.drawRect(QRectF(5, 5, 14, 14))

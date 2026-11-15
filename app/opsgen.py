@@ -17,7 +17,8 @@ import numpy as np
 import openseespy.opensees as ops
 
 from .model import (Element, ElementLoad, Material, Node, Project, Section,
-                    ResponseSpectrumCase, TimeHistoryCase, G_ACC)
+                    ResponseSpectrumCase, TimeHistoryCase, G_ACC,
+                    DEVICE_KINDS)
 from .groundmotion import load_ground_motion
 from .hinge_catalog import MATERIALS, build_command
 
@@ -349,6 +350,37 @@ def _add_hinge_section(project: Project, sec: Section, mat: Material,
     return True
 
 
+def _add_fiber_section(sec: Section, mat: Material, tag: int,
+                       log: List[str]) -> bool:
+    """Create a fibre section from the section outline and element material."""
+    fibers = _section_fiber_mesh(sec)
+    if not fibers:
+        log.append(f"Section {sec.tag}: no fibers generated for the nonlinear member.")
+        return False
+    ops.section("Fiber", tag, "-GJ", max(mat.G * sec.J, 1e-6))
+    for y, z, area in fibers:
+        ops.fiber(y, z, area, mat.tag)
+    log.append(f"Fibre section {tag}: {len(fibers)} fibers, material {mat.tag}.")
+    return True
+
+
+def _device_orientation(project: Project, e: Element):
+    """Return local x and y vectors for a zero- or finite-length device."""
+    p = project.node_xyz(e.nodes[0])
+    q = project.node_xyz(e.nodes[1])
+    dx, dy, dz = q[0] - p[0], q[1] - p[1], q[2] - p[2]
+    length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    x = (dx / length, dy / length, dz / length) if length > 1e-9 else (0.0, 0.0, 1.0)
+    trial = (0.0, 0.0, 1.0) if abs(x[2]) < 0.9 else (0.0, 1.0, 0.0)
+    y = _cross(trial, x)
+    norm = math.sqrt(_dot(y, y))
+    if norm < 1e-9:
+        y = (1.0, 0.0, 0.0)
+    else:
+        y = (y[0] / norm, y[1] / norm, y[2] / norm)
+    return x, y
+
+
 def build(project: Project, scenario: Optional[str] = None,
           verbose: bool = False,
           pushover: Optional[dict] = None) -> List[str]:
@@ -481,6 +513,8 @@ def build(project: Project, scenario: Optional[str] = None,
     hinge_cache: Dict[tuple, int] = {}
     hinge_mat_tag = 2_000_000
     hinge_sec_tag = 1_000_000
+    fiber_sections: Dict[Tuple[int, int], int] = {}
+    integrations: Dict[Tuple[int, str, int], int] = {}
 
     for e in project.elements.values():
         if len(e.nodes) < 2 or any(t not in nodes for t in e.nodes):
@@ -523,6 +557,71 @@ def build(project: Project, scenario: Optional[str] = None,
             ops.element("ShellMITC4", e.tag, *e.nodes[:4], st)
             continue
 
+        if e.kind in DEVICE_KINDS:
+            d = e.device or {}
+            x, y = _device_orientation(project, e)
+            if e.kind == "bearing":
+                base = 12_000_000 + e.tag * 4
+                ops.uniaxialMaterial("Elastic", base,
+                                     max(float(d.get("kv", 1000.0)), 1e-9))
+                ops.uniaxialMaterial("Elastic", base + 1,
+                                     max(float(d.get("kt", 1.0e6)), 1e-9))
+                ops.uniaxialMaterial("Elastic", base + 2,
+                                     max(float(d.get("kry", 1.0e8)), 1e-9))
+                ops.uniaxialMaterial("Elastic", base + 3,
+                                     max(float(d.get("krz", 1.0e8)), 1e-9))
+                ops.element("elastomericBearingBoucWen", e.tag,
+                            e.nodes[0], e.nodes[1],
+                            float(d.get("k_init", 2.0)),
+                            float(d.get("qd", 100.0)),
+                            float(d.get("alpha1", 0.02)),
+                            float(d.get("alpha2", 0.05)),
+                            float(d.get("mu", 2.0)),
+                            float(d.get("eta", 1.0)),
+                            float(d.get("beta", 0.5)),
+                            float(d.get("gamma", 0.5)),
+                            "-P", base, "-T", base + 1,
+                            "-My", base + 2, "-Mz", base + 3,
+                            "-orient", *x, *y)
+                continue
+            if e.kind == "isolator":
+                ops.element("LeadRubberX", e.tag, e.nodes[0], e.nodes[1],
+                            float(d.get("fy", 500.0)),
+                            float(d.get("alpha", 0.1)),
+                            float(d.get("gr", 4.0e-4)),
+                            float(d.get("kbulk", 2.0)),
+                            float(d.get("d1", 200.0)),
+                            float(d.get("d2", 400.0)),
+                            float(d.get("ts", 3.0)),
+                            float(d.get("tr", 8.0)),
+                            int(d.get("n", 10)), *x, *y)
+                continue
+            # damper
+            mat_tag = 12_000_000 + e.tag * 4
+            dtype = str(d.get("type", "damper_viscous"))
+            if dtype == "damper_oil":
+                ops.uniaxialMaterial("BilinearOilDamper", mat_tag,
+                                     max(float(d.get("k_el", 500.0)), 1e-9),
+                                     max(float(d.get("cd", 10.0)), 0.0),
+                                     float(d.get("fr", 100.0)),
+                                     float(d.get("p", 0.1)),
+                                     float(d.get("gap", 0.0)),
+                                     int(d.get("nm", 1)),
+                                     1e-6, 1e-10, 15)
+            else:
+                ops.uniaxialMaterial("ViscousDamper", mat_tag,
+                                     max(float(d.get("k_el", 500.0)), 1e-9),
+                                     max(float(d.get("cd", 10.0)), 0.0),
+                                     float(d.get("alpha", 0.5)),
+                                     float(d.get("gap", 0.0)),
+                                     int(d.get("nm", 1)),
+                                     1e-6, 1e-10, 15)
+            ops.element("twoNodeLink", e.tag, e.nodes[0], e.nodes[1],
+                        "-mat", mat_tag,
+                        "-dir", int(d.get("direction", 1)),
+                        "-orient", *x, *y)
+            continue
+
         # beam
         p = project.node_xyz(e.nodes[0])
         q = project.node_xyz(e.nodes[1])
@@ -532,6 +631,38 @@ def build(project: Project, scenario: Optional[str] = None,
             transf_cache[key] = transf_tag
             ops.geomTransf("Linear", transf_tag, *vx)
             transf_tag += 1
+
+        if e.kind in ("force_beam", "disp_beam"):
+            sec_key = (sec.tag, mat.tag)
+            sec_tag = fiber_sections.get(sec_key)
+            if sec_tag is None:
+                sec_tag = 8_000_000 + len(fiber_sections)
+                if _add_fiber_section(sec, mat, sec_tag, log):
+                    fiber_sections[sec_key] = sec_tag
+                else:
+                    sec_tag = None
+            if sec_tag is None:
+                ops.element("elasticBeamColumn", e.tag, e.nodes[0], e.nodes[1],
+                            sec.A, mat.E, mat.G, sec.J, sec.Iy, sec.Iz,
+                            transf_cache[key])
+                continue
+            method = str(e.integration or "Lobatto")
+            if method not in ("Lobatto", "Legendre", "NewtonCotes", "Radau"):
+                method = "Lobatto"
+            points = max(2, min(40, int(e.integration_points or 5)))
+            int_key = (sec_tag, method, points)
+            int_tag = integrations.get(int_key)
+            if int_tag is None:
+                int_tag = 9_000_000 + len(integrations)
+                ops.beamIntegration(method, int_tag, sec_tag, points)
+                integrations[int_key] = int_tag
+            if e.kind == "force_beam":
+                ops.element("forceBeamColumn", e.tag, e.nodes[0], e.nodes[1],
+                            transf_cache[key], int_tag)
+            else:
+                ops.element("dispBeamColumn", e.tag, e.nodes[0], e.nodes[1],
+                            transf_cache[key], int_tag)
+            continue
 
         if pushover is not None and e.tag in project.hinge_assignments:
             hinge = project.hinge_defs.get(project.hinge_assignments[e.tag])
@@ -576,6 +707,8 @@ def build(project: Project, scenario: Optional[str] = None,
                 continue
             mat = project.material_of(e)
             sec = _ensure_section(project.section_of(e))
+            if e.kind in DEVICE_KINDS:
+                continue
             if e.kind == "shell":
                 if len(e.nodes) >= 4:
                     a = 0.5 * abs(_dot(_cross(_sub(project.node_xyz(e.nodes[1]), project.node_xyz(e.nodes[0])),
@@ -646,6 +779,10 @@ def _apply_case_loads(project: Project, case: str, log: List[str],
             log.append(f"Element load on cable {e.tag} skipped: cable loads "
                        "are applied as nodal/self weight")
             continue
+        if e.kind in DEVICE_KINDS:
+            log.append(f"Element load on device {e.tag} skipped: bearings, "
+                       "isolators and dampers do not take beam loads")
+            continue
         # --- distributed ------------------------------------------------
         if el.kind == "uniform":
             if e.kind == "shell":
@@ -686,6 +823,8 @@ def _apply_self_weight(project: Project, factor: float, log: List[str]) -> None:
     kn = 1.0e-3
     for e in project.elements.values():
         if len(e.nodes) < 2 or any(t not in project.nodes for t in e.nodes):
+            continue
+        if e.kind in DEVICE_KINDS:
             continue
         mat = project.material_of(e)
         sec = _ensure_section(project.section_of(e))
@@ -801,13 +940,51 @@ def check_model(project: Project):
             errors.append(f"Element {t} references missing material {e.mat}.")
         if e.sec not in project.sections:
             errors.append(f"Element {t} references missing section {e.sec}.")
-        if len(e.nodes) >= 2 and project.element_length(e) < 1e-9:
+        length = project.element_length(e)
+        if length < 1e-9 and e.kind not in DEVICE_KINDS:
             errors.append(f"Element {t} has zero length.")
         if e.kind == "truss" and e.behavior not in ("", "tension", "compression"):
             errors.append(f"Element {t} has an invalid truss behaviour.")
-        if e.kind == "cable":
+        if e.kind == "cable" and len(e.nodes) != 2:
+            errors.append(f"Cable {t} needs exactly two nodes.")
+        if e.kind in ("force_beam", "disp_beam"):
             if len(e.nodes) != 2:
-                errors.append(f"Cable {t} needs exactly two nodes.")
+                errors.append(f"Element {t}: a nonlinear frame member needs "
+                              "two nodes.")
+            if e.integration not in ("Lobatto", "Legendre", "NewtonCotes", "Radau"):
+                errors.append(f"Element {t} has an invalid beam integration.")
+            if not 2 <= int(e.integration_points) <= 40:
+                errors.append(f"Element {t} needs 2 to 40 integration points.")
+        if e.kind in DEVICE_KINDS:
+            if len(e.nodes) != 2:
+                errors.append(f"Element {t}: a device needs exactly two nodes.")
+                continue
+            d = e.device or {}
+            if e.kind == "bearing":
+                if float(d.get("k_init", 0.0)) <= 0:
+                    errors.append(f"Bearing {t} needs a positive initial stiffness.")
+                if float(d.get("kv", 0.0)) <= 0:
+                    errors.append(f"Bearing {t} needs a positive vertical stiffness.")
+            elif e.kind == "isolator":
+                if float(d.get("fy", 0.0)) <= 0:
+                    errors.append(f"Isolator {t} needs a positive yield strength.")
+                if float(d.get("gr", 0.0)) <= 0 or float(d.get("kbulk", 0.0)) <= 0:
+                    errors.append(f"Isolator {t} needs positive rubber moduli.")
+                if float(d.get("d2", 0.0)) <= float(d.get("d1", 0.0)):
+                    errors.append(f"Isolator {t} needs D2 > D1.")
+                if float(d.get("ts", 0.0)) <= 0 or float(d.get("tr", 0.0)) <= 0:
+                    errors.append(f"Isolator {t} needs positive layer thicknesses.")
+                if int(d.get("n", 0)) < 1:
+                    errors.append(f"Isolator {t} needs at least one rubber layer.")
+            else:
+                if float(d.get("k_el", 0.0)) <= 0:
+                    errors.append(f"Damper {t} needs a positive elastic stiffness.")
+                if float(d.get("cd", 0.0)) < 0:
+                    errors.append(f"Damper {t} has a negative damping coefficient.")
+                if not 0.01 <= float(d.get("alpha", 0.5)) <= 2.0:
+                    errors.append(f"Damper {t} velocity exponent must be 0.01-2.0.")
+                if not 1 <= int(d.get("direction", 1)) <= 6:
+                    errors.append(f"Damper {t} has an invalid direction.")
 
     used.update(s.node for s in project.springs.values()
                 if s.node in project.nodes)
@@ -884,7 +1061,8 @@ def run_static(project: Project, scenario: str) -> StaticResults:
     ops.numberer("RCM")
     ops.system("BandGen")
     nonlinear = bool(project.springs) or any(
-        e.behavior or e.kind == "cable" for e in project.elements.values())
+        e.behavior or e.kind == "cable" or e.kind in ("force_beam", "disp_beam")
+        for e in project.elements.values())
     if nonlinear:
         ops.test("NormDispIncr", 1e-8, 25, 0)
         ops.algorithm("Newton")
@@ -911,6 +1089,15 @@ def run_static(project: Project, scenario: str) -> StaticResults:
                 r = ops.eleResponse(tag, "axialForce")
             elif e.kind == "shell":
                 r = ops.eleResponse(tag, "forces")
+            elif e.kind in DEVICE_KINDS:
+                r = None
+                for response in ("force", "forces", "localForce"):
+                    try:
+                        r = ops.eleResponse(tag, response)
+                    except Exception:
+                        r = None
+                    if r is not None:
+                        break
             else:
                 r = ops.eleResponse(tag, "localForce")
             res.element_forces[tag] = [float(v) for v in r] if r is not None else []
@@ -1582,9 +1769,65 @@ def export_tcl(project: Project) -> str:
         A("")
     A("# ---------------- elements -----------------")
     tag = 1
+    fiber_sections = {}
+    integrations = {}
     for e in project.elements.values():
         mat = project.material_of(e)
         sec = _ensure_section(project.section_of(e))
+        if e.kind in DEVICE_KINDS:
+            d = e.device or {}
+            x, y = _device_orientation(project, e)
+            orient = " ".join(_num(v) for v in (*x, *y))
+            if e.kind == "bearing":
+                base = 12_000_000 + e.tag * 4
+                A(f"uniaxialMaterial Elastic {base} {_num(max(float(d.get('kv', 1000.0)), 1e-9))}")
+                A(f"uniaxialMaterial Elastic {base + 1} {_num(max(float(d.get('kt', 1.0e6)), 1e-9))}")
+                A(f"uniaxialMaterial Elastic {base + 2} {_num(max(float(d.get('kry', 1.0e8)), 1e-9))}")
+                A(f"uniaxialMaterial Elastic {base + 3} {_num(max(float(d.get('krz', 1.0e8)), 1e-9))}")
+                A(f"element elastomericBearingBoucWen {e.tag} {e.nodes[0]} {e.nodes[1]} "
+                  f"{_num(float(d.get('k_init', 2.0)))} "
+                  f"{_num(float(d.get('qd', 100.0)))} "
+                  f"{_num(float(d.get('alpha1', 0.02)))} "
+                  f"{_num(float(d.get('alpha2', 0.05)))} "
+                  f"{_num(float(d.get('mu', 2.0)))} "
+                  f"{_num(float(d.get('eta', 1.0)))} "
+                  f"{_num(float(d.get('beta', 0.5)))} "
+                  f"{_num(float(d.get('gamma', 0.5)))} "
+                  f"-P {base} -T {base + 1} -My {base + 2} -Mz {base + 3} "
+                  f"-orient {orient}")
+            elif e.kind == "isolator":
+                A(f"element LeadRubberX {e.tag} {e.nodes[0]} {e.nodes[1]} "
+                  f"{_num(float(d.get('fy', 500.0)))} "
+                  f"{_num(float(d.get('alpha', 0.1)))} "
+                  f"{_num(float(d.get('gr', 4.0e-4)))} "
+                  f"{_num(float(d.get('kbulk', 2.0)))} "
+                  f"{_num(float(d.get('d1', 200.0)))} "
+                  f"{_num(float(d.get('d2', 400.0)))} "
+                  f"{_num(float(d.get('ts', 3.0)))} "
+                  f"{_num(float(d.get('tr', 8.0)))} "
+                  f"{int(d.get('n', 10))} {orient}")
+            else:
+                mat_tag = 12_000_000 + e.tag * 4
+                dtype = str(d.get("type", "damper_viscous"))
+                if dtype == "damper_oil":
+                    A(f"uniaxialMaterial BilinearOilDamper {mat_tag} "
+                      f"{_num(max(float(d.get('k_el', 500.0)), 1e-9))} "
+                      f"{_num(max(float(d.get('cd', 10.0)), 0.0))} "
+                      f"{_num(float(d.get('fr', 100.0)))} "
+                      f"{_num(float(d.get('p', 0.1)))} "
+                      f"{_num(float(d.get('gap', 0.0)))} {int(d.get('nm', 1))} "
+                      "1e-6 1e-10 15")
+                else:
+                    A(f"uniaxialMaterial ViscousDamper {mat_tag} "
+                      f"{_num(max(float(d.get('k_el', 500.0)), 1e-9))} "
+                      f"{_num(max(float(d.get('cd', 10.0)), 0.0))} "
+                      f"{_num(float(d.get('alpha', 0.5)))} "
+                      f"{_num(float(d.get('gap', 0.0)))} {int(d.get('nm', 1))} "
+                      "1e-6 1e-10 15")
+                A(f"element twoNodeLink {e.tag} {e.nodes[0]} {e.nodes[1]} "
+                  f"-mat {mat_tag} -dir {int(d.get('direction', 1))} "
+                  f"-orient {orient}")
+            continue
         if e.kind == "cable":
             wrapper = 4_000_000 + e.tag
             A(f"uniaxialMaterial TensionOnly {wrapper} {mat.tag}")
@@ -1611,9 +1854,38 @@ def export_tcl(project: Project) -> str:
             q = project.node_xyz(e.nodes[1])
             vx = e.vecxz or auto_vecxz(p, q)
             A(f"geomTransf Linear {tag} {_num(vx[0])} {_num(vx[1])} {_num(vx[2])}")
-            A(f"element elasticBeamColumn {e.tag} {e.nodes[0]} {e.nodes[1]} "
-              f"{_num(sec.A)} {_num(mat.E)} {_num(mat.G)} {_num(sec.J)} "
-              f"{_num(sec.Iy)} {_num(sec.Iz)} {tag}")
+            if e.kind in ("force_beam", "disp_beam"):
+                sec_key = (sec.tag, mat.tag)
+                sec_tag = fiber_sections.get(sec_key)
+                if sec_tag is None:
+                    fibers = _section_fiber_mesh(sec)
+                    if fibers:
+                        sec_tag = 8_000_000 + len(fiber_sections)
+                        A(f"section Fiber {sec_tag} -GJ {_num(max(mat.G * sec.J, 1e-6))}")
+                        for y, z, area in fibers:
+                            A(f"fiber {_num(y)} {_num(z)} {_num(area)} {mat.tag}")
+                        fiber_sections[sec_key] = sec_tag
+                if sec_tag is None:
+                    A(f"element elasticBeamColumn {e.tag} {e.nodes[0]} {e.nodes[1]} "
+                      f"{_num(sec.A)} {_num(mat.E)} {_num(mat.G)} {_num(sec.J)} "
+                      f"{_num(sec.Iy)} {_num(sec.Iz)} {tag}")
+                else:
+                    method = str(e.integration or "Lobatto")
+                    if method not in ("Lobatto", "Legendre", "NewtonCotes", "Radau"):
+                        method = "Lobatto"
+                    points = max(2, min(40, int(e.integration_points or 5)))
+                    int_key = (sec_tag, method, points)
+                    int_tag = integrations.get(int_key)
+                    if int_tag is None:
+                        int_tag = 9_000_000 + len(integrations)
+                        A(f"beamIntegration {method} {int_tag} {sec_tag} {points}")
+                        integrations[int_key] = int_tag
+                    A(f"element {'forceBeamColumn' if e.kind == 'force_beam' else 'dispBeamColumn'} "
+                      f"{e.tag} {e.nodes[0]} {e.nodes[1]} {tag} {int_tag}")
+            else:
+                A(f"element elasticBeamColumn {e.tag} {e.nodes[0]} {e.nodes[1]} "
+                  f"{_num(sec.A)} {_num(mat.E)} {_num(mat.G)} {_num(sec.J)} "
+                  f"{_num(sec.Iy)} {_num(sec.Iz)} {tag}")
             tag += 1
     if project.constraints:
         A("")
@@ -1656,6 +1928,8 @@ def export_tcl(project: Project) -> str:
             A(f"  # self weight, factor {_num(sw)}")
             for e in project.elements.values():
                 if len(e.nodes) < 2:
+                    continue
+                if e.kind in DEVICE_KINDS:
                     continue
                 mat = project.material_of(e)
                 sec = _ensure_section(project.section_of(e))

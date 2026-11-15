@@ -66,6 +66,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
   vertical view strip (fit, iso, top, front, right, orbit, node labels, element
   labels, grid, deformed, extruded).
+- **Update badge** in the top-right corner of the ribbon appears only when a newer
+  GitHub release with a Setup installer exists; click it to download the installer.
+- **About** shows the current application version.
 - Model and Messages panels are shown by default; the Properties panel is hidden by
   default and can be opened from **View > Panels**.
 - **Run Analysis (F5)** opens a run-control checklist: static, modal, pushover, time
@@ -91,6 +94,12 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Create nodes by coordinates, with repetition and spacing.
 - Create beams (`elasticBeamColumn`), standard/tension-only/compression-only
   trusses, tension-only `corotTruss` cables and 4-node shells (`ShellMITC4`).
+- **Nonlinear frame members**: `forceBeamColumn` and `dispBeamColumn` with fibre
+  sections generated from the section outline and material, and `Lobatto`,
+  `Legendre`, `NewtonCotes` or `Radau` beam integration (2-40 points).
+- **Devices**: elastomeric bearings (`elastomericBearingBoucWen`), lead-rubber
+  isolators (`LeadRubberX`), and viscous or bilinear oil dampers
+  (`twoNodeLink` + `ViscousDamper`/`BilinearOilDamper`).
 - **Batch Element** creates beam/truss/cable/shell elements from a selected node list;
   **Draw Element** opens a side panel with material and section lists and draws
   beams by clicking from node to node (the end node becomes the next start).
@@ -99,7 +108,7 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   buttons are on the horizontal toolbar below the ribbon.
 - Chain creation: give a list of nodes and beams/trusses are created between consecutive nodes.
 - Copy / move with a translation and repeat count; attached elements are duplicated.
-- Subdivide selected beam or truss elements into a user-defined number of equal
+- Subdivide selected beam, frame or truss elements into a user-defined number of equal
   segments; intermediate nodes and element loads are carried over automatically.
 - Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
   the original. The plane is previewed in the viewport while the dialog is open.
@@ -423,7 +432,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.8-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.9-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

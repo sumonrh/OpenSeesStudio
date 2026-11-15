@@ -315,7 +315,9 @@ def _rect_torsion(a: float, b: float) -> float:
     return a * b ** 3 * (1.0 / 3.0 - 0.21 * r * (1.0 - r ** 4 / 12.0))
 
 
-ELEMENT_KINDS = ("beam", "truss", "cable", "shell")
+ELEMENT_KINDS = ("beam", "truss", "cable", "shell",
+                 "force_beam", "disp_beam", "bearing", "isolator", "damper")
+DEVICE_KINDS = ("bearing", "isolator", "damper")
 
 
 @dataclass
@@ -329,6 +331,9 @@ class Element:
     thickness: float = 100.0
     group: str = ""
     behavior: str = ""                    # "", tension, compression (truss)
+    device: Dict = field(default_factory=dict)   # bearing/isolator/damper data
+    integration: str = "Lobatto"          # force/disp beam integration
+    integration_points: int = 5
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -768,7 +773,7 @@ class Project:
         for tag in tags:
             e = self.elements.get(tag)
             if (e is not None and len(e.nodes) == 2
-                    and e.kind in ("beam", "truss")
+                    and e.kind in ("beam", "truss", "force_beam", "disp_beam")
                     and all(n in self.nodes for n in e.nodes)
                     and self.element_length(e) > 1e-9):
                 targets.append(tag)
@@ -803,7 +808,8 @@ class Project:
                 self.elements[new_tag] = Element(
                     new_tag, e.kind, [chain[i], chain[i + 1]], e.mat, e.sec,
                     list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
-                    e.behavior)
+                    e.behavior, dict(e.device), e.integration,
+                    e.integration_points)
                 new_tags.append(new_tag)
             self.elements.pop(tag, None)
             self.elem_loads = [loader for loader in self.elem_loads

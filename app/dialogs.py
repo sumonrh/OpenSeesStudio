@@ -164,6 +164,10 @@ class ElementDialog(BaseDialog):
         self.kind.addItem("Tension-only truss (2 nodes)", "truss_tension")
         self.kind.addItem("Compression-only truss (2 nodes)", "truss_compression")
         self.kind.addItem("Cable (corotTruss, tension-only, 2 nodes)", "cable")
+        self.kind.addItem("Nonlinear frame - forceBeamColumn (fibre, 2 nodes)",
+                          "force_beam")
+        self.kind.addItem("Nonlinear frame - dispBeamColumn (fibre, 2 nodes)",
+                          "disp_beam")
         self.kind.addItem("Shell (ShellMITC4, 4 nodes)", "shell")
         self.kind.currentIndexChanged.connect(self._sync)
         self.body.addWidget(self.kind)
@@ -206,19 +210,33 @@ class ElementDialog(BaseDialog):
         self.body.addWidget(self.shell_box)
         self.shell_box.setVisible(False)
 
+        self.frame_box = QGroupBox("Fibre section and beam integration")
+        ff = QFormLayout(self.frame_box)
+        self.integration = QComboBox()
+        for name in ("Lobatto", "Legendre", "NewtonCotes", "Radau"):
+            self.integration.addItem(name, name)
+        self.int_points = int_spin(5, 2, 40)
+        ff.addRow("Integration", self.integration)
+        ff.addRow("Integration points", self.int_points)
+        self.body.addWidget(self.frame_box)
+        self.frame_box.setVisible(False)
+
         self.orient_box.setVisible(True)
 
         self.body.addWidget(hint("Tip: select nodes in the viewport first; their tags "
                                  "are filled in automatically. Cable elements use "
                                  "corotTruss with TensionOnly; give them a sag or lateral "
-                                 "restraint so they are not perfectly straight."))
+                                 "restraint so they are not perfectly straight. "
+                                 "Nonlinear frames build a fibre section from the "
+                                 "selected section and material."))
         self.kind.currentIndexChanged.connect(self._sync)
         self.buttons("Create")
 
     def _sync(self) -> None:
         kind = self.kind.currentData()
         self.shell_box.setVisible(kind == "shell")
-        self.orient_box.setVisible(kind == "beam")
+        self.orient_box.setVisible(kind in ("beam", "force_beam", "disp_beam"))
+        self.frame_box.setVisible(kind in ("force_beam", "disp_beam"))
 
     def spec(self) -> dict:
         tags = parse_tags(self.nodes.text())
@@ -229,9 +247,11 @@ class ElementDialog(BaseDialog):
         real_kind = "truss" if kind in ("truss_tension", "truss_compression") else kind
         return {"kind": real_kind, "nodes": tags,
                 "mat": self.mat.currentData(), "sec": self.sec.currentData(),
-                "vecxz": vec if real_kind == "beam" else None,
+                "vecxz": vec if real_kind in ("beam", "force_beam", "disp_beam") else None,
                 "thickness": UNITS.length_base(self.thickness.value()),
-                "behavior": behavior}
+                "behavior": behavior,
+                "integration": str(self.integration.currentData()),
+                "integration_points": int(self.int_points.value())}
 
 
 class SubdivideDialog(BaseDialog):
@@ -251,8 +271,8 @@ class SubdivideDialog(BaseDialog):
         self.body.addWidget(self.summary)
         if selected > eligible:
             self.body.addWidget(hint(
-                f"{selected - eligible} selected element(s) are not two-node beams or "
-                "trusses and will be left unchanged."))
+                f"{selected - eligible} selected element(s) are not two-node beams, "
+                "frame members or trusses and will be left unchanged."))
         self.body.addWidget(hint(
             "Each selected element is replaced by equal-length segments. Intermediate "
             "nodes are created or reused, and element loads are carried onto the new "

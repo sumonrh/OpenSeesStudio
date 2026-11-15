@@ -18,10 +18,13 @@ from PySide6.QtWidgets import (QApplication, QLabel, QTableWidget,
 app = QApplication.instance() or QApplication([])
 
 from app import dialogs, mainwindow, results as results_mod, steelsections  # noqa: E402
+from app.device_dialogs import DeviceDialog  # noqa: E402
 from app.mainwindow import MainWindow  # noqa: E402
-from app.model import Project, Section, HingeDefinition  # noqa: E402
+from app.model import (Project, Section, HingeDefinition, Element, Node,  # noqa: E402
+                       default_project)
 from app.tables import TablesDialog  # noqa: E402
 from app.units import UNITS  # noqa: E402
+from app.version import APP_VERSION  # noqa: E402
 
 FAILS = []
 
@@ -225,7 +228,19 @@ check("default ribbon tab", win.ribbon.current_title() == "Structure",
       f"({win.ribbon.current_title()})")
 check("ribbon group captions", len(win.ribbon.findChildren(QLabel, "ribbonCaption")) >= 5)
 check("ribbon app menu", len(win.ribbon.app_menu.actions()) >= 8)
+check("update badge hidden until a newer release is found",
+      win.update_button.isHidden(), f"({win.update_button.text()})")
+check("update badge sits in the ribbon tab corner",
+      win.ribbon.isAncestorOf(win.update_button))
+win._show_update("9.9.9", "https://example.com/OpenSeesStudio-Setup.exe")
+check("update badge shows a newer release",
+      not win.update_button.isHidden() and "9.9.9" in win.update_button.text())
+win.update_button.hide()
 check("close project in app menu", win.a_close in win.ribbon.app_menu.actions())
+check("about shows version", f"Version {APP_VERSION}" in win.about_text())
+from app.version import is_newer
+check("version comparison", is_newer("v1.0.10", "1.0.9")
+      and not is_newer("v1.0.9", "1.0.9"))
 check("ribbon actions wired",
       any(b.defaultAction() is win.a_nodes
           for b in win.ribbon.findChildren(QToolButton)))
@@ -312,6 +327,11 @@ check("nodes action not repeated in pushover",
       win.a_nodes_visible not in pushover_actions)
 check("pushover results not repeated in pushover tab",
       win.a_pushover_results not in pushover_actions)
+from app.ribbon import RibbonGroup
+pushover_groups = {g.findChild(QLabel, "ribbonCaption").text()
+                   for g in pushover_page.findChildren(RibbonGroup)}
+check("inactive lumped plasticity group removed",
+      "Lumped plasticity" not in pushover_groups, f"({sorted(pushover_groups)})")
 dynamic_page = win.ribbon._pages[7]
 dynamic_actions = [b.defaultAction() for b in dynamic_page.findChildren(QToolButton)]
 check("dynamic tab has ground motion, time-history and spectrum actions",
@@ -647,6 +667,21 @@ check("save/load element count", len(loaded.elements) == len(win.project.element
 check("save/load combos", list(loaded.combos) == list(win.project.combos))
 check("save/load self weight", loaded.self_weight == win.project.self_weight)
 
+dp = default_project()
+dp.nodes = {1: Node(1, 0, 0, 0), 2: Node(2, 0, 0, 1000)}
+dp.elements = {
+    1: Element(1, "bearing", [1, 2], 1, 1,
+               device={"type": "bearing", "kv": 1000.0}),
+    2: Element(2, "force_beam", [2, 1], 1, 1,
+               integration="Legendre", integration_points=7),
+}
+dp2 = Project.from_dict(dp.to_dict())
+check("device properties round trip",
+      dp2.elements[1].device.get("kv") == 1000.0)
+check("frame integration round trip",
+      dp2.elements[2].integration == "Legendre"
+      and dp2.elements[2].integration_points == 7)
+
 print("== unit selector ==")
 check("default force unit", win.units_force.currentText() == "kN",
       f"({win.units_force.currentText()})")
@@ -711,6 +746,17 @@ check("element dialog tension-only truss",
 ed.kind.setCurrentIndex(ed.kind.findData("cable"))
 cable_spec = ed.spec()
 check("element dialog cable type", cable_spec["kind"] == "cable")
+ed.kind.setCurrentIndex(ed.kind.findData("force_beam"))
+frame_spec = ed.spec()
+check("element dialog forceBeamColumn",
+      frame_spec["kind"] == "force_beam"
+      and frame_spec["integration"] == "Lobatto"
+      and frame_spec["integration_points"] == 5)
+ed.integration.setCurrentIndex(ed.integration.findData("Legendre"))
+ed.int_points.setValue(7)
+check("element dialog beam integration",
+      ed.spec()["integration"] == "Legendre"
+      and ed.spec()["integration_points"] == 7)
 ed.close()
 
 md = dialogs.MaterialDialog(win.project)
@@ -746,6 +792,22 @@ sd.tabs.setCurrentIndex(1)
 sd.shape.setCurrentIndex(sd.shape.findData("Hexagon"))
 check("custom hexagonal shape", sd.current.shape == "Hexagon"
       and sd.current.catalog == "Custom" and sd.current.A > 0)
+
+dev = DeviceDialog(win.project, [1, 2], "bearing")
+bearing_spec = dev.spec()
+check("bearing dialog spec", bearing_spec["kind"] == "bearing"
+      and bearing_spec["device"]["kv"] > 0
+      and bearing_spec["device"]["k_init"] > 0)
+dev.kind.setCurrentIndex(dev.kind.findData("isolator"))
+isolator_spec = dev.spec()
+check("isolator dialog spec", isolator_spec["kind"] == "isolator"
+      and isolator_spec["device"]["d2"] > isolator_spec["device"]["d1"])
+dev.kind.setCurrentIndex(dev.kind.findData("damper_oil"))
+damper_spec = dev.spec()
+check("oil damper dialog spec", damper_spec["kind"] == "damper"
+      and "fr" in damper_spec["device"]
+      and damper_spec["device"]["direction"] == 1)
+dev.close()
 
 p_std = win.project.clone()
 s_std = Section(999, "W12X26", "I-Shape", b=165.0, h=310.0, d=310.0,

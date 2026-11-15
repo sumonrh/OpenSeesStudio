@@ -13,12 +13,13 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
-                               QPushButton, QSpinBox, QStackedWidget,
-                               QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QPushButton, QSpinBox, QStackedWidget, QToolBar,
+                               QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
 from . import (boundary_dialogs, dialogs, icons, opsgen, runcontrol,
                tablecopy, tcl, theme, wizards)
+from .device_dialogs import DeviceDialog
 from .dnd import MODEL_ITEM_MIME
 from .faq import FaqDialog
 from .wizard_dialog import StructureWizard
@@ -26,9 +27,9 @@ from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .groundmotion_dialog import GroundMotionCatalogDialog
 from .hinges import AssignHingesDialog, HingeLibraryDialog
 from .hinge_catalog import MATERIALS as HINGE_MATERIALS
-from .model import (BoundaryConstraint, Element, LoadCase, LoadCombination,
-                    Material, NodalLoad, Node, Project, Section, SPRING_DOFS,
-                    SpringSupport, default_project, fmt)
+from .model import (BoundaryConstraint, DEVICE_KINDS, Element, LoadCase,
+                    LoadCombination, Material, NodalLoad, Node, Project, Section,
+                    SPRING_DOFS, SpringSupport, default_project, fmt)
 from .pushover import PushoverResultsDialog
 from .ribbon import Ribbon
 from .results import ResultsDialog
@@ -37,6 +38,8 @@ from .response_spectrum import ResponseSpectrumDialog, ResponseSpectrumResultsDi
 from .tables import TablesDialog
 from .timehistory import TimeHistoryResultsDialog
 from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
+from .updates import UpdateChecker
+from .version import APP_VERSION
 from .viewport import Viewport
 
 APP_NAME = "OpenSees Studio"
@@ -261,6 +264,15 @@ class MainWindow(QMainWindow):
         self.a_diaphragm = self._act(
             "Diaphragm", "diaphragm", self.add_diaphragm, "",
             "Create a rigid diaphragm constraint about a global axis")
+        self.a_bearing = self._act(
+            "Bearing", "bearing", lambda *_: self.add_device("bearing"), "",
+            "Create an elastomeric bearing with a Bouc-Wen shear law")
+        self.a_isolator = self._act(
+            "Isolator", "isolator", lambda *_: self.add_device("isolator"), "",
+            "Create a lead-rubber isolator (OpenSees LeadRubberX)")
+        self.a_damper = self._act(
+            "Damper", "damper", lambda *_: self.add_device("damper"), "",
+            "Create a viscous or bilinear oil damper between two nodes")
         self.a_material = self._act("Materials", "material", self.materials, "")
         self.a_section = self._act("Sections", "section", self.sections, "")
         self.a_tables = self._act("Tables", "tables", lambda: self.open_tables(0), "T")
@@ -405,7 +417,8 @@ class MainWindow(QMainWindow):
                              self.a_copy, self.a_subdivide,
                              self.a_mirror, self.a_support, self.a_material,
                              self.a_spring, self.a_rigid_link, self.a_equal_dof,
-                             self.a_diaphragm,
+                             self.a_diaphragm, self.a_bearing, self.a_isolator,
+                             self.a_damper,
                              self.a_section, self.a_hinge_defs, self.a_hinge_assign,
                              self.a_tables,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
@@ -592,6 +605,10 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_wiz_truss3d)
         group = page.add_group("Bridge wizard")
         group.add_large(self.a_wiz_bridge)
+        group = page.add_group("Devices")
+        group.add_large(self.a_bearing)
+        group.add_large(self.a_isolator)
+        group.add_large(self.a_damper)
 
         page = ribbon.add_tab("Node/Element")
         group = page.add_group("Nodes")
@@ -672,10 +689,6 @@ class MainWindow(QMainWindow):
         group = page.add_group("Hinges")
         group.add_large(self.a_hinge_defs)
         group.add_large(self.a_hinge_assign)
-        group = page.add_group("Lumped plasticity")
-        hinge_note = QLabel("beamWithHinges\nfiber hinges\nSteel01 / Hysteretic / FlagShape")
-        hinge_note.setStyleSheet(f"color:{theme.MUTED}; font-size:10px;")
-        group.add_widget(hinge_note)
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -714,6 +727,23 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_about)
         group = page.add_group("OpenSees")
         group.add_large(self.a_opensees_help)
+
+        self.update_button = QToolButton()
+        self.update_button.setObjectName("updateBadge")
+        self.update_button.setIcon(icons.icon("update", 16))
+        self.update_button.setIconSize(QSize(16, 16))
+        self.update_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.update_button.setText("Update")
+        self.update_button.setCursor(Qt.PointingHandCursor)
+        self.update_button.setToolTip("A newer OpenSees Studio installer is available")
+        self.update_button.clicked.connect(self._open_update)
+        self.update_button.hide()
+        ribbon.add_corner_widget(self.update_button)
+        self.update_url = ""
+        self.update_version = ""
+        self.update_checker = UpdateChecker(APP_VERSION, self)
+        self.update_checker.available.connect(self._show_update)
+        QTimer.singleShot(1200, self.update_checker.check)
 
         ribbon.set_current("Structure")
 
@@ -1743,12 +1773,47 @@ class MainWindow(QMainWindow):
             self.props.setCurrentIndex(2)
             self.el_title.setText(f"Element {tag}   ({e.kind})")
             sec = self.project.section_of(e)
-            self.el_info.setText(
-                f"Nodes {e.nodes}<br>Length {fmt(UNITS.length(self.project.element_length(e)), 1)} "
-                f"{UNITS.length_unit}<br>"
-                f"Section A = {fmt(UNITS.area(sec.A), 1)} {UNITS.area_unit}, "
-                f"Iy = {fmt(UNITS.inertia(sec.Iy), 1)}, "
-                f"Iz = {fmt(UNITS.inertia(sec.Iz), 1)} {UNITS.inertia_unit}")
+            if e.kind in DEVICE_KINDS:
+                d = e.device or {}
+                if e.kind == "bearing":
+                    detail = (
+                        f"Elastomeric bearing<br>"
+                        f"kInit = {fmt(UNITS.dist(d.get('k_init', 0.0)), 3)} "
+                        f"{UNITS.dist_unit}<br>"
+                        f"qd = {fmt(UNITS.force(d.get('qd', 0.0)), 2)} "
+                        f"{UNITS.force_unit}<br>"
+                        f"Kv = {fmt(UNITS.dist(d.get('kv', 0.0)), 3)} "
+                        f"{UNITS.dist_unit}")
+                elif e.kind == "isolator":
+                    detail = (
+                        f"Lead-rubber isolator<br>"
+                        f"Fy = {fmt(UNITS.force(d.get('fy', 0.0)), 2)} "
+                        f"{UNITS.force_unit}<br>"
+                        f"Gr = {fmt(UNITS.stress(d.get('gr', 0.0)), 4)} "
+                        f"{UNITS.stress_unit}<br>"
+                        f"D1 / D2 = {fmt(UNITS.length(d.get('d1', 0.0)), 1)} / "
+                        f"{fmt(UNITS.length(d.get('d2', 0.0)), 1)} "
+                        f"{UNITS.length_unit}")
+                else:
+                    detail = (
+                        f"{'Bilinear oil' if d.get('type') == 'damper_oil' else 'Viscous'} damper<br>"
+                        f"K_el = {fmt(UNITS.dist(d.get('k_el', 0.0)), 3)} "
+                        f"{UNITS.dist_unit}<br>"
+                        f"Cd = {fmt(float(d.get('cd', 0.0)), 4)}<br>"
+                        f"alpha = {fmt(float(d.get('alpha', 0.0)), 3)}")
+                self.el_info.setText(
+                    f"Nodes {e.nodes}<br>Length "
+                    f"{fmt(UNITS.length(self.project.element_length(e)), 1)} "
+                    f"{UNITS.length_unit}<br>{detail}")
+            else:
+                self.el_info.setText(
+                    f"Nodes {e.nodes}<br>Length {fmt(UNITS.length(self.project.element_length(e)), 1)} "
+                    f"{UNITS.length_unit}<br>"
+                    f"Section A = {fmt(UNITS.area(sec.A), 1)} {UNITS.area_unit}, "
+                    f"Iy = {fmt(UNITS.inertia(sec.Iy), 1)}, "
+                    f"Iz = {fmt(UNITS.inertia(sec.Iz), 1)} {UNITS.inertia_unit}")
+            self.el_mat.setEnabled(e.kind not in DEVICE_KINDS)
+            self.el_sec.setEnabled(e.kind not in DEVICE_KINDS)
             self.el_mat.clear(); self.el_sec.clear()
             for m in self.project.materials.values():
                 self.el_mat.addItem(f"{m.tag}  {m.name}", m.tag)
@@ -2167,7 +2232,7 @@ class MainWindow(QMainWindow):
             groups = [tags[i:i + 4] for i in range(0, len(tags), 4)]
         else:
             if len(tags) < 2:
-                self._warn("A beam or truss needs at least 2 nodes.")
+                self._warn("A two-node element needs at least 2 nodes.")
                 return
             groups = [[tags[i], tags[i + 1]] for i in range(len(tags) - 1)]
 
@@ -2191,11 +2256,60 @@ class MainWindow(QMainWindow):
             tag = self.project.next_element()
             e = Element(tag, kind, group, spec["mat"], spec["sec"],
                         spec["vecxz"], spec["thickness"], "",
-                        spec.get("behavior", ""))
+                        spec.get("behavior", ""), {},
+                        spec.get("integration", "Lobatto"),
+                        int(spec.get("integration_points", 5)))
             self.project.elements[tag] = e
             created.append(tag)
         self._commit(f"Created {len(created)} element(s)")
         self.viewport.select_elements(created)
+
+    def add_device(self, preset: str) -> None:
+        selected = sorted(self.viewport.sel_nodes)
+        if not selected:
+            self._warn("Select the two nodes of the device first, or type their "
+                       "tags in the dialog.")
+        dlg = DeviceDialog(self.project, selected, preset, self)
+        if not dlg.exec():
+            return
+        spec = dlg.spec()
+        tags = spec["nodes"]
+        if len(tags) != 2:
+            self._warn("A bearing, isolator or damper connects exactly two nodes.")
+            return
+        for tag in tags:
+            if tag not in self.project.nodes:
+                self._warn(f"Node {tag} does not exist.")
+                return
+        if tags[0] == tags[1]:
+            self._warn("The device cannot use the same node twice.")
+            return
+        device = spec["device"]
+        kind = spec["kind"]
+        if device.get("type") == "bearing":
+            if device["k_init"] <= 0 or device["kv"] <= 0:
+                self._warn("The bearing needs positive shear and vertical stiffness.")
+                return
+        elif device.get("type") == "isolator":
+            if (device["fy"] <= 0 or device["gr"] <= 0 or device["kbulk"] <= 0
+                    or device["d2"] <= device["d1"] or device["tr"] <= 0):
+                self._warn("The isolator needs valid strength, modulus and "
+                           "diameters (D2 > D1).")
+                return
+        else:
+            if device["k_el"] <= 0 or device["cd"] < 0:
+                self._warn("The damper needs a positive elastic stiffness and a "
+                           "non-negative damping coefficient.")
+                return
+        mat = next(iter(self.project.materials), 1)
+        sec = next(iter(self.project.sections), 1)
+        tag = self.project.next_element()
+        self.project.elements[tag] = Element(
+            tag, kind, tags, mat, sec, device=device)
+        label = {"bearing": "bearing", "isolator": "isolator"}.get(
+            device.get("type"), "damper")
+        self._commit(f"Created {label} element {tag}")
+        self.viewport.select_elements([tag])
 
     def toggle_draw_element(self, checked: bool) -> None:
         if checked:
@@ -2300,16 +2414,16 @@ class MainWindow(QMainWindow):
         eligible = []
         for t in selected:
             e = self.project.elements.get(t)
-            if (e is not None and e.kind in ("beam", "truss")
+            if (e is not None and e.kind in ("beam", "truss", "force_beam", "disp_beam")
                     and len(e.nodes) == 2
                     and self.project.element_length(e) > 1e-9):
                 eligible.append(t)
         if not eligible:
             if selected:
-                self._warn("Subdivision applies to beam and truss elements "
-                           "with two nodes.")
+                self._warn("Subdivision applies to beam, nonlinear frame and "
+                           "truss elements with two nodes.")
             else:
-                self._warn("Select the beam or truss elements to subdivide.")
+                self._warn("Select the beam, frame or truss elements to subdivide.")
             return
         dlg = dialogs.SubdivideDialog(len(eligible), len(selected), self)
         if not dlg.exec():
@@ -2374,7 +2488,8 @@ class MainWindow(QMainWindow):
                 self.project.elements[tag] = Element(
                     tag, e.kind, [mapping[n] for n in e.nodes], e.mat, e.sec,
                     list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
-                    e.behavior)
+                    e.behavior, dict(e.device), e.integration,
+                    e.integration_points)
         self._commit(f"Copied {len(node_set)} node(s) ×{count}")
         if dlg.keep_selection.isChecked():
             self.viewport.select_nodes(new_nodes)
@@ -2431,7 +2546,8 @@ class MainWindow(QMainWindow):
                 self.project.elements[tag] = Element(
                     tag, e.kind, nodes, e.mat, e.sec,
                     list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
-                    e.behavior)
+                    e.behavior, dict(e.device), e.integration,
+                    e.integration_points)
             self._commit(f"Mirrored {len(node_set)} node(s)")
             self.viewport.select_nodes(new_nodes)
         else:
@@ -3307,18 +3423,36 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(
             QUrl("https://opensees.berkeley.edu/wiki/index.php/Main_Page"))
 
+    def _show_update(self, version: str, url: str) -> None:
+        self.update_version = version
+        self.update_url = url
+        self.update_button.setText(f"Update {version}")
+        self.update_button.setToolTip(
+            f"OpenSees Studio {version} is available - click to download the installer")
+        self.update_button.show()
+
+    def _open_update(self) -> None:
+        if self.update_url:
+            QDesktopServices.openUrl(QUrl(self.update_url))
+
     def about(self) -> None:
-        QMessageBox.about(self, f"About {APP_NAME}", (
+        QMessageBox.about(self, f"About {APP_NAME}", self.about_text())
+
+    def about_text(self) -> str:
+        return (
             f"<h3>{APP_NAME}</h3>"
+            f"<p><b>Version {APP_VERSION}</b></p>"
             "<p>Graphical model generation for OpenSees.</p>"
             "<p>Display units: " + UNITS.label() + ".<br>"
             "Model data is stored in kN, mm, tonne, s.<br>"
             "Engine: OpenSeesPy 3.8.0<br>"
             "Interface: PySide6 / Qt 6</p>"
-            "<p>Features: nodes, beam/truss/shell elements, copy-move-mirror, "
-            "supports, load cases, nodal and element loads, self weight, "
-            "load combinations, static and modal analysis, deformed shapes, "
-            "Tcl export and spreadsheet tables.</p>"))
+            "<p>Features: nodes, elastic and fibre beam-column elements, "
+            "trusses, cables, shells, bearings, isolators, dampers, "
+            "copy-move-mirror, supports, load cases, nodal and element loads, "
+            "self weight, load combinations, static and modal analysis, "
+            "pushover, time history, response spectrum, Tcl export and "
+            "spreadsheet tables.</p>")
 
     # ================================================================ shutdown
     def closeEvent(self, event) -> None:

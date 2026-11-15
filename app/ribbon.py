@@ -168,6 +168,7 @@ class Ribbon(QFrame):
         self.tabs.currentChanged.connect(self._tab_changed)
         bar.addWidget(self.tabs)
         bar.addStretch(1)
+        self._tab_bar_layout = bar
 
         outer.addWidget(tabs_row)
 
@@ -220,3 +221,8 @@ class Ribbon(QFrame):
         button.setToolTip(_tooltip(action))
         self._quick.addWidget(button)
         return button
+
+    def add_corner_widget(self, widget: QWidget) -> QWidget:
+        """Place *widget* at the right end of the ribbon tab row."""
+        self._tab_bar_layout.addWidget(widget, 0, Qt.AlignVCenter)
+        return widget

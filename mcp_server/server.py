@@ -232,7 +232,7 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.8",
+    version="1.0.9",
     instructions=(
         "OpenSees Studio is a graphical model generator and analysis GUI for "
         "OpenSees. Use these tools to build structural models and analyse them.\n\n"
@@ -244,8 +244,9 @@ server = MCPServer(
         "set_self_weight -> add_load_combination -> check_model -> run_static -> "
         "get_static_results. Use run_modal for periods and mode shapes.\n\n"
         "add_elements supports beam, truss (behavior '', tension or compression), "
-        "cable (tension-only corotTruss) and shell. Point springs use "
-        "add_point_spring; node constraints use add_constraint.\n\n"
+        "cable (tension-only corotTruss), shell, force_beam and disp_beam "
+        "(fibre section plus Lobatto/Legendre/NewtonCotes/Radau integration). "
+        "Point springs use add_point_spring; node constraints use add_constraint.\n\n"
         "For nonlinear work call list_hinge_materials, add_hinge_definition and "
         "assign_hinges, then run_pushover (requires a lateral case and hinges). "
         "Point springs use add_point_spring (Elastic, MultiLinear or PySimple1 p-y); "
@@ -421,7 +422,9 @@ def copy_nodes(tags: List[int], delta: List[float], count: int = 1,
             new_tag = _p().next_element()
             _p().elements[new_tag] = Element(
                 new_tag, e.kind, [mapping[n] for n in e.nodes], e.mat, e.sec,
-                list(e.vecxz) if e.vecxz else None, e.thickness, e.group)
+                list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
+                e.behavior, dict(e.device), e.integration,
+                e.integration_points)
             new_elems.append(new_tag)
     _changed(f"copy {len(tags)} node(s) x{count}")
     return {"ok": True, "nodes": new_nodes, "elements": new_elems}
@@ -481,7 +484,9 @@ def mirror_nodes(tags: List[int], plane: str = "YZ", copy: bool = True,
         new_tag = _p().next_element()
         _p().elements[new_tag] = Element(
             new_tag, e.kind, nodes, e.mat, e.sec,
-            list(e.vecxz) if e.vecxz else None, e.thickness, e.group)
+            list(e.vecxz) if e.vecxz else None, e.thickness, e.group,
+            e.behavior, dict(e.device), e.integration,
+            e.integration_points)
         new_elems.append(new_tag)
     _changed(f"mirror {len(tags)} node(s)")
     return {"ok": True, "nodes": new_nodes, "elements": new_elems}
@@ -511,22 +516,33 @@ def delete_nodes(tags: List[int]) -> dict:
 @_locked
 def add_elements(kind: str, node_tags: List[int], material: int = 1,
                  section: int = 1, vecxz: Optional[List[float]] = None,
-                 thickness: float = 100.0, behavior: str = "") -> dict:
-    """Create elements. kind = beam | truss | cable | shell.
+                 thickness: float = 100.0, behavior: str = "",
+                 integration: str = "Lobatto",
+                 integration_points: int = 5) -> dict:
+    """Create elements. kind = beam | truss | cable | shell | force_beam | disp_beam.
 
-    For beam/truss/cable, 3+ node tags create a chain between consecutive nodes.
-    For shell, tags are taken in groups of four (i, j, k, l).
-    vecxz is the beam local z axis; omit for automatic (global Z, or global X
-    for vertical members). behavior is '', tension or compression for truss
-    elements; cable elements are always tension-only corotTruss elements.
+    For beam/truss/cable/force_beam/disp_beam, 3+ node tags create a chain
+    between consecutive nodes. For shell, tags are taken in groups of four
+    (i, j, k, l). vecxz is the beam local z axis; omit for automatic (global Z,
+    or global X for vertical members). behavior is '', tension or compression
+    for truss elements; cable elements are always tension-only corotTruss
+    elements. Nonlinear frame members use a fibre section and the selected
+    beam integration (Lobatto, Legendre, NewtonCotes or Radau).
     """
     kind = kind.lower()
-    if kind not in ("beam", "truss", "cable", "shell"):
-        raise ValueError("kind must be beam, truss, cable or shell.")
+    if kind not in ("beam", "truss", "cable", "shell",
+                    "force_beam", "disp_beam"):
+        raise ValueError("kind must be beam, truss, cable, shell, force_beam "
+                         "or disp_beam.")
     if behavior not in ("", "tension", "compression"):
         raise ValueError("behavior must be '', tension or compression.")
     if behavior and kind != "truss":
         raise ValueError("behavior applies to truss elements only.")
+    if integration not in ("Lobatto", "Legendre", "NewtonCotes", "Radau"):
+        raise ValueError("integration must be Lobatto, Legendre, NewtonCotes "
+                         "or Radau.")
+    if not 2 <= int(integration_points) <= 40:
+        raise ValueError("integration_points must be between 2 and 40.")
     _require_nodes(node_tags)
     if material not in _p().materials:
         raise ValueError(f"Unknown material {material}. Available: {list(_p().materials)}")
@@ -553,7 +569,9 @@ def add_elements(kind: str, node_tags: List[int], material: int = 1,
             raise ValueError("An element cannot reference the same node twice.")
         tag = _p().next_element()
         _p().elements[tag] = Element(tag, kind, group, material, section, vx,
-                                     thickness, behavior=behavior)
+                                     thickness, behavior=behavior,
+                                     integration=integration,
+                                     integration_points=int(integration_points))
         created.append(tag)
     _changed(f"add {len(created)} element(s)")
     return {"ok": True, "elements": created, "kind": kind}

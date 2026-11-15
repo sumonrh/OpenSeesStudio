@@ -13,6 +13,14 @@ planned order for adding the rest.
 | Tension-only truss | `truss` + `uniaxialMaterial TensionOnly` | Wrapper returns zero in compression |
 | Compression-only truss | `truss` + `uniaxialMaterial ENT` | Linear compression-only; ENT uses the material E |
 | Cable | `corotTruss` + `uniaxialMaterial TensionOnly` | Large-displacement tension-only cable |
+| Force beam-column | `forceBeamColumn` + fibre `section Fiber` + `beamIntegration` | Distributed plasticity frame member |
+| Displacement beam-column | `dispBeamColumn` + fibre `section Fiber` + `beamIntegration` | Distributed plasticity frame member |
+| Fibre section | `section Fiber` with mesh from the section outline | One material per member section |
+| Beam integration | `Lobatto`, `Legendre`, `NewtonCotes`, `Radau` | 2-40 integration points |
+| Elastomeric bearing | `elastomericBearingBoucWen` | Bouc-Wen shear plus elastic axial/rotational materials |
+| Lead-rubber isolator | `LeadRubberX` | 3D lead-rubber bearing with heating parameters |
+| Viscous damper | `twoNodeLink` + `uniaxialMaterial ViscousDamper` | Axial Maxwell damper |
+| Oil damper | `twoNodeLink` + `uniaxialMaterial BilinearOilDamper` | Relief-valve damper |
 | Shell | `ShellMITC4` | 4-node elastic shell |
 | Point spring | `zeroLength` + `Elastic` | Linear spring support |
 | Nonlinear point spring | `zeroLength` + `MultiLinear` | Symmetric force-deformation backbone |
@@ -101,15 +109,19 @@ require additional sections, materials, beam integrations or transformations.
 1. **Coupled links and rotational springs** — `twoNodeLink`, `zeroLengthND`,
    `zeroLengthSection`, `CoupledZeroLength`. Adds multi-directional support springs,
    rotational hinges and coupled soil-spring groups.
-2. **Nonlinear frame members** — `forceBeamColumn` and `dispBeamColumn` with fibre
+2. **Nonlinear frame members** - `forceBeamColumn` and `dispBeamColumn` with fibre
    sections and `beamIntegration`; reuse the existing hinge/pushover material library.
-3. **Cable refinement** — optional `CatenaryCable` UI for users who need catenary
+   **Implemented in 1.0.9** for Lobatto, Legendre, NewtonCotes and Radau integration.
+3. **Cable refinement** - optional `CatenaryCable` UI for users who need catenary
    equilibrium and thermal effects, alongside the current robust tension-only
    `corotTruss` cable; add `trussSection` and `corotTrussSection`.
-4. **Contact and pile interfaces** — zeroLength contact, simple contact, beam contact
+4. **Contact and pile interfaces** - zeroLength contact, simple contact, beam contact
    and `PileToe3D`, with friction/penalty parameters and a contact results table.
-5. **Bearings and isolators** — elastomeric bearings, friction pendulum, lead-rubber
+5. **Bearings and isolators** - elastomeric bearings, friction pendulum, lead-rubber
    and viscous dampers, with device property dialogs and hysteresis previews.
+   **Implemented in 1.0.9**: `elastomericBearingBoucWen`, `LeadRubberX`,
+   `ViscousDamper` and `BilinearOilDamper`; friction-pendulum bearings remain future
+   work.
 6. **Advanced shells and solids** — ShellMITC9, ShellDKGQ/NLDKGQ, ASD shells, quad and
    brick families for geotechnical and thick-shell models.
 7. **Joints and wall elements** — `Joint2D`, `BeamColumnJoint`, `MVLEM`, `SFI_MVLEM`,

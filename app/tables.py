@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDial
                                QTabWidget, QVBoxLayout, QWidget)
 
 from . import theme
-from .model import (Element, ElementLoad, LoadCase, LoadCombination, Material,
-                    NodalLoad, Node, Project, SECTION_SHAPES, Section, fmt)
+from .model import (ELEMENT_KINDS, Element, ElementLoad, LoadCase, LoadCombination,
+                    Material, NodalLoad, Node, Project, SECTION_SHAPES, Section, fmt)
 from .units import UNITS
 
 
@@ -459,8 +459,8 @@ class TablesDialog(QDialog):
             if t in elements:
                 errors.append(f"Elements: duplicate tag {t}")
             kind = (row[1] or "beam").strip().lower()
-            if kind not in ("beam", "truss", "shell"):
-                errors.append(f"Element {t}: type must be beam, truss or shell")
+            if kind not in ELEMENT_KINDS:
+                errors.append(f"Element {t}: unknown type '{kind}'")
                 kind = "beam"
             ns = []
             for text in row[2:6]:
@@ -483,7 +483,10 @@ class TablesDialog(QDialog):
                                   list(old.vecxz) if (old and old.vecxz) else None,
                                   UNITS.length_base(num(row[8], f"Element {t} thickness", 100.0)),
                                   old.group if old else "",
-                                  old.behavior if old else "")
+                                  old.behavior if old else "",
+                                  dict(old.device) if (old and old.kind == kind) else {},
+                                  old.integration if old else "Lobatto",
+                                  old.integration_points if old else 5)
 
         # ---- cases -----------------------------------------------------
         cases: Dict[str, LoadCase] = {}

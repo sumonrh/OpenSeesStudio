@@ -526,13 +526,19 @@ class Viewport(QWidget):
                 selected = tag in self.sel_elements
                 base = {"beam": theme.ELEM_BEAM, "truss": theme.ELEM_TRUSS,
                         "cable": theme.ELEM_TRUSS,
+                        "force_beam": theme.ELEM_BEAM,
+                        "disp_beam": theme.ELEM_BEAM,
+                        "bearing": theme.ELEM_DEVICE,
+                        "isolator": theme.ELEM_ISOLATOR,
+                        "damper": theme.ELEM_DAMPER,
                         "shell": theme.ELEM_SHELL}.get(e.kind, theme.ELEM_BEAM)
                 if selected:
                     pen = QPen(theme.SELECTED, 3.4)
                 elif self.show_deformed and dproj:
                     pen = QPen(QColor("#c3cdd9"), 1.2, Qt.DashLine)
                 else:
-                    pen = QPen(base, 2.6 if e.kind == "beam" else 1.9)
+                    pen = QPen(base, 2.6 if e.kind in (
+                        "beam", "force_beam", "disp_beam") else 1.9)
                 p.setPen(pen)
                 poly = QPolygonF([QPointF(s[0], s[1]) for s in pts])
                 if e.kind == "shell" and len(pts) >= 4:
@@ -556,7 +562,8 @@ class Viewport(QWidget):
                 items2.append((sum(s[2] for s in pts) / len(pts), tag, e, pts))
             items2.sort(key=lambda x: -x[0])
             for depth, tag, e, pts in items2:
-                p.setPen(QPen(theme.DEFORMED, 2.8 if e.kind == "beam" else 2.0))
+                p.setPen(QPen(theme.DEFORMED, 2.8 if e.kind in (
+                    "beam", "force_beam", "disp_beam") else 2.0))
                 p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in pts]))
 
         # ---- beam force diagrams --------------------------------------
@@ -679,7 +686,7 @@ class Viewport(QWidget):
                 p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in screen]))
                 p.setBrush(Qt.NoBrush)
                 continue
-            if e.kind != "beam" or len(base) < 2:
+            if e.kind not in ("beam", "force_beam", "disp_beam") or len(base) < 2:
                 p.setPen(QPen(color, 3.4 if selected else 2.0))
                 p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in screen]))
                 continue
