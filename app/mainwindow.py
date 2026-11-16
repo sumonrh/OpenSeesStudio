@@ -49,6 +49,20 @@ SUPPORT_PRESETS = {
     "pinned": [True, True, True, False, False, False],
     "roller_z": [True, True, False, False, False, False],
 }
+SUPPORT_DOF_LABELS = ("DX", "DY", "DZ", "RX", "RY", "RZ")
+
+
+def support_group_label(code: str) -> str:
+    """Friendly name for a support restraint pattern."""
+    presets = {
+        "111111": "Fixed",
+        "111000": "Pinned",
+        "110000": "Roller Z",
+    }
+    if code in presets:
+        return presets[code]
+    names = [name for name, flag in zip(SUPPORT_DOF_LABELS, code) if flag == "1"]
+    return " + ".join(names) if names else "Unrestrained"
 
 
 # --------------------------------------------------------------------------- #
@@ -997,6 +1011,7 @@ class MainWindow(QMainWindow):
         self.tree.setHeaderHidden(True)
         self.tree.setColumnCount(1)
         self.tree.setMinimumWidth(220)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setDragEnabled(True)
         self.tree.setDragDropMode(QAbstractItemView.DragOnly)
         self.tree.setDefaultDropAction(Qt.CopyAction)
@@ -1372,9 +1387,16 @@ class MainWindow(QMainWindow):
         b = group("Boundary", "boundary")
         g_sup = group("Supports", "supports",
                       sum(1 for n in p.nodes.values() if any(n.support)), b)
+        support_groups: Dict[str, List[int]] = {}
         for n in p.nodes.values():
             if any(n.support):
-                add_child(g_sup, f"{n.tag}   {n.support_code()}", "node", n.tag)
+                support_groups.setdefault(n.support_code(), []).append(n.tag)
+        for code, tags in sorted(support_groups.items(),
+                                 key=lambda item: support_group_label(item[0])):
+            item = add_child(g_sup, f"{support_group_label(code)} ({len(tags)})",
+                             "support_group", tuple(sorted(tags)))
+            item.setToolTip(0, "Double-click: select these nodes. "
+                               "Right-click: select, table or clear supports.")
         g_preset = group("Presets", "support_presets", parent=b)
         for label, key in (("Fixed", "fixed"), ("Pinned", "pinned"),
                            ("Roller Z", "roller_z")):
@@ -1439,14 +1461,42 @@ class MainWindow(QMainWindow):
             self.viewport.select_nodes([tag])
         elif key == "element":
             self.viewport.select_elements([tag])
+        elif key == "support_group":
+            self.viewport.select_nodes(list(tag))
+            self._status(f"Selected {len(tag)} node(s) with this support")
         elif key == "hinge":
             self._select_hinge_elements(tag)
 
     def _tree_double(self, item: QTreeWidgetItem, _col: int) -> None:
-        data = item.data(0, Qt.UserRole)
-        if not data:
+        data_items = []
+        selected = self.tree.selectedItems()
+        if item not in selected:
+            selected = [item]
+        for selected_item in selected:
+            data = selected_item.data(0, Qt.UserRole)
+            if data:
+                data_items.append(data)
+        if not data_items:
             return
-        key, tag = data
+        keys = {key for key, _tag in data_items}
+        if keys <= {"material", "section"}:
+            self._select_elements_using_items(data_items)
+            return
+        if keys == {"case"}:
+            self._select_cases([tag for _key, tag in data_items if tag])
+            return
+        if keys == {"hinge"}:
+            self.edit_hinge_defs()
+            return
+        if keys == {"support_group"}:
+            tags = sorted({tag for _key, group in data_items if group
+                           for tag in group})
+            if tags:
+                self.viewport.select_nodes(tags)
+                self.viewport.fit_selection()
+                self._status(f"Selected {len(tags)} supported node(s)")
+            return
+        key, tag = data_items[0]
         if tag is not None:
             if key in ("material", "section"):
                 self._select_elements_using(key, tag)
@@ -1474,6 +1524,50 @@ class MainWindow(QMainWindow):
         fn = actions.get(key)
         if fn:
             fn()
+
+    def _select_elements_using_items(self, data_items) -> None:
+        tags = set()
+        labels = []
+        for kind, tag in data_items:
+            if tag is None:
+                continue
+            if kind == "material":
+                tags.update(e.tag for e in self.project.elements.values()
+                            if e.mat == tag)
+                labels.append(f"material {tag}")
+            elif kind == "section":
+                tags.update(e.tag for e in self.project.elements.values()
+                            if e.sec == tag)
+                labels.append(f"section {tag}")
+        if not tags:
+            self._status("No elements use the selected items")
+            return
+        self.viewport.select_elements(sorted(tags))
+        self.viewport.fit_selection()
+        self._status(f"Selected {len(tags)} element(s) using "
+                     + ", ".join(labels))
+
+    def _select_cases(self, cases) -> None:
+        element_tags = set()
+        node_tags = set()
+        for case in cases:
+            element_tags.update(load.elem for load in self.project.elem_loads
+                                if load.case == case
+                                and load.elem in self.project.elements)
+            if abs(self.project.self_weight.get(case, 0.0)) > 1e-12:
+                element_tags.update(self.project.elements)
+            node_tags.update(load.node for load in self.project.nodal_loads
+                             if load.case == case and load.node in self.project.nodes)
+        if element_tags:
+            self.viewport.select_elements(sorted(element_tags))
+            self._status(f"Selected {len(element_tags)} element(s) carrying "
+                         + ", ".join(cases))
+        elif node_tags:
+            self.viewport.select_nodes(sorted(node_tags))
+            self._status(f"Selected {len(node_tags)} node(s) carrying "
+                         + ", ".join(cases))
+        else:
+            self._status("The selected load cases have no applied loads")
 
     def _select_elements_using(self, kind: str, tag) -> None:
         if kind == "material":
@@ -1560,22 +1654,55 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         data = item.data(0, Qt.UserRole)
-        if not data or data[1] is None:
+        if not data:
             return
+        selected = self.tree.selectedItems()
+        if item not in selected:
+            selected = [item]
+        data_items = [selected_item.data(0, Qt.UserRole)
+                      for selected_item in selected]
+        data_items = [entry for entry in data_items if entry]
+        keys = {key for key, _tag in data_items}
         kind, tag = data
         menu = QMenu(self)
-        if kind == "case":
-            display = menu.addAction("Display")
-            display.triggered.connect(lambda: self._display_load_case(tag, True))
-            undisplay = menu.addAction("Undisplay")
-            undisplay.triggered.connect(lambda: self._display_load_case(tag, False))
+        if keys == {"support_group"}:
+            groups = [group for _key, group in data_items if group]
+            tags = sorted({node for group in groups for node in group})
+            select = menu.addAction("Select nodes")
+            select.triggered.connect(lambda: self.viewport.select_nodes(tags))
+            table = menu.addAction("Supports table")
+            table.triggered.connect(lambda: self.open_tables(1))
+            clear = menu.addAction("Clear supports")
+            clear.setEnabled(not self.model_locked)
+            clear.triggered.connect(lambda: self._clear_support_nodes(tags))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
+        if keys <= {"material", "section"}:
+            select = menu.addAction("Select elements using selected items")
+            select.triggered.connect(
+                lambda: self._select_elements_using_items(data_items))
             menu.addSeparator()
-            table = menu.addAction("Table…")
+            delete = menu.addAction("Delete selected")
+            delete.setEnabled(not self.model_locked)
+            delete.triggered.connect(
+                lambda: self._delete_tree_entities(data_items))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
+        if keys == {"case"}:
+            cases = [case for _key, case in data_items if case]
+            display = menu.addAction("Display")
+            display.triggered.connect(
+                lambda: [self._display_load_case(case, True) for case in cases])
+            undisplay = menu.addAction("Undisplay")
+            undisplay.triggered.connect(
+                lambda: [self._display_load_case(case, False) for case in cases])
+            menu.addSeparator()
+            table = menu.addAction("Table.")
             table.setEnabled(not self.model_locked)
-            table.triggered.connect(lambda: self._open_case_table(tag))
+            table.triggered.connect(lambda: self._open_case_table(cases[0]))
             delete = menu.addAction("Delete")
             delete.setEnabled(not self.model_locked)
-            delete.triggered.connect(lambda: self._delete_load_case(tag))
+            delete.triggered.connect(lambda: self._delete_load_case(cases[0]))
             menu.exec(self.tree.viewport().mapToGlobal(pos))
             return
         if kind in ("spring", "constraint"):
@@ -1593,6 +1720,58 @@ class MainWindow(QMainWindow):
         delete.setEnabled(not self.model_locked)
         delete.triggered.connect(lambda: self._delete_tree_entity(kind, tag))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _clear_support_nodes(self, tags) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        changed = 0
+        for tag in tags:
+            node = self.project.nodes.get(tag)
+            if node is not None and any(node.support):
+                node.support = [False] * 6
+                changed += 1
+        if changed:
+            self._commit(f"Cleared {changed} support(s)")
+            self.viewport.select_nodes(tags)
+
+    def _delete_tree_entities(self, data_items) -> None:
+        if self.model_locked:
+            self._status("Model is locked - press Ctrl+L to unlock before editing.")
+            return
+        targets = [(kind, tag) for kind, tag in data_items
+                   if tag is not None and kind in ("material", "section")]
+        if not targets:
+            return
+        blocked = []
+        for kind, tag in targets:
+            if kind == "material":
+                used = [e.tag for e in self.project.elements.values() if e.mat == tag]
+                if tag not in self.project.materials:
+                    continue
+                if used:
+                    blocked.append(f"material {tag} ({len(used)} elements)")
+            else:
+                used = [e.tag for e in self.project.elements.values() if e.sec == tag]
+                if tag not in self.project.sections:
+                    continue
+                if used:
+                    blocked.append(f"section {tag} ({len(used)} elements)")
+        if blocked:
+            self._warn("Cannot delete items in use:\n" + "\n".join(blocked))
+            return
+        if QMessageBox.question(self, "Delete items",
+                                f"Delete {len(targets)} selected item(s)?") != QMessageBox.Yes:
+            return
+        removed = 0
+        for kind, tag in targets:
+            collection = (self.project.materials if kind == "material"
+                          else self.project.sections)
+            if tag in collection and len(collection) > 1:
+                del collection[tag]
+                removed += 1
+        if removed:
+            self._commit(f"Deleted {removed} model item(s)")
 
     def _select_case_elements(self, case: str) -> None:
         element_tags = sorted({load.elem for load in self.project.elem_loads
@@ -2820,7 +2999,15 @@ class MainWindow(QMainWindow):
         dlg = dialogs.AnalysisDialog(self.project, self)
         if not dlg.exec():
             return
-        self.project.settings.update(dlg.values())
+        values = dlg.values()
+        modal_changed = (
+            int(values.get("modal_modes", 6))
+            != int(self.project.settings.get("modal_modes", 6))
+            or bool(values.get("mass_from_density", True))
+            != bool(self.project.settings.get("mass_from_density", True)))
+        self.project.settings.update(values)
+        if modal_changed:
+            self.project.settings["modal_configured"] = True
         self._commit("Analysis settings")
 
     def check_model(self) -> None:
@@ -3012,6 +3199,7 @@ class MainWindow(QMainWindow):
         settings = dict(self.project.settings.get("pushover", {}))
         settings.update(cfg)
         self.project.settings["pushover"] = settings
+        self.project.settings["pushover_configured"] = True
         used_defs = {self.project.hinge_assignments[e] for e in assigned}
         models = ", ".join(sorted({
             self.project.hinge_defs[t].material for t in used_defs
@@ -3076,6 +3264,7 @@ class MainWindow(QMainWindow):
         if not dlg.exec():
             return
         self.project.time_history = dlg.spec()
+        self.project.settings["th_configured"] = True
         self._commit("Edited time-history case")
         case = self.project.time_history
         source = "sine" if case.source == "sine" else case.path
@@ -3208,6 +3397,7 @@ class MainWindow(QMainWindow):
         if not dlg.exec():
             return
         self.project.response_spectrum = dlg.spec()
+        self.project.settings["rs_configured"] = True
         self._commit("Edited response-spectrum case")
         case = self.project.response_spectrum
         self._log(f"Response-spectrum case '{case.name}' saved: "

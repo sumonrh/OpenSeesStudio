@@ -359,6 +359,22 @@ check("tree links open tables", table_calls == [0, 2], f"({table_calls})")
 mat_item = tree_items["Materials"].child(0)
 win._tree_double(mat_item, 0)
 check("tree material selects elements", len(win.viewport.sel_elements) > 0)
+mat_group = tree_items["Materials"]
+if mat_group.childCount() >= 2:
+    first, second = mat_group.child(0), mat_group.child(1)
+    first_tag = first.data(0, Qt.UserRole)[1]
+    second_tag = second.data(0, Qt.UserRole)[1]
+    expected = {e.tag for e in win.project.elements.values()
+                if e.mat in (first_tag, second_tag)}
+    win.tree.clearSelection()
+    win.tree.setCurrentItem(first)
+    first.setSelected(True)
+    second.setSelected(True)
+    win._tree_double(first, 0)
+    check("ctrl multi-select tree action uses all selected items",
+          bool(expected) and expected <= win.viewport.sel_elements,
+          f"({len(expected)} expected, {len(win.viewport.sel_elements)} selected)")
+    win.tree.clearSelection()
 check("analysis icons are unique",
       len({win.a_run.icon().cacheKey(), win.a_modal.icon().cacheKey(),
            win.a_animate.icon().cacheKey()}) == 3)
@@ -393,6 +409,17 @@ check("tree lists materials",
       tree_items["Materials"].childCount() == len(win.project.materials))
 check("tree lists sections",
       tree_items["Sections"].childCount() == len(win.project.sections))
+boundary_item = tree_items["Boundary"]
+sup_item = next(boundary_item.child(i) for i in range(boundary_item.childCount())
+                if boundary_item.child(i).text(0).startswith("Supports"))
+support_codes = [n.support_code() for n in win.project.nodes.values()
+                 if any(n.support)]
+check("support tree groups identical restraints",
+      sup_item.childCount() == len(set(support_codes)),
+      f"({sup_item.childCount()} groups, {len(set(support_codes))} patterns)")
+check("support tree groups show instance counts",
+      all("(" in sup_item.child(i).text(0)
+          for i in range(sup_item.childCount())))
 loads_item = tree_items["Loads"]
 load_cases_item = next(loads_item.child(i) for i in range(loads_item.childCount())
                        if loads_item.child(i).text(0).startswith("Load Cases"))
@@ -413,6 +440,37 @@ check("load case undisplay", "LL" not in win.viewport.display_cases)
 win._scenario_changed("DL")
 check("scenario clears load filter", not win.viewport.load_filter_active)
 
+print("== load label grouping ==")
+from app.viewport import Viewport  # noqa: E402
+
+label_project = default_project()
+label_project.nodes = {
+    1: Node(1, 0, 0, 0),
+    2: Node(2, 1000, 0, 0),
+    3: Node(3, 2000, 0, 0),
+}
+label_project.elements = {
+    1: Element(1, "beam", [1, 2], 1, 1, [0, 0, 1]),
+    2: Element(2, "beam", [2, 3], 1, 1, [0, 0, 1]),
+}
+label_view = Viewport()
+label_view.resize(900, 600)
+label_view.set_project(label_project, fit=True)
+udl_items = [
+    (None, label_project.elements[1], (0, 0, -1), -1.0, -1.0, "DL"),
+    (None, label_project.elements[2], (0, 0, -1), -1.0, -1.0, "DL"),
+]
+labels = label_view._udl_labels(udl_items, 900, 600, 1.0, False, {})
+check("continuous equal UDL is labelled once", len(labels) == 1,
+      f"({len(labels)})")
+udl_items[1] = (None, label_project.elements[2], (0, 0, -1), -2.0, -2.0, "DL")
+labels = label_view._udl_labels(udl_items, 900, 600, 2.0, False, {})
+check("changed UDL magnitude is labelled again", len(labels) == 2,
+      f"({len(labels)})")
+check("load labels omit units", all("kN" not in text for _pos, text, _color
+                                    in labels))
+label_view.deleteLater()
+
 print("== static analysis through the GUI ==")
 mainwindow.ResultsDialog = StubResults
 win.run_static()
@@ -432,6 +490,12 @@ win.a_beam_diagram.trigger()
 check("beam diagrams clear", not win.viewport.show_diagrams)
 win.viewport.show_deformed = True
 win.a_deformed.setChecked(True)
+display_nodes = win.viewport._display_node_map()
+moved_nodes = any(
+    max(abs(display_nodes[tag][i] - win.project.nodes[tag].xyz[i])
+        for i in range(3)) > 1e-9
+    for tag in display_nodes)
+check("deformed shape moves the nodes with the elements", moved_nodes)
 check("model auto-locked after analysis",
       win.model_locked and win.a_lock.isChecked() and not win.a_nodes.isEnabled())
 win.a_lock.trigger()
@@ -545,6 +609,16 @@ check("load table keeps other cases",
       len(dlg_case._collect().elem_loads) == len(win.project.elem_loads))
 
 dlg = TablesDialog(win.project)
+support_page = dlg.page_supports
+restrained_count = sum(1 for n in win.project.nodes.values() if any(n.support))
+check("supports table separates restrained nodes",
+      support_page.restrained_group.childCount() == restrained_count
+      and support_page.unrestrained_group.childCount()
+      == len(win.project.nodes) - restrained_count)
+check("unrestrained support group starts collapsed",
+      not support_page.unrestrained_group.isExpanded())
+check("supports table keeps all rows editable",
+      len(support_page.rows()) == len(win.project.nodes))
 dlg.page_nodes.table.setRangeSelected(QTableWidgetSelectionRange(0, 0, 0, 3), True)
 dlg.page_nodes.table.copy_selection()
 check("table copies tab-separated text", "\t" in QApplication.clipboard().text())
@@ -586,8 +660,14 @@ rc = RunControlDialog(win.project, win.scenario_combo.currentText())
 avail = rc.availability()
 check("run control enables static and modal", avail["static"] and avail["modal"])
 check("run control disables pushover without hinges", not avail["pushover"])
-check("run control selects available analyses",
-      "static" in rc.selected() and "modal" in rc.selected())
+check("run control checks static only by default",
+      rc.selected() == ["static"], f"({rc.selected()})")
+win.project.settings["modal_configured"] = True
+rc2 = RunControlDialog(win.project, win.scenario_combo.currentText())
+check("run control checks configured modal",
+      "modal" in rc2.selected(), f"({rc2.selected()})")
+rc2.close()
+win.project.settings.pop("modal_configured", None)
 rc.close()
 
 print("== tree drag and drop ==")
@@ -765,7 +845,15 @@ md.E.setValue(2.1e11)
 check("material dialog converts", abs(md.materials[mtag].E - 210.0) < 1e-6,
       f"({md.materials[mtag].E:.3f} kN/mm²)")
 
+check("material dialog shows two decimals",
+      md.E.decimals() == 2 and md.nu.decimals() == 2
+      and md.rho.decimals() == 2)
+
 sd = dialogs.SectionDialog(win.project)
+check("section dialog shows two decimals",
+      sd.b.decimals() == 2 and sd.h.decimals() == 2
+      and sd.d.decimals() == 2)
+sd.tabs.setCurrentIndex(1)
 sd.b.setValue(0.5)
 check("section dialog converts", abs(sd.current.b - 500.0) < 1e-6,
       f"({sd.current.b:.3f} mm)")
@@ -792,6 +880,18 @@ sd.tabs.setCurrentIndex(1)
 sd.shape.setCurrentIndex(sd.shape.findData("Hexagon"))
 check("custom hexagonal shape", sd.current.shape == "Hexagon"
       and sd.current.catalog == "Custom" and sd.current.A > 0)
+section_count = len(sd.sections)
+sd._add()
+check("add button adds the editor section",
+      len(sd.sections) == section_count + 1
+      and list(sd.sections.values())[-1].shape == "Hexagon")
+
+dp = default_project()
+check("default sections",
+      [s.name for s in dp.sections.values()]
+      == ["W610x82", "W610x92", "Rect 300x600"])
+check("no default plate section",
+      all(s.name != "Plate 100 mm" for s in dp.sections.values()))
 
 dev = DeviceDialog(win.project, [1, 2], "bearing")
 bearing_spec = dev.spec()

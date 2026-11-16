@@ -375,11 +375,13 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
             p.drawPolygon(poly)
 
     elif name == "section":
-        _pen(p, accent, 1.4)
+        _pen(p, INK, 1.6)
         pts = [(6, 3), (18, 3), (18, 7), (14, 7), (14, 17), (18, 17),
                (18, 21), (6, 21), (6, 17), (10, 17), (10, 7), (6, 7)]
-        _fill(p, "#dcebf9")
+        _fill(p, "#7fa5c5")
         p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+        p.setPen(QPen(QColor("#ffffff"), 1.0))
+        p.drawLine(QPointF(12, 4), QPointF(12, 20))
 
     elif name == "nodal_load":
         _pen(p, accent, 1.7)

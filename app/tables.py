@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QBrush, QColor, QKeySequence
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog,
                                QHBoxLayout, QHeaderView, QLabel, QMessageBox,
                                QPushButton, QTableWidget, QTableWidgetItem,
-                               QTabWidget, QVBoxLayout, QWidget)
+                               QTabWidget, QTreeWidget, QTreeWidgetItem,
+                               QVBoxLayout, QWidget)
 
 from . import theme
 from .model import (ELEMENT_KINDS, Element, ElementLoad, LoadCase, LoadCombination,
@@ -183,6 +184,86 @@ class TablePage(QWidget):
 
 
 # --------------------------------------------------------------------------- #
+class SupportTablePage(QWidget):
+    """Supports table grouped by restrained and unrestrained nodes.
+
+    The groups are collapsible so a large model stays readable; every child row
+    remains editable when its group is expanded.
+    """
+
+    HEADERS = ["Node", "DX", "DY", "DZ", "RX", "RY", "RZ"]
+
+    def __init__(self, nodes) -> None:
+        super().__init__()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        info = QLabel("Restrained nodes are listed first. Expand a group to edit its rows.")
+        info.setStyleSheet(f"color: {theme.MUTED};")
+        lay.addWidget(info)
+
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(len(self.HEADERS))
+        self.tree.setHeaderLabels(self.HEADERS)
+        self.tree.setRootIsDecorated(True)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectItems)
+        self.tree.setEditTriggers(QAbstractItemView.DoubleClicked
+                                  | QAbstractItemView.EditKeyPressed)
+        self.tree.setColumnWidth(0, 190)
+        for column in range(1, len(self.HEADERS)):
+            self.tree.setColumnWidth(column, 58)
+        lay.addWidget(self.tree)
+
+        ordered = sorted(nodes, key=lambda n: n.tag)
+        restrained = [n for n in ordered if any(n.support)]
+        unrestrained = [n for n in ordered if not any(n.support)]
+        self.restrained_group = self._group(
+            f"Restrained nodes ({len(restrained)})", restrained)
+        self.unrestrained_group = self._group(
+            f"Unrestrained nodes ({len(unrestrained)})", unrestrained)
+        self.restrained_group.setExpanded(True)
+        self.unrestrained_group.setExpanded(False)
+
+        self.count = QLabel()
+        self.count.setStyleSheet(f"color: {theme.MUTED};")
+        lay.addWidget(self.count)
+        self.tree.itemChanged.connect(lambda *_: self._update_count())
+        self._update_count()
+
+    def _group(self, text: str, nodes) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([text] + [""] * (len(self.HEADERS) - 1))
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
+        item.setForeground(0, QBrush(QColor(theme.ACCENT_DARK)))
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        self.tree.addTopLevelItem(item)
+        for n in nodes:
+            row = QTreeWidgetItem([str(n.tag)] + [str(1 if b else 0)
+                                                 for b in n.support])
+            row.setData(0, Qt.UserRole, n.tag)
+            row.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled
+                         | Qt.ItemIsEditable)
+            item.addChild(row)
+        return item
+
+    def _update_count(self) -> None:
+        restrained = self.restrained_group.childCount()
+        unrestrained = self.unrestrained_group.childCount()
+        self.count.setText(f"{restrained + unrestrained} nodes - "
+                           f"{restrained} restrained, {unrestrained} unrestrained")
+
+    def rows(self) -> List[List[str]]:
+        out = []
+        for group in (self.restrained_group, self.unrestrained_group):
+            for index in range(group.childCount()):
+                item = group.child(index)
+                out.append([item.text(column)
+                            for column in range(len(self.HEADERS))])
+        return out
+
+
+# --------------------------------------------------------------------------- #
 class TablesDialog(QDialog):
     def __init__(self, project: Project, parent=None, case_filter: str = "") -> None:
         super().__init__(parent)
@@ -242,10 +323,7 @@ class TablesDialog(QDialog):
              for n in p.nodes.values()],
             {0: 70}, new_row=lambda t: [max((int(t.item(r, 0).text()) for r in range(t.rowCount())
                                              if t.item(r, 0)), default=0) + 1, "0", "0", "0"])
-        self.page_supports = TablePage(
-            ["Node", "DX", "DY", "DZ", "RX", "RY", "RZ"],
-            [[n.tag] + [1 if b else 0 for b in n.support] for n in p.nodes.values()],
-            {0: 70})
+        self.page_supports = SupportTablePage(p.nodes.values())
         self.page_elements = TablePage(
             ["Tag", "Type", "Node1", "Node2", "Node3", "Node4", "Material", "Section", "Thickness"],
             [[e.tag, e.kind, *[e.nodes[i] if i < len(e.nodes) else "" for i in range(4)],

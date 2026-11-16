@@ -1017,13 +1017,19 @@ def default_project() -> Project:
                               rho=7.85e-9, fy=0.235)
     p.materials[2] = Material(2, "Concrete C30", "Elastic", E=30.0, nu=0.2,
                               rho=2.5e-9, fc=0.030)
-    s = Section(1, "H 300x300x10x15", "I-Shape", b=300.0, h=300.0, tw=10.0, tf=15.0)
-    s.compute()
-    p.sections[1] = s
-    s2 = Section(2, "Rect 300x600", "Rectangle", b=300.0, h=600.0)
+    w1 = Section(1, "W610x82", "I-Shape", b=178.0, h=599.0, d=599.0,
+                 t=0.0, tw=10.0, tf=12.8)
+    w1.A, w1.Iy, w1.Iz, w1.J = 10400.0, 560.0e6, 12.1e6, 488.0e3
+    w1.catalog, w1.designation, w1.family = "CISC", "W610x82", "W"
+    p.sections[1] = w1
+    w2 = Section(2, "W610x92", "I-Shape", b=179.0, h=603.0, d=603.0,
+                 t=0.0, tw=10.9, tf=15.0)
+    w2.A, w2.Iy, w2.Iz, w2.J = 11800.0, 646.0e6, 14.4e6, 710.0e3
+    w2.catalog, w2.designation, w2.family = "CISC", "W610x92", "W"
+    p.sections[2] = w2
+    s2 = Section(3, "Rect 300x600", "Rectangle", b=300.0, h=600.0)
     s2.compute()
-    p.sections[2] = s2
-    p.sections[3] = Section(3, "Plate 100 mm", "User", A=1.0, Iy=1.0, Iz=1.0, J=1.0)
+    p.sections[3] = s2
     p.cases["DL"] = LoadCase("DL", "Dead")
     p.cases["LL"] = LoadCase("LL", "Live")
     p.combos["COMB1"] = LoadCombination("COMB1", [("DL", 1.0), ("LL", 1.0)])

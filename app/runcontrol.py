@@ -52,18 +52,21 @@ class RunControlDialog(BaseDialog):
         self._add("static", "Static analysis",
                   f"Load case or combination: {static_scenario or 'none'}",
                   bool(project.elements and static_scenario
-                       in project.scenario_names()))
+                       in project.scenario_names()), checked=True)
         has_mass = any(m.rho > 0.0 for m in project.materials.values())
         self._add("modal", "Modal analysis",
                   "Eigenvalue analysis; requires material density for mass",
-                  bool(project.elements and has_mass))
+                  bool(project.elements and has_mass),
+                  checked=bool(project.settings.get("modal_configured", False)))
         hinges = fibre_hinge_elements(project)
         lateral = lateral_case(project)
         push_reason = (f"{len(hinges)} fibre-hinged element(s), lateral case "
                        f"'{lateral}'" if hinges and lateral else
                        "Requires assigned fibre hinges and a lateral load case")
         self._add("pushover", "Pushover analysis", push_reason,
-                  bool(project.elements and hinges and lateral))
+                  bool(project.elements and hinges and lateral),
+                  checked=bool(project.settings.get("pushover_configured", False)
+                               or (hinges and lateral)))
         case = project.time_history
         th_ok = case.source == "sine"
         if case.source == "file":
@@ -73,13 +76,16 @@ class RunControlDialog(BaseDialog):
         self._add("time_history", "Time history",
                   f"{case.name}: {case.source}, dt={case.dt:g} s, "
                   f"{case.n_steps or 'full'} steps",
-                  bool(project.elements and th_ok))
+                  bool(project.elements and th_ok),
+                  checked=bool(project.settings.get("th_configured", False)
+                               or (case.source in ("file", "catalog") and th_ok)))
         case = project.response_spectrum
         rs_ok = (bool(project.elements) and len(case.periods) == len(case.accelerations)
                  and len(case.periods) >= 2)
         self._add("response_spectrum", "Response spectrum",
                   f"{case.name}: {case.combination}, {len(case.periods)} points, "
-                  f"{case.n_modes} modes", rs_ok)
+                  f"{case.n_modes} modes", rs_ok,
+                  checked=bool(project.settings.get("rs_configured", False)))
 
         row = QHBoxLayout()
         all_button = QPushButton("Check available")
@@ -99,11 +105,12 @@ class RunControlDialog(BaseDialog):
             f"font-weight:600; color:{theme.ACCENT_DARK}; font-size:12px;")
         return label
 
-    def _add(self, key: str, label: str, detail: str, enabled: bool) -> None:
+    def _add(self, key: str, label: str, detail: str, enabled: bool,
+             checked: bool = False) -> None:
         box = QVBoxLayout()
         box.setSpacing(1)
         check = QCheckBox(label)
-        check.setChecked(enabled)
+        check.setChecked(bool(enabled and checked))
         check.setEnabled(enabled)
         detail_label = QLabel(detail)
         detail_label.setWordWrap(True)

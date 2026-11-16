@@ -449,6 +449,14 @@ class Viewport(QWidget):
             out[tag] = (n.x + s * d[0], n.y + s * d[1], n.z + s * d[2])
         return out
 
+    def _display_node_map(self) -> Dict[int, Vec3]:
+        """Node coordinates used for painting and picking."""
+        if self.show_deformed:
+            deformed = self._deformed_points()
+            if deformed:
+                return deformed
+        return {tag: n.xyz for tag, n in self.project.nodes.items()}
+
     def start_animation(self) -> None:
         if self.modal_results:
             self.show_deformed = True
@@ -506,6 +514,7 @@ class Viewport(QWidget):
                 s = cam.project(xyz, w, h)
                 if s:
                     dproj[tag] = s
+        node_points = (dproj if (dproj and self.show_deformed) else proj)
 
         # ---- elements --------------------------------------------------
         if self.show_extruded:
@@ -581,7 +590,7 @@ class Viewport(QWidget):
                     continue
                 if not any(n.support):
                     continue
-                s = proj.get(tag)
+                s = node_points.get(tag)
                 if not s:
                     continue
                 self._draw_support(p, s[0], s[1], all(n.support))
@@ -590,7 +599,7 @@ class Viewport(QWidget):
 
         # ---- nodes -----------------------------------------------------
         if self.show_nodes:
-            nodes_sorted = sorted(proj.items(), key=lambda kv: -kv[1][2])
+            nodes_sorted = sorted(node_points.items(), key=lambda kv: -kv[1][2])
             for tag, s in nodes_sorted:
                 if not self.is_node_visible(tag):
                     continue
@@ -608,10 +617,10 @@ class Viewport(QWidget):
                 p.drawEllipse(QPointF(s[0], s[1]), r, r)
 
         # ---- labels ----------------------------------------------------
-        if self.show_node_labels and len(proj) <= 900:
+        if self.show_node_labels and len(node_points) <= 900:
             p.setFont(QFont("Segoe UI", 7))
             p.setPen(QPen(QColor("#41566e")))
-            for tag, s in proj.items():
+            for tag, s in node_points.items():
                 if not self.is_node_visible(tag):
                     continue
                 p.drawText(QPointF(s[0] + 6, s[1] - 5), str(tag))
@@ -1053,6 +1062,8 @@ class Viewport(QWidget):
                 element_items.append((el, e, world_dir, v1, v2, el.case))
 
         labels = len(element_items) <= 80
+        label_items = []
+        udl_items = []
         for el, e, world_dir, v1, v2, case in element_items:
             pts = [proj.get(t) for t in e.nodes[:2]]
             if any(s is None for s in pts):
@@ -1075,19 +1086,19 @@ class Viewport(QWidget):
                 p.drawLine(QPointF(*tail), QPointF(base[0], base[1]))
                 self._head(p, base[0], base[1], sd[0], sd[1], 5.0, color)
                 if labels:
-                    p.setFont(QFont("Segoe UI", 7))
-                    p.setPen(QPen(color.darker(130)))
-                    p.drawText(QPointF(tail[0] + 4, tail[1] - 4),
-                               f"{prefix}P = {fmt(UNITS.force(v1), 1)} {UNITS.force_unit} "
-                               f"(x/L {el.position:.2f})")
+                    label_items.append(
+                        (tail, f"{prefix}{fmt(UNITS.force(v1), 1)}", color))
             else:
                 a = proj.get(e.nodes[0])
                 b = proj.get(e.nodes[-1])
                 if a is None or b is None:
                     continue
-                self._draw_udl(p, a, b, world_dir, v1, v2,
-                               colors.get(case, QColor(theme.LOAD_COLOR)),
-                               prefix, labels)
+                self._draw_udl(p, a, b, world_dir, v1, v2, color)
+                udl_items.append((el, e, world_dir, v1, v2, case))
+
+        if labels and udl_items:
+            label_items.extend(self._udl_labels(udl_items, w, h, peak_w,
+                                                multiple, colors))
 
         # ---- nodal loads ---------------------------------------------
         arrows = []
@@ -1119,11 +1130,9 @@ class Viewport(QWidget):
             p.drawLine(QPointF(*tail), QPointF(s[0], s[1]))
             self._head(p, s[0], s[1], sd[0], sd[1], 6.0, color)
             if labels:
-                p.setFont(QFont("Segoe UI", 7))
-                p.setPen(QPen(color.darker(130)))
                 prefix = f"{case}: " if multiple else ""
-                p.drawText(QPointF(tail[0] + 4, tail[1] - 4),
-                           f"{prefix}{fmt(UNITS.force(mag), 1)} {UNITS.force_unit}")
+                label_items.append(
+                    (tail, f"{prefix}{fmt(UNITS.force(mag), 1)}", color))
 
         # ---- nodal moments -------------------------------------------
         for nl in proj_.nodal_loads:
@@ -1141,6 +1150,105 @@ class Viewport(QWidget):
             p.drawArc(QRectF(s[0] - 9, s[1] - 9, 18, 18), 30 * 16, 300 * 16)
             self._head(p, s[0] + 7, s[1] - 5, 1, -1, 4.5, color)
 
+        for pos, text, color in label_items:
+            self._draw_load_label(p, pos, text, color)
+
+    def _udl_labels(self, items, w: int, h: int, peak: float,
+                    multiple: bool, colors) -> list:
+        """One label per continuous run of equal uniform load."""
+        tol = 1e-9
+        n = len(items)
+        parent = list(range(n))
+
+        def find(index: int) -> int:
+            while parent[index] != index:
+                parent[index] = parent[parent[index]]
+                index = parent[index]
+            return index
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        def same_run(a, b) -> bool:
+            if a[5] != b[5]:
+                return False
+            if abs(a[3] - a[4]) > tol or abs(b[3] - b[4]) > tol:
+                return False
+            if abs(a[3] - b[3]) > tol * max(abs(a[3]), 1.0):
+                return False
+            if _dot(a[2], b[2]) < 0.999:
+                return False
+            if not (set(a[1].nodes[:2]) & set(b[1].nodes[:2])):
+                return False
+            p0 = self.project.node_xyz(a[1].nodes[0])
+            p1 = self.project.node_xyz(a[1].nodes[1])
+            q0 = self.project.node_xyz(b[1].nodes[0])
+            q1 = self.project.node_xyz(b[1].nodes[1])
+            da = _norm(_sub(p1, p0))
+            db = _norm(_sub(q1, q0))
+            return abs(_dot(da, db)) > 0.999
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if same_run(items[i], items[j]):
+                    union(i, j)
+
+        groups = {}
+        for index in range(n):
+            groups.setdefault(find(index), []).append(index)
+
+        labels = []
+        for indices in groups.values():
+            first = items[indices[0]]
+            el, e, world_dir, v1, v2, case = first
+            if len(indices) > 1:
+                p0 = self.project.node_xyz(e.nodes[0])
+                p1 = self.project.node_xyz(e.nodes[1])
+                axis = _norm(_sub(p1, p0))
+                positions = []
+                for index in indices:
+                    item = items[index]
+                    q0 = self.project.node_xyz(item[1].nodes[0])
+                    q1 = self.project.node_xyz(item[1].nodes[1])
+                    positions.extend((_dot(q0, axis), _dot(q1, axis)))
+                mid_axis = 0.5 * (min(positions) + max(positions))
+                base_axis = _dot(p0, axis)
+                mid = tuple(p0[axis_index] + axis[axis_index]
+                            * (mid_axis - base_axis)
+                            for axis_index in range(3))
+            else:
+                p0 = self.project.node_xyz(e.nodes[0])
+                p1 = self.project.node_xyz(e.nodes[1])
+                mid = _lerp(p0, p1, 0.5)
+            screen = self.camera.project(mid, w, h)
+            if screen is None:
+                continue
+            sd = self._screen_dir(world_dir, v1)
+            if sd is None:
+                continue
+            offset = 14.0 + 24.0 * abs(v1) / max(peak, 1e-9)
+            pos = (screen[0] - sd[0] * offset, screen[1] - sd[1] * offset)
+            prefix = f"{case}: " if multiple else ""
+            if abs(v1 - v2) < tol:
+                text = f"{prefix}{fmt(UNITS.dist(v1), 2)}"
+            else:
+                text = (f"{prefix}{fmt(UNITS.dist(v1), 2)} / "
+                        f"{fmt(UNITS.dist(v2), 2)}")
+            labels.append((pos, text, colors.get(case, QColor(theme.LOAD_COLOR))))
+        return labels
+
+    def _draw_load_label(self, p: QPainter, pos, text: str, color: QColor) -> None:
+        p.setFont(QFont("Segoe UI", 7))
+        fm = p.fontMetrics()
+        width = fm.horizontalAdvance(text)
+        height = fm.height()
+        x = pos[0] - width / 2.0
+        y = pos[1] - height
+        p.setPen(QPen(color.darker(130)))
+        p.drawText(QPointF(x, y + fm.ascent()), text)
+
     def _screen_dir(self, world_dir, signed_value: float):
         _eye, _f, r, u = self.camera.basis()
         vx = _dot(world_dir, r)
@@ -1152,8 +1260,8 @@ class Viewport(QWidget):
         return vx / norm * sign, vy / norm * sign
 
     def _draw_udl(self, p, a, b, world_dir, v1: float, v2: float,
-                  color: QColor, prefix: str, show_label: bool) -> None:
-        """Draw a uniform or trapezoidal beam load with a proper envelope."""
+                  color: QColor) -> None:
+        """Draw a uniform or trapezoidal beam load envelope."""
         dx, dy = b[0] - a[0], b[1] - a[1]
         px_len = math.hypot(dx, dy)
         n = max(2, min(13, int(px_len / 38.0) + 1))
@@ -1185,16 +1293,6 @@ class Viewport(QWidget):
         p.setBrush(QBrush(fill))
         p.drawPolygon(poly)
         p.setBrush(Qt.NoBrush)
-        if show_label:
-            mid = tails[len(tails) // 2]
-            if abs(v1 - v2) < 1e-9:
-                text = f"{prefix}w = {fmt(UNITS.dist(v1), 2)} {UNITS.dist_unit}"
-            else:
-                text = (f"{prefix}w = {fmt(UNITS.dist(v1), 2)} → "
-                        f"{fmt(UNITS.dist(v2), 2)} {UNITS.dist_unit}")
-            p.setFont(QFont("Segoe UI", 7))
-            p.setPen(QPen(color.darker(130)))
-            p.drawText(QPointF(mid[0] + 4, mid[1] - 15), text)
 
     def _draw_springs(self, p: QPainter, w: int, h: int, proj) -> None:
         for spring in getattr(self.project, "springs", {}).values():
@@ -1273,11 +1371,12 @@ class Viewport(QWidget):
         if not self.project:
             return None, None
         w, h = self.width(), self.height()
+        display = self._display_node_map()
         best_node, best_nd = None, 9.0
         for tag, n in self.project.nodes.items():
             if not self.is_node_visible(tag):
                 continue
-            s = self.camera.project(n.xyz, w, h)
+            s = self.camera.project(display[tag], w, h)
             if not s:
                 continue
             d = math.hypot(s[0] - pos.x(), s[1] - pos.y())
@@ -1289,7 +1388,7 @@ class Viewport(QWidget):
         for tag, e in self.project.elements.items():
             if not self.is_element_visible(tag, e):
                 continue
-            pts = [self.camera.project(self.project.node_xyz(t), w, h) for t in e.nodes]
+            pts = [self.camera.project(display[t], w, h) for t in e.nodes]
             if any(s is None for s in pts):
                 continue
             for a, b in zip(pts, pts[1:]):
@@ -1302,19 +1401,20 @@ class Viewport(QWidget):
         if not self.project:
             return
         w, h = self.width(), self.height()
+        display = self._display_node_map()
         if not additive:
             self.sel_nodes.clear()
             self.sel_elements.clear()
         for tag, n in self.project.nodes.items():
             if not self.is_node_visible(tag):
                 continue
-            s = self.camera.project(n.xyz, w, h)
+            s = self.camera.project(display[tag], w, h)
             if s and rect.contains(QPoint(int(s[0]), int(s[1]))):
                 self.sel_nodes.add(tag)
         for tag, e in self.project.elements.items():
             if not self.is_element_visible(tag, e):
                 continue
-            pts = [self.camera.project(self.project.node_xyz(t), w, h) for t in e.nodes]
+            pts = [self.camera.project(display[t], w, h) for t in e.nodes]
             if any(s is None for s in pts):
                 continue
             mx = sum(s[0] for s in pts) / len(pts)

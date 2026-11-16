@@ -112,7 +112,11 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   segments; intermediate nodes and element loads are carried over automatically.
 - Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
   the original. The plane is previewed in the viewport while the dialog is open.
-- Supports: fixed, pinned, roller Z, or any combination of 6 DOF.
+- Supports: fixed, pinned, roller Z, or any combination of 6 DOF. The model tree
+  groups identical restraint patterns with their node count, and the supports table
+  separates restrained and collapsible unrestrained node groups.
+- The model tree supports Ctrl multi-selection; double-click or use the right-click
+  menu to act on every selected material, section, support group or load case.
 - **Point springs** (`zeroLength`): linear Elastic stiffness, multi-linear
   force-deformation (`MultiLinear`), and **PySimple1** p-y springs for piles.
   Linear/multi-linear springs can be standard, **tension-only** or
@@ -133,7 +137,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   Custom properties are computed from the dimensions; standard database values are
   kept exactly as published.
 - Section dialog with database/family selection, designation search, live preview,
-  area, mass, Iy, Iz and J.
+  area, mass, Iy, Iz and J. An **Add** button commits the database or custom section
+  currently shown in the editor to the model list. New projects start with W610x82,
+  W610x92 and a 300 x 600 mm rectangular section.
 - Model tree lists materials, sections, supports, load cases and combinations.
   **Nodes** and **Elements** are table links; clicking them opens their spreadsheet.
   Double-click a material or section to select its elements, right-click to delete it.
@@ -432,7 +438,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.9-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.10-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

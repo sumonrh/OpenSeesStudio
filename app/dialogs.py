@@ -472,18 +472,20 @@ class MaterialDialog(BaseDialog):
         self.name = QLineEdit()
         self.kind = QComboBox()
         self.kind.addItems(MATERIAL_KINDS)
-        self.E = spin(UNITS.stress(200.0), 0, 1e18, 5, UNITS.stress(10.0),
+        self.E = spin(UNITS.stress(200.0), 0, 1e18, 2, UNITS.stress(10.0),
                       UNITS.stress_unit)
-        self.nu = spin(0.3, 0.0, 0.499, 3, 0.01)
-        self.rho = spin(UNITS.density(7.85e-9), 0, UNITS.density(1e-3), 12,
+        self.nu = spin(0.3, 0.0, 0.499, 2, 0.01)
+        rho_value = UNITS.density(7.85e-9)
+        rho_decimals = 2 if abs(rho_value) >= 0.01 else 12
+        self.rho = spin(rho_value, 0, UNITS.density(1e-3), rho_decimals,
                         UNITS.density(1e-9), UNITS.density_unit)
-        self.fy = spin(UNITS.stress(0.235), 0, 1e18, 5, UNITS.stress(0.01),
+        self.fy = spin(UNITS.stress(0.235), 0, 1e18, 2, UNITS.stress(0.01),
                        UNITS.stress_unit)
-        self.b = spin(0.01, 0, 1, 4, 0.005)
-        self.fc = spin(UNITS.stress(0.030), -1e18, 1e18, 5, UNITS.stress(0.005),
+        self.b = spin(0.01, 0, 1, 2, 0.005)
+        self.fc = spin(UNITS.stress(0.030), -1e18, 1e18, 2, UNITS.stress(0.005),
                        UNITS.stress_unit)
         self.epsc0 = spin(-0.002, -1, 1, 5, 0.0005)
-        self.fpcu = spin(UNITS.stress(-0.006), -1e18, 1e18, 5, UNITS.stress(0.001),
+        self.fpcu = spin(UNITS.stress(-0.006), -1e18, 1e18, 2, UNITS.stress(0.001),
                          UNITS.stress_unit)
         self.epsU = spin(-0.02, -1, 1, 5, 0.002)
         form.addRow("Name", self.name)
@@ -667,6 +669,7 @@ class SectionDialog(BaseDialog):
         self._kind = "i"
         self._entries: List[tuple] = []
         self._entry_by_name: Dict[str, tuple] = {}
+        self._shown: Dict[str, float] = {}
         if not self.sections:
             s = Section(1, "Section 1", "I-Shape",
                         b=300.0, h=600.0, d=600.0, t=12.0, tw=10.0, tf=15.0)
@@ -684,13 +687,11 @@ class SectionDialog(BaseDialog):
         self.list.currentRowChanged.connect(self._select)
         left.addWidget(self.list, 1)
         b = QHBoxLayout()
-        add = QPushButton("New")
-        add.clicked.connect(self._add)
         dup = QPushButton("Duplicate")
         dup.clicked.connect(self._duplicate)
         rem = QPushButton("Delete")
         rem.clicked.connect(self._remove)
-        b.addWidget(add); b.addWidget(dup); b.addWidget(rem)
+        b.addWidget(dup); b.addWidget(rem)
         left.addLayout(b)
         left.addWidget(hint("Standard sections keep the published area and inertias. "
                             "Custom shapes compute properties from their dimensions."))
@@ -706,6 +707,15 @@ class SectionDialog(BaseDialog):
         self._build_standard_tab()
         self._build_custom_tab()
         right.addWidget(self.tabs, 1)
+
+        add_row = QHBoxLayout()
+        add_row.addStretch(1)
+        self.add_button = QPushButton("Add")
+        self.add_button.setToolTip("Add the section in the editor to the model list")
+        self.add_button.setEnabled(False)
+        self.add_button.clicked.connect(self._add)
+        add_row.addWidget(self.add_button)
+        right.addLayout(add_row)
 
         bottom = QHBoxLayout()
         self.preview = SectionPreview()
@@ -784,8 +794,9 @@ class SectionDialog(BaseDialog):
                     "tw": 10.0, "tf": 15.0}
         for key in ("b", "h", "d", "t", "tw", "tf"):
             label = QLabel("")
+            decimals = 2 if key in ("b", "h", "d") else 3
             widget = spin(UNITS.length(defaults[key]), UNITS.length(0.001),
-                          UNITS.length(1e7), UNITS.length_decimals,
+                          UNITS.length(1e7), decimals,
                           UNITS.length(10.0), UNITS.length_unit)
             setattr(self, key, widget)
             self._dim_labels[key] = label
@@ -932,7 +943,6 @@ class SectionDialog(BaseDialog):
         self.shape.setCurrentIndex(max(0, self.shape.findData(s.shape)))
         self._set_custom_values(s)
         self._loading = False
-        self._refresh_item()
         self._update_props()
 
     # ---------------------------------------------------------------- custom
@@ -994,6 +1004,17 @@ class SectionDialog(BaseDialog):
             widget.blockSignals(True)
             widget.setValue(conv(value))
             widget.blockSignals(False)
+        self._remember_shown()
+
+    def _remember_shown(self) -> None:
+        self._shown = {key: self._dim_widgets[key].value()
+                       for key in ("b", "h", "d", "t", "tw", "tf")}
+        self._shown.update({"A": self.A.value(), "Iy": self.Iy.value(),
+                            "Iz": self.Iz.value(), "J": self.J.value()})
+
+    def _changed(self, key: str) -> bool:
+        widget = self._dim_widgets[key]
+        return abs(widget.value() - self._shown.get(key, widget.value())) > 1e-12
 
     def _store(self, *_args) -> None:
         if self._loading or self.current is None:
@@ -1010,35 +1031,37 @@ class SectionDialog(BaseDialog):
             self.name.setText(s.name)
             self.name.blockSignals(False)
         if s.shape == "User":
-            s.A = UNITS.area_base(self.A.value())
-            s.Iy = UNITS.inertia_base(self.Iy.value())
-            s.Iz = UNITS.inertia_base(self.Iz.value())
-            s.J = UNITS.inertia_base(self.J.value())
+            if self._changed("A"):
+                s.A = UNITS.area_base(self.A.value())
+            if self._changed("Iy"):
+                s.Iy = UNITS.inertia_base(self.Iy.value())
+            if self._changed("Iz"):
+                s.Iz = UNITS.inertia_base(self.Iz.value())
+            if self._changed("J"):
+                s.J = UNITS.inertia_base(self.J.value())
             s.cy = s.cz = 0.0
         else:
-            s.b = UNITS.length_base(self.b.value())
-            s.h = UNITS.length_base(self.h.value())
-            s.d = UNITS.length_base(self.d.value())
-            s.t = UNITS.length_base(self.t.value())
-            s.tw = UNITS.length_base(self.tw.value())
-            s.tf = UNITS.length_base(self.tf.value())
+            for key, attr in (("b", "b"), ("h", "h"), ("d", "d"),
+                              ("t", "t"), ("tw", "tw"), ("tf", "tf")):
+                if self._changed(key):
+                    setattr(s, attr, UNITS.length_base(self._dim_widgets[key].value()))
             s.compute()
         s.catalog = "Custom"
         s.designation = ""
         s.family = ""
-        self._refresh_item()
+        self._remember_shown()
         self._update_props()
 
     def _name_changed(self, text: str) -> None:
         if self._loading or self.current is None:
             return
         self.current.name = text.strip() or "Section"
-        self._refresh_item()
         self._update_props()
 
     # ----------------------------------------------------------------- common
-    def _reload(self) -> None:
+    def _reload(self, select_tag: Optional[int] = None) -> None:
         row = self.list.currentRow()
+        keys = list(self.sections)
         self.list.blockSignals(True)
         self.list.clear()
         for s in self.sections.values():
@@ -1046,13 +1069,17 @@ class SectionDialog(BaseDialog):
             item.setToolTip(f"{s.shape} · {s.catalog}"
                             + (f" · {s.designation}" if s.designation else ""))
             self.list.addItem(item)
-        self.list.blockSignals(False)
         if not self.sections:
+            self.list.blockSignals(False)
             self.current = None
             self._update_props()
             return
-        target = row if 0 <= row < len(self.sections) else 0
+        if select_tag is not None and select_tag in keys:
+            target = keys.index(select_tag)
+        else:
+            target = row if 0 <= row < len(keys) else 0
         self.list.setCurrentRow(target)
+        self.list.blockSignals(False)
         self._select(target)
 
     def _select(self, row: int) -> None:
@@ -1060,7 +1087,7 @@ class SectionDialog(BaseDialog):
         if not (0 <= row < len(keys)):
             return
         self._loading = True
-        self.current = self.sections[keys[row]]
+        self.current = copy.deepcopy(self.sections[keys[row]])
         s = self.current
         self.name.blockSignals(True)
         self.name.setText(s.name)
@@ -1078,7 +1105,9 @@ class SectionDialog(BaseDialog):
             self.tabs.setCurrentIndex(0)
             row2 = self._find_designation(s.designation)
             if row2 >= 0:
+                self.standard_table.blockSignals(True)
                 self.standard_table.selectRow(row2)
+                self.standard_table.blockSignals(False)
                 self.standard_table.scrollToItem(self.standard_table.item(row2, 0))
             idx = self.shape.findData(s.shape)
             self.shape.blockSignals(True)
@@ -1104,39 +1133,44 @@ class SectionDialog(BaseDialog):
                 return row
         return -1
 
-    def _refresh_item(self) -> None:
-        row = self.list.currentRow()
-        if self.current and 0 <= row < self.list.count():
-            self.list.item(row).setText(f"{self.current.tag}   {self.current.name}")
-            self.list.item(row).setToolTip(
-                f"{self.current.shape} · {self.current.catalog}"
-                + (f" · {self.current.designation}" if self.current.designation else ""))
+    def _unique_name(self, name: str) -> str:
+        base = name.strip() or "Section"
+        existing = {s.name for s in self.sections.values()}
+        if base not in existing:
+            return base
+        index = 2
+        while f"{base} {index}" in existing:
+            index += 1
+        return f"{base} {index}"
 
     def _update_props(self) -> None:
         s = self.current
         if s is None:
             self.props.setText("No section selected")
             self.preview.set_section(None)
+            self.add_button.setEnabled(False)
             return
+        self.add_button.setEnabled(True)
         source = (f"{s.catalog} {s.designation}" if s.is_standard
                   else "Custom dimensions")
         self.props.setText(
-            f"A  = {fmt(UNITS.area(s.A), 6)} {UNITS.area_unit}\n"
-            f"mass = {fmt(s.mass_per_length, 1)} kg/m\n"
-            f"Iy = {fmt(UNITS.inertia(s.Iy), 3)} {UNITS.inertia_unit}\n"
-            f"Iz = {fmt(UNITS.inertia(s.Iz), 3)} {UNITS.inertia_unit}\n"
-            f"J  = {fmt(UNITS.inertia(s.J), 3)} {UNITS.inertia_unit}\n"
+            f"A  = {fmt(UNITS.area(s.A), 2)} {UNITS.area_unit}\n"
+            f"mass = {fmt(s.mass_per_length, 2)} kg/m\n"
+            f"Iy = {fmt(UNITS.inertia(s.Iy), 2)} {UNITS.inertia_unit}\n"
+            f"Iz = {fmt(UNITS.inertia(s.Iz), 2)} {UNITS.inertia_unit}\n"
+            f"J  = {fmt(UNITS.inertia(s.J), 2)} {UNITS.inertia_unit}\n"
             f"Source: {source}")
         self.preview.set_section(s)
 
     def _add(self) -> None:
+        if self.current is None:
+            return
         tag = max(self.sections, default=0) + 1
-        s = Section(tag, f"Section {tag}", "I-Shape",
-                    b=300.0, h=600.0, d=600.0, t=12.0, tw=10.0, tf=15.0)
-        s.compute()
+        s = copy.deepcopy(self.current)
+        s.tag = tag
+        s.name = self._unique_name(s.name)
         self.sections[tag] = s
-        self._reload()
-        self.list.setCurrentRow(len(self.sections) - 1)
+        self._reload(select_tag=tag)
 
     def _duplicate(self) -> None:
         if self.current is None:
@@ -1144,10 +1178,9 @@ class SectionDialog(BaseDialog):
         tag = max(self.sections, default=0) + 1
         s = copy.deepcopy(self.current)
         s.tag = tag
-        s.name = f"{self.current.name} copy"
+        s.name = self._unique_name(f"{s.name} copy")
         self.sections[tag] = s
-        self._reload()
-        self.list.setCurrentRow(len(self.sections) - 1)
+        self._reload(select_tag=tag)
 
     def _remove(self) -> None:
         row = self.list.currentRow()
@@ -1161,7 +1194,6 @@ class SectionDialog(BaseDialog):
             del self.sections[keys[row]]
             self.current = None
             self._reload()
-            self.list.setCurrentRow(min(row, len(self.sections) - 1))
 
 
 # --------------------------------------------------------------------------- #

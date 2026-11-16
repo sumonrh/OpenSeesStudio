@@ -221,8 +221,8 @@ async def main():
             r = await call("configure_response_spectrum",
                            {"periods": [0.0, 0.2, 0.5],
                             "accelerations": [0.4, 0.8, 0.5],
-                            "n_modes": 3})
-            check("configure_response_spectrum", r["n_modes"] == 3)
+                            "n_modes": 12})
+            check("configure_response_spectrum", r["n_modes"] == 12)
             r = await call("run_response_spectrum")
             check("run_response_spectrum", r["modes"] >= 1,
                   f"({r['modes']} modes)")
