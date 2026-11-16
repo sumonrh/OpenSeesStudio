@@ -2,11 +2,19 @@
 
 [![Download for Windows](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?label=download%20for%20windows&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
 
-A graphical model generator for **OpenSees**, built with Python,
-PySide6 and OpenSeesPy. It focuses on the model-generation workflow: nodes, elements,
-copy/move/mirror, supports, load cases, nodal and element loads, self weight,
-load combinations, static and modal analysis, and result review. The interface uses a
-ribbon with task tabs, command groups and group captions.
+A graphical model generator and analysis GUI for **OpenSees**, built with Python,
+PySide6 and OpenSeesPy. It covers the complete workflow: model generation, supports and
+constraints, nonlinear frame members, bearings/isolators/dampers, load cases and
+combinations, static and modal analysis, pushover, time history, response spectrum and
+result review. The interface uses a ribbon with task tabs, command groups and group
+captions, and the installer also includes an MCP server so AI agents can drive the model.
+
+> **Latest release: 1.0.12** — customizable toolbars, support-pattern groups with
+> double-click selection, a 0/1 support editor, deformation-value labels, scientific
+> notation for small displacements, viewport context menus, modal solver settings and
+> refreshed template screenshots.
+> [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
+> or read the [1.0.12 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.12).
 
 ## Install on Windows
 
@@ -136,6 +144,22 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   from selected master/slave nodes and listed in the model tree.
 - The full OpenSees element/constraint inventory and the planned implementation
   sequence are in [docs/OPENSEES_TYPES.md](docs/OPENSEES_TYPES.md).
+
+**Template gallery**
+
+The Structure tab generates complete models from parameters. These screenshots were
+made with the built-in templates:
+
+| 2D Frame | 3D Frame |
+| --- | --- |
+| ![2D frame template](docs/template_frame2d.png) | ![3D frame template](docs/template_frame3d.png) |
+| **2D Truss** | **3D Truss** |
+| ![2D truss template](docs/template_truss2d.png) | ![3D truss template](docs/template_truss3d.png) |
+
+![Girder bridge template](docs/template_bridge.png)
+
+*Girder bridge template with three spans, five longitudinal girders and cross beams.*
+
 - Material library: Elastic, ElasticPP, Steel02, Concrete02.
 - Section library with a standard steel database and custom shapes. The database
   contains AISC (USA) and CISC (Canada) W, HP, M, S, rectangular/square hollow,
