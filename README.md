@@ -83,7 +83,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   OpenSees wiki and documentation.
 - **Clean View** hides deformation, loads and labels for a plain structural view.
   It is on the vertical sidebar on the right.
-- **Extruded** mode draws beams and columns with their real section sizes.
+- **Extruded** mode draws beams and columns with their real section sizes. The View
+  tab also has separate visibility switches for links/constraints, supports, labels
+  and nodes.
 
 ![extruded section view](docs/extruded.png)
 
@@ -117,8 +119,10 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
   the original. The plane is previewed in the viewport while the dialog is open.
 - Supports: fixed, pinned, roller Z, or any combination of 6 DOF. The model tree
-  lists each restrained node with its six-digit 1/0 restraint code; the supports
-  table separates restrained and collapsible unrestrained node groups.
+  groups identical restraint patterns and shows their count, for example
+  `1,1,1,1,1,1 (6)`; double-click a group to select its nodes. The supports table
+  separates restrained and collapsible unrestrained groups, and restraint cells are
+  restricted to **0** or **1**.
 - The model tree supports Ctrl multi-selection; double-click or use the right-click
   menu to act on every selected material, section, support group or load case.
 - **Point springs** (`zeroLength`): linear Elastic stiffness, multi-linear
@@ -170,6 +174,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 **Analysis and results**
 - Static analysis (`LoadControl`, `BandGen`, RCM, Linear).
 - Modal analysis (eigenvalues, periods, frequencies, animated mode shapes).
+  **Modal Settings** in the Analysis tab sets the number of modes and the OpenSees
+  eigen solver; the modal run button is in the Dynamic tab.
 - **Dynamic** ribbon tab: manage a project **ground-motion catalog** (import,
   edit, remove, preview), define a catalog-backed or file-backed time-history
   case (sine or PEER AT2 / two-column / single-column), optional gravity preload,
@@ -445,7 +451,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.11-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.12-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

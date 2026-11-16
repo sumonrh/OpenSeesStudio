@@ -150,6 +150,7 @@ class Viewport(QWidget):
         self.show_nodes = True
         self.show_elements = True
         self.show_supports = True
+        self.show_constraints = True
         self.show_loads = True
         self.show_node_labels = False
         self.show_element_labels = False
@@ -598,6 +599,7 @@ class Viewport(QWidget):
                     continue
                 self._draw_support(p, s[0], s[1], all(n.support))
             self._draw_springs(p, w, h, proj)
+        if self.show_constraints:
             self._draw_constraints(p, w, h, proj)
 
         # ---- nodes -----------------------------------------------------

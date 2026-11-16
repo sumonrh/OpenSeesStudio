@@ -698,6 +698,7 @@ DEFAULT_SETTINGS = {
     "static_steps": 1.0,
     "modal_modes": 6,
     "mass_from_density": True,
+    "eigen_solver": "fullGenLapack",
     "last_case": "DL",
     "last_combo": "",
     "deformed_scale": None,   # None = auto

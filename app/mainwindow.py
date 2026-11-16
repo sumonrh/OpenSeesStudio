@@ -313,6 +313,9 @@ class MainWindow(QMainWindow):
         self.a_combo = self._act("Combinations", "combo", self.combinations, "K")
 
         self.a_settings = self._act("Settings", "settings", self.analysis_settings, "")
+        self.a_modal_settings = self._act(
+            "Modal Settings", "modal", self.modal_settings, "",
+            "Set the number of modes, eigen solver and mass option")
         self.a_check = self._act("Check Model", "check", self.check_model, "F9",
                                  "Validate the model before analysis")
         self.a_run = self._act("Run Analysis", "run", self.run_analysis_control, "F5",
@@ -417,6 +420,12 @@ class MainWindow(QMainWindow):
                                             "Draw support symbols in the viewport",
                                             checkable=True)
         self.a_supports_visible.setChecked(True)
+        self.a_constraints_visible = self._act(
+            "Links", "rigid_link",
+            lambda on: self._toggle(constraints=on), "",
+            "Show or hide rigid links, equalDOF and diaphragm constraints",
+            checkable=True)
+        self.a_constraints_visible.setChecked(True)
         self.a_lock = self._act("Lock", "unlock", self._toggle_lock, "Ctrl+L",
                                 "Lock model editing to protect analysis results",
                                 checkable=True)
@@ -459,12 +468,13 @@ class MainWindow(QMainWindow):
                              self.a_tables_element_loads, self.a_tables_combos,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
-                             self.a_settings, self.a_ground_motion,
+                             self.a_settings, self.a_modal_settings, self.a_ground_motion,
                              self.a_gm_catalog, self.a_spectrum_case,
                              self.a_import_tcl)
 
     def _toggle(self, node_labels=None, element_labels=None, grid=None, deformed=None,
-                loads=None, supports=None, extruded=None, nodes=None) -> None:
+                loads=None, supports=None, extruded=None, nodes=None,
+                constraints=None) -> None:
         kw = {}
         if node_labels is not None:
             kw["show_node_labels"] = node_labels
@@ -478,6 +488,8 @@ class MainWindow(QMainWindow):
             kw["show_loads"] = loads
         if supports is not None:
             kw["show_supports"] = supports
+        if constraints is not None:
+            kw["show_constraints"] = constraints
         if extruded is not None:
             kw["show_extruded"] = extruded
         if nodes is not None:
@@ -615,12 +627,13 @@ class MainWindow(QMainWindow):
         page = ribbon.add_tab("View")
         group = page.add_group("Navigate")
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front,
-                       self.a_right, self.a_orbit):
+                       self.a_right, self.a_orbit, self.a_fit_sel):
             group.add_large(action)
         group = page.add_group("Display")
-        group.add_column((self.a_nodes_visible, self.a_node_labels))
-        group.add_column((self.a_element_labels, self.a_grid))
-        group.add_column((self.a_supports_visible,))
+        group.add_column((self.a_nodes_visible, self.a_node_labels,
+                          self.a_element_labels))
+        group.add_column((self.a_grid, self.a_supports_visible,
+                          self.a_constraints_visible))
         group = page.add_group("Visibility")
         group.add_large(self.a_activate)
         group.add_large(self.a_deactivate)
@@ -630,8 +643,8 @@ class MainWindow(QMainWindow):
         group = page.add_group("View mode")
         group.add_large(self.a_extruded)
         group = page.add_group("Panels")
-        group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible,
-                          self.a_toolbars))
+        group.add_column((self.a_model_visible, self.a_props_visible))
+        group.add_column((self.a_log_visible, self.a_toolbars))
 
         page = ribbon.add_tab("Structure")
         group = page.add_group("Frame wizards")
@@ -646,19 +659,22 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_bearing)
         group.add_large(self.a_isolator)
         group.add_large(self.a_damper)
+        group = page.add_group("Example")
+        group.add_large(self.a_example)
 
         page = ribbon.add_tab("Node/Element")
         group = page.add_group("Nodes")
         group.add_large(self.a_nodes)
+        group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Elements")
         group.add_large(self.a_elements)
         group.add_large(self.a_draw_element)
         group.add_large(self.a_subdivide)
-        group.add_column((self.a_delete, self.a_fit_sel))
         group = page.add_group("Modify")
         group.add_large(self.a_copy)
         group.add_large(self.a_mirror)
+        group.add_large(self.a_delete)
         group = page.add_group("Model data")
         group.add_large(self.a_tables_nodes)
         group.add_large(self.a_tables_elements)
@@ -679,8 +695,6 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_rigid_link)
         group.add_large(self.a_equal_dof)
         group.add_large(self.a_diaphragm)
-        group = page.add_group("Selection")
-        group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Model data")
         group.add_large(self.a_tables_supports)
 
@@ -702,9 +716,9 @@ class MainWindow(QMainWindow):
         page = ribbon.add_tab("Analysis")
         group = page.add_group("Analysis")
         group.add_large(self.a_settings)
+        group.add_large(self.a_modal_settings)
         group.add_large(self.a_check)
         group.add_large(self.a_run)
-        group.add_large(self.a_modal)
         group = page.add_group("Results")
         group.add_large(self.a_results)
         group = page.add_group("Model state")
@@ -721,6 +735,8 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_spectrum_case)
         group.add_large(self.a_spectrum)
         group.add_large(self.a_spectrum_results)
+        group = page.add_group("Modal analysis")
+        group.add_large(self.a_modal)
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -758,8 +774,6 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_import_tcl)
         group = page.add_group("Scripting")
         group.add_large(self.a_console)
-        group = page.add_group("Example")
-        group.add_large(self.a_example)
 
         page = ribbon.add_tab("Help")
         group = page.add_group("OpenSees Studio")
@@ -802,7 +816,7 @@ class MainWindow(QMainWindow):
         self._toolbar_catalog = catalog
 
         self._toolbar_defaults = {
-            "quick": ["a_save", "separator", "a_run", "a_modal", "a_results",
+            "quick": ["a_save", "separator", "a_run", "a_results",
                       "a_check", "separator", "a_lock", "a_nodes_visible",
                       "separator", "a_activate", "a_deactivate",
                       "a_activate_all", "separator", "a_undo", "a_redo"],
@@ -1531,9 +1545,16 @@ class MainWindow(QMainWindow):
         b = group("Boundary", "boundary")
         g_sup = group("Supports", "supports",
                       sum(1 for n in p.nodes.values() if any(n.support)), b)
+        support_groups: Dict[str, List[int]] = {}
         for n in p.nodes.values():
             if any(n.support):
-                add_child(g_sup, f"{n.tag}   {n.support_code()}", "node", n.tag)
+                support_groups.setdefault(n.support_code(), []).append(n.tag)
+        for code, tags in sorted(support_groups.items()):
+            pattern = ",".join(code)
+            item = add_child(g_sup, f"{pattern} ({len(tags)})",
+                             "support_group", tuple(sorted(tags)))
+            item.setToolTip(0, f"{len(tags)} node(s): {sorted(tags)}\n"
+                               "Double-click to select them in the model.")
         g_spring = group("Point Springs", "springs", len(p.springs), b)
         for s in sorted(p.springs.values(), key=lambda item: item.tag):
             label = SPRING_DOFS[s.dof - 1] if 1 <= s.dof <= 6 else "?"
@@ -3265,12 +3286,24 @@ class MainWindow(QMainWindow):
         dlg = dialogs.AnalysisDialog(self.project, self)
         if not dlg.exec():
             return
+        self._save_analysis_settings(dlg)
+
+    def modal_settings(self) -> None:
+        dlg = dialogs.AnalysisDialog(self.project, self)
+        dlg.show_tab("modal")
+        if not dlg.exec():
+            return
+        self._save_analysis_settings(dlg)
+
+    def _save_analysis_settings(self, dlg) -> None:
         values = dlg.values()
         modal_changed = (
             int(values.get("modal_modes", 6))
             != int(self.project.settings.get("modal_modes", 6))
             or bool(values.get("mass_from_density", True))
-            != bool(self.project.settings.get("mass_from_density", True)))
+            != bool(self.project.settings.get("mass_from_density", True))
+            or str(values.get("eigen_solver", "fullGenLapack"))
+            != str(self.project.settings.get("eigen_solver", "fullGenLapack")))
         self.project.settings.update(values)
         if modal_changed:
             self.project.settings["modal_configured"] = True

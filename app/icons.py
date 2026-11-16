@@ -426,23 +426,27 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.drawText(QPointF(7.6, 15.5), "A")
 
     elif name == "node_label":
-        _pen(p, INK, 1.3)
+        p.setPen(QPen(QColor(INK), 1.6))
+        p.setBrush(QBrush(QColor(accent)))
         path = QPainterPath()
         path.moveTo(3, 6); path.lineTo(14, 6); path.lineTo(21, 12)
         path.lineTo(14, 18); path.lineTo(3, 18); path.closeSubpath()
-        _fill(p, "#ffffff")
         p.drawPath(path)
+        p.setBrush(Qt.NoBrush)
         p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.setPen(QPen(QColor("#ffffff"), 1.0))
         p.drawText(QPointF(7.4, 15.5), "N")
 
     elif name == "element_label":
-        _pen(p, INK, 1.3)
+        p.setPen(QPen(QColor(INK), 1.6))
+        p.setBrush(QBrush(QColor(accent)))
         path = QPainterPath()
         path.moveTo(3, 6); path.lineTo(14, 6); path.lineTo(21, 12)
         path.lineTo(14, 18); path.lineTo(3, 18); path.closeSubpath()
-        _fill(p, "#ffffff")
         p.drawPath(path)
+        p.setBrush(Qt.NoBrush)
         p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.setPen(QPen(QColor("#ffffff"), 1.0))
         p.drawText(QPointF(7.4, 15.5), "E")
 
     elif name == "frame2d":

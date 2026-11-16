@@ -8,9 +8,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog,
                                QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-                               QPushButton, QTableWidget, QTableWidgetItem,
-                               QTabWidget, QTreeWidget, QTreeWidgetItem,
-                               QVBoxLayout, QWidget)
+                               QPushButton, QStyledItemDelegate, QTableWidget,
+                               QTableWidgetItem, QTabWidget, QTreeWidget,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import theme
 from .model import (ELEMENT_KINDS, Element, ElementLoad, LoadCase, LoadCombination,
@@ -184,6 +184,25 @@ class TablePage(QWidget):
 
 
 # --------------------------------------------------------------------------- #
+class SupportValueDelegate(QStyledItemDelegate):
+    """Restrict support table cells to the values 0 and 1."""
+
+    def createEditor(self, parent, option, index):
+        if index.column() == 0:
+            return None
+        editor = QComboBox(parent)
+        editor.addItems(["0", "1"])
+        return editor
+
+    def setEditorData(self, editor, index):
+        value = str(index.data(Qt.DisplayRole) or "0").strip()
+        editor.setCurrentText("1" if value == "1" else "0")
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText(), Qt.EditRole)
+
+
+# --------------------------------------------------------------------------- #
 class SupportTablePage(QWidget):
     """Supports table grouped by restrained and unrestrained nodes.
 
@@ -212,6 +231,9 @@ class SupportTablePage(QWidget):
         self.tree.setColumnWidth(0, 190)
         for column in range(1, len(self.HEADERS)):
             self.tree.setColumnWidth(column, 58)
+        self.support_delegate = SupportValueDelegate(self.tree)
+        for column in range(1, len(self.HEADERS)):
+            self.tree.setItemDelegateForColumn(column, self.support_delegate)
         lay.addWidget(self.tree)
 
         ordered = sorted(nodes, key=lambda n: n.tag)
@@ -471,8 +493,16 @@ class TablesDialog(QDialog):
                 errors.append(f"Supports: node {t} does not exist")
                 continue
             flags = []
-            for text in row[1:7]:
-                flags.append(text.strip().lower() in ("1", "y", "yes", "true"))
+            invalid = []
+            for index, text in enumerate(row[1:7], start=1):
+                value = text.strip()
+                if value not in ("0", "1"):
+                    invalid.append(f"{index}={value!r}")
+                flags.append(value == "1")
+            if invalid:
+                errors.append(f"Supports: node {t} values must be 0 or 1 "
+                              f"({' '.join(invalid)})")
+                continue
             nodes[t].support = flags
 
         # ---- materials -------------------------------------------------

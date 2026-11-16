@@ -1281,11 +1281,20 @@ def run_modal(project: Project, nmodes: int = 6) -> ModalResults:
     free = 6 * len(project.nodes) - sum(
         sum(1 for b in n.support if b) for n in project.nodes.values())
     n = max(1, min(int(nmodes), max(1, free - 1)))
-    log.append(f"Requested {nmodes} modes, solving {n} (free DOF: {free}).")
+    solver = str(project.settings.get("eigen_solver", "fullGenLapack"))
+    solver_flag = {"genBandArpack": "-genBandArpack",
+                   "symmBandLapack": "-symmBandLapack",
+                   "fullGenLapack": "-fullGenLapack"}.get(solver)
+    log.append(f"Requested {nmodes} modes, solving {n} (free DOF: {free}, "
+               f"solver: {solver}).")
     try:
-        eig = ops.eigen("-fullGenLapack", n)
+        eig = ops.eigen(solver_flag, n) if solver_flag else ops.eigen(n)
+        if not eig and solver_flag != "fullGenLapack":
+            log.append(f"Eigen solver {solver} returned no modes; using fullGenLapack.")
+            eig = ops.eigen("-fullGenLapack", n)
     except Exception:
-        eig = ops.eigen(n)
+        log.append(f"Eigen solver {solver} failed; using fullGenLapack.")
+        eig = ops.eigen("-fullGenLapack", n)
 
     res = ModalResults(log="\n".join(log))
     if not eig:

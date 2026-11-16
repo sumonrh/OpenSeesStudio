@@ -22,7 +22,7 @@ from app.device_dialogs import DeviceDialog  # noqa: E402
 from app.mainwindow import MainWindow  # noqa: E402
 from app.model import (Project, Section, HingeDefinition, Element, Node,  # noqa: E402
                        default_project)
-from app.tables import TablesDialog  # noqa: E402
+from app.tables import SupportValueDelegate, TablesDialog  # noqa: E402
 from app.toolbar_dialog import ToolbarCustomizeDialog  # noqa: E402
 from app.units import UNITS  # noqa: E402
 from app.version import APP_VERSION  # noqa: E402
@@ -265,6 +265,8 @@ check("ribbon tables open the relevant tab",
       table_tabs == [2, 4, 1, 7], f"({table_tabs})")
 win.ribbon.set_current("Structure")
 check("quick access toolbar", win.a_run in win.quick_toolbar.actions())
+check("modal removed from horizontal toolbar",
+      win.a_modal not in win.quick_toolbar.actions())
 check("quick view toolbar", win.a_fit in win.quick_view_toolbar.actions()
       and win.a_orbit in win.quick_view_toolbar.actions())
 check("quick toolbars are movable and customizable",
@@ -295,17 +297,26 @@ view_groups = {g.findChild(QLabel, "ribbonCaption").text(): g
 check("orbit moved under Navigate",
       any(b.defaultAction() is win.a_orbit
           for b in view_groups["Navigate"].findChildren(QToolButton)))
-check("display group has three columns",
-      view_groups["Display"].row.count() == 3)
-check("display group is wide enough",
-      view_groups["Display"].sizeHint().width() > 300,
+check("display group has two columns of three buttons",
+      view_groups["Display"].row.count() == 2
+      and len(view_groups["Display"].findChildren(QToolButton)) == 6)
+check("display group is compact",
+      view_groups["Display"].sizeHint().width() > 90,
       f"({view_groups['Display'].sizeHint().width()} px)")
 view_actions = [b.defaultAction() for b in view_page.findChildren(QToolButton)]
+check("fit selection moved to View tab", win.a_fit_sel in view_actions)
+check("link visibility is in Display", win.a_constraints_visible in view_actions)
 boundary_page = win.ribbon._pages[4]
 boundary_actions = [b.defaultAction() for b in boundary_page.findChildren(QToolButton)]
 check("show supports moved to View tab",
       win.a_supports_visible in view_actions
       and win.a_supports_visible not in boundary_actions)
+link_before = win.viewport.show_constraints
+win.a_constraints_visible.trigger()
+check("link visibility toggles", win.viewport.show_constraints != link_before)
+win.a_constraints_visible.trigger()
+check("selection moved out of Boundary",
+      win.a_sel_all not in boundary_actions and win.a_deselect not in boundary_actions)
 help_page = win.ribbon._pages[11]
 help_actions = [b.defaultAction() for b in help_page.findChildren(QToolButton)]
 check("help tab has quick start, FAQ, about and OpenSees help",
@@ -320,6 +331,18 @@ check("structure tab has five wizards",
       all(a in structure_actions for a in
           (win.a_wiz_frame2d, win.a_wiz_frame3d, win.a_wiz_truss2d,
            win.a_wiz_truss3d, win.a_wiz_bridge)))
+check("example frame moved to Structure tab", win.a_example in structure_actions)
+check("example frame removed from Tools",
+      win.a_example not in [b.defaultAction()
+                            for b in win.ribbon._pages[10].findChildren(QToolButton)])
+check("node/element tab has selection group",
+      win.a_sel_all in [b.defaultAction()
+                        for b in win.ribbon._pages[2].findChildren(QToolButton)]
+      and win.a_deselect in [b.defaultAction()
+                             for b in win.ribbon._pages[2].findChildren(QToolButton)])
+check("delete moved to Modify group",
+      win.a_delete in [b.defaultAction()
+                       for b in win.ribbon._pages[2].findChildren(QToolButton)])
 check("structure tab has no duplicated node/element commands",
       all(a not in structure_actions for a in
           (win.a_nodes, win.a_elements, win.a_draw_element, win.a_copy,
@@ -360,6 +383,21 @@ check("dynamic tab has ground motion, time-history and spectrum actions",
       win.a_gm_catalog in dynamic_actions
       and win.a_time_history in dynamic_actions
       and win.a_spectrum in dynamic_actions)
+check("modal run moved to Dynamic tab", win.a_modal in dynamic_actions)
+analysis_actions = [b.defaultAction()
+                    for b in win.ribbon._pages[6].findChildren(QToolButton)]
+check("analysis tab has modal settings instead of run",
+      win.a_modal_settings in analysis_actions
+      and win.a_modal not in analysis_actions)
+from app.dialogs import AnalysisDialog
+ad = AnalysisDialog(win.project)
+ad.show_tab("modal")
+check("modal settings tab has modes and solver",
+      ad.tabs.currentIndex() == 1 and ad.modes.value() >= 1
+      and ad.solver.count() >= 3
+      and ad.values().get("eigen_solver") in
+      ("genBandArpack", "symmBandLapack", "fullGenLapack"))
+ad.close()
 check("properties panel action", not win.a_props_visible.isChecked())
 check("properties panel hidden by default", win.props_dock.isHidden())
 win.a_props_visible.trigger()
@@ -443,13 +481,25 @@ check("tree lists sections",
 boundary_item = tree_items["Boundary"]
 sup_item = next(boundary_item.child(i) for i in range(boundary_item.childCount())
                 if boundary_item.child(i).text(0).startswith("Supports"))
-restrained = [n for n in win.project.nodes.values() if any(n.support)]
-check("support tree lists individual restraints",
-      sup_item.childCount() == len(restrained),
-      f"({sup_item.childCount()} rows, {len(restrained)} restrained)")
-check("support tree uses 1/0 restraint codes",
-      all(n.support_code() in sup_item.child(i).text(0)
-          for i, n in enumerate(restrained)))
+support_groups = {}
+for n in win.project.nodes.values():
+    if any(n.support):
+        support_groups.setdefault(n.support_code(), []).append(n.tag)
+check("support tree groups identical restraint patterns",
+      sup_item.childCount() == len(support_groups),
+      f"({sup_item.childCount()} rows, {len(support_groups)} patterns)")
+check("support tree shows comma-separated codes and counts",
+      all(",".join(code) in sup_item.child(i).text(0)
+          and f"({len(tags)})" in sup_item.child(i).text(0)
+          for i, (code, tags) in enumerate(sorted(support_groups.items()))))
+first_group = sup_item.child(0)
+group_tags = set(first_group.data(0, Qt.UserRole)[1])
+win.tree.clearSelection()
+win.tree.setCurrentItem(first_group)
+win._tree_double(first_group, 0)
+check("double-click support group selects its nodes",
+      win.viewport.sel_nodes == group_tags,
+      f"({len(win.viewport.sel_nodes)} selected)")
 check("boundary presets removed from the tree",
       all(not boundary_item.child(i).text(0).startswith("Presets")
           for i in range(boundary_item.childCount())))
@@ -659,6 +709,18 @@ check("unrestrained support group starts collapsed",
       not support_page.unrestrained_group.isExpanded())
 check("supports table keeps all rows editable",
       len(support_page.rows()) == len(win.project.nodes))
+check("support values use a 0/1 editor",
+      all(isinstance(support_page.tree.itemDelegateForColumn(column),
+                     SupportValueDelegate)
+          for column in range(1, 7)))
+support_child = support_page.restrained_group.child(0)
+support_child.setText(1, "2")
+try:
+    dlg._collect()
+    check("supports table rejects non 0/1 values", False)
+except ValueError:
+    check("supports table rejects non 0/1 values", True)
+support_child.setText(1, "1")
 dlg.page_nodes.table.setRangeSelected(QTableWidgetSelectionRange(0, 0, 0, 3), True)
 dlg.page_nodes.table.copy_selection()
 check("table copies tab-separated text", "\t" in QApplication.clipboard().text())

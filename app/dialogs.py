@@ -1732,25 +1732,51 @@ class PushoverDialog(BaseDialog):
 
 class AnalysisDialog(BaseDialog):
     def __init__(self, project: Project, parent=None) -> None:
-        super().__init__("Analysis Settings", parent, 430)
-        form = QFormLayout()
-        self.steps = spin(float(project.settings.get("static_steps", 1.0)), 1e-6, 1e6, 6, 0.1)
+        super().__init__("Analysis Settings", parent, 460)
+        self.tabs = QTabWidget()
+
+        static_page = QWidget()
+        static_form = QFormLayout(static_page)
+        self.steps = spin(float(project.settings.get("static_steps", 1.0)),
+                          1e-6, 1e6, 6, 0.1)
+        static_form.addRow("Static load steps", self.steps)
+        static_form.addRow("", QLabel(
+            "Applied as LoadControl steps in the static analysis."))
+        self.tabs.addTab(static_page, "Static")
+
+        modal_page = QWidget()
+        modal_form = QFormLayout(modal_page)
         self.modes = int_spin(int(project.settings.get("modal_modes", 6)), 1, 200)
+        self.solver = QComboBox()
+        for label, key in (("GenBandArpack (sparse)", "genBandArpack"),
+                           ("SymmBandLapack (symmetric band)", "symmBandLapack"),
+                           ("FullGenLapack (dense)", "fullGenLapack")):
+            self.solver.addItem(label, key)
+        index = self.solver.findData(
+            project.settings.get("eigen_solver", "fullGenLapack"))
+        self.solver.setCurrentIndex(index if index >= 0 else 2)
         self.mass = QCheckBox("Build lumped masses from material densities")
         self.mass.setChecked(bool(project.settings.get("mass_from_density", True)))
-        form.addRow("Static load steps", self.steps)
-        form.addRow("Number of modes", self.modes)
-        form.addRow("", self.mass)
-        self.body.addLayout(form)
-        self.body.addWidget(hint("Static analysis uses LoadControl with the load step above. "
-                                 "Modal analysis needs non-zero mass; the eigen solver switches "
-                                 "to LAPACK for small models."))
+        modal_form.addRow("Number of modes", self.modes)
+        modal_form.addRow("Eigen solver", self.solver)
+        modal_form.addRow("", self.mass)
+        self.tabs.addTab(modal_page, "Modal")
+        self.body.addWidget(self.tabs)
+        self.body.addWidget(hint(
+            "Static analysis uses LoadControl with the load step. Modal analysis "
+            "needs non-zero mass; if the selected eigen solver fails, the full "
+            "LAPACK solver is used as a fallback."))
         self.buttons("Save")
+
+    def show_tab(self, name: str) -> None:
+        index = 1 if name.lower() == "modal" else 0
+        self.tabs.setCurrentIndex(index)
 
     def values(self) -> dict:
         return {"static_steps": self.steps.value(),
                 "modal_modes": self.modes.value(),
-                "mass_from_density": self.mass.isChecked()}
+                "mass_from_density": self.mass.isChecked(),
+                "eigen_solver": str(self.solver.currentData())}
 
 
 class TimeHistoryDialog(BaseDialog):
