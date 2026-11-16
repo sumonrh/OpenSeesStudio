@@ -6,9 +6,9 @@ import json
 import os
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import (QAction, QBrush, QColor, QDesktopServices, QFont,
-                           QKeySequence)
+from PySide6.QtCore import QMimeData, QSettings, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import (QAction, QBrush, QColor, QCursor, QDesktopServices,
+                           QFont, QKeySequence)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -37,6 +37,7 @@ from .resultsview import ResultsPanel
 from .response_spectrum import ResponseSpectrumDialog, ResponseSpectrumResultsDialog
 from .tables import TablesDialog
 from .timehistory import TimeHistoryResultsDialog
+from .toolbar_dialog import ToolbarCustomizeDialog
 from .units import FORCE_UNITS, LENGTH_UNITS, UNITS
 from .updates import UpdateChecker
 from .version import APP_VERSION
@@ -49,20 +50,6 @@ SUPPORT_PRESETS = {
     "pinned": [True, True, True, False, False, False],
     "roller_z": [True, True, False, False, False, False],
 }
-SUPPORT_DOF_LABELS = ("DX", "DY", "DZ", "RX", "RY", "RZ")
-
-
-def support_group_label(code: str) -> str:
-    """Friendly name for a support restraint pattern."""
-    presets = {
-        "111111": "Fixed",
-        "111000": "Pinned",
-        "110000": "Roller Z",
-    }
-    if code in presets:
-        return presets[code]
-    names = [name for name, flag in zip(SUPPORT_DOF_LABELS, code) if flag == "1"]
-    return " + ".join(names) if names else "Unrestrained"
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +148,7 @@ class MainWindow(QMainWindow):
         self.viewport.selectionChanged.connect(self._on_selection)
         self.viewport.statusMessage.connect(self._status)
         self.viewport.modelItemDropped.connect(self._apply_tree_drop)
+        self.viewport.contextMenuRequested.connect(self._viewport_context_menu)
 
         self._make_actions()
         self._make_ribbon()
@@ -289,7 +277,34 @@ class MainWindow(QMainWindow):
             "Create a viscous or bilinear oil damper between two nodes")
         self.a_material = self._act("Materials", "material", self.materials, "")
         self.a_section = self._act("Sections", "section", self.sections, "")
-        self.a_tables = self._act("Tables", "tables", lambda: self.open_tables(0), "T")
+        self.a_tables = self._act("Tables", "tables", self.open_tables_for_current_tab, "T")
+        self.a_tables_nodes = self._act(
+            "Node Table", "tables", lambda: self.open_tables(0), "",
+            "Open the node table")
+        self.a_tables_supports = self._act(
+            "Support Table", "tables", lambda: self.open_tables(1), "",
+            "Open the supports table")
+        self.a_tables_elements = self._act(
+            "Element Table", "tables", lambda: self.open_tables(2), "",
+            "Open the element table")
+        self.a_tables_materials = self._act(
+            "Material Table", "tables", lambda: self.open_tables(3), "",
+            "Open the material table")
+        self.a_tables_sections = self._act(
+            "Section Table", "tables", lambda: self.open_tables(4), "",
+            "Open the section table")
+        self.a_tables_cases = self._act(
+            "Load Case Table", "tables", lambda: self.open_tables(5), "",
+            "Open the load-case table")
+        self.a_tables_nodal = self._act(
+            "Nodal Load Table", "tables", lambda: self.open_tables(6), "",
+            "Open the nodal-load table")
+        self.a_tables_element_loads = self._act(
+            "Element Load Table", "tables", lambda: self.open_tables(7), "",
+            "Open the element-load table")
+        self.a_tables_combos = self._act(
+            "Combination Table", "tables", lambda: self.open_tables(8), "",
+            "Open the load-combination table")
 
         self.a_cases = self._act("Load Cases", "case", self.load_cases, "")
         self.a_nload = self._act("Nodal Loads", "nodal_load", self.nodal_loads, "L")
@@ -417,6 +432,9 @@ class MainWindow(QMainWindow):
                                        lambda on: self.log_dock.setVisible(on), "",
                                        "Show or hide the messages panel", checkable=True)
         self.a_log_visible.setChecked(True)
+        self.a_toolbars = self._act(
+            "Toolbars", "settings", self._toolbar_choice_menu, "",
+            "Choose and arrange the buttons on the quick toolbars")
         self.a_quick = self._act("Quick Start", "help", self.quick_start, "F1")
         self.a_faq = self._act("FAQ", "help", self.show_faq, "",
                                "Frequently asked questions and OpenSees help")
@@ -434,7 +452,11 @@ class MainWindow(QMainWindow):
                              self.a_diaphragm, self.a_bearing, self.a_isolator,
                              self.a_damper,
                              self.a_section, self.a_hinge_defs, self.a_hinge_assign,
-                             self.a_tables,
+                             self.a_tables, self.a_tables_nodes,
+                             self.a_tables_supports, self.a_tables_elements,
+                             self.a_tables_materials, self.a_tables_sections,
+                             self.a_tables_cases, self.a_tables_nodal,
+                             self.a_tables_element_loads, self.a_tables_combos,
                              self.a_cases, self.a_nload, self.a_eload, self.a_sw,
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings, self.a_ground_motion,
@@ -608,7 +630,8 @@ class MainWindow(QMainWindow):
         group = page.add_group("View mode")
         group.add_large(self.a_extruded)
         group = page.add_group("Panels")
-        group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible))
+        group.add_column((self.a_model_visible, self.a_props_visible, self.a_log_visible,
+                          self.a_toolbars))
 
         page = ribbon.add_tab("Structure")
         group = page.add_group("Frame wizards")
@@ -637,14 +660,16 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_copy)
         group.add_large(self.a_mirror)
         group = page.add_group("Model data")
-        group.add_large(self.a_tables)
+        group.add_large(self.a_tables_nodes)
+        group.add_large(self.a_tables_elements)
 
         page = ribbon.add_tab("Properties")
         group = page.add_group("Libraries")
         group.add_large(self.a_material)
         group.add_large(self.a_section)
         group = page.add_group("Model data")
-        group.add_large(self.a_tables)
+        group.add_large(self.a_tables_materials)
+        group.add_large(self.a_tables_sections)
 
         page = ribbon.add_tab("Boundary")
         group = page.add_group("Supports and springs")
@@ -657,7 +682,7 @@ class MainWindow(QMainWindow):
         group = page.add_group("Selection")
         group.add_column((self.a_sel_all, self.a_deselect))
         group = page.add_group("Model data")
-        group.add_large(self.a_tables)
+        group.add_large(self.a_tables_supports)
 
         page = ribbon.add_tab("Load")
         group = page.add_group("Load cases")
@@ -670,7 +695,9 @@ class MainWindow(QMainWindow):
         group = page.add_group("Display")
         group.add_column((self.a_loads_visible,))
         group = page.add_group("Model data")
-        group.add_large(self.a_tables)
+        group.add_large(self.a_tables_cases)
+        group.add_column((self.a_tables_nodal, self.a_tables_element_loads,
+                          self.a_tables_combos))
 
         page = ribbon.add_tab("Analysis")
         group = page.add_group("Analysis")
@@ -762,43 +789,152 @@ class MainWindow(QMainWindow):
         ribbon.set_current("Structure")
 
     def _make_quick_toolbars(self) -> None:
-        """Tiny horizontal command strip and vertical view strip."""
+        """Create the customizable horizontal and vertical quick toolbars."""
+        self._toolbar_registry: Dict[str, QAction] = {}
+        catalog = []
+        for name in sorted(n for n in dir(self) if n.startswith("a_")):
+            action = getattr(self, name)
+            if isinstance(action, QAction) and action.text():
+                self._toolbar_registry[name] = action
+                catalog.append((name, action.text()))
+        catalog.sort(key=lambda pair: pair[1].lower())
+        catalog.append(("separator", "Separator"))
+        self._toolbar_catalog = catalog
+
+        self._toolbar_defaults = {
+            "quick": ["a_save", "separator", "a_run", "a_modal", "a_results",
+                      "a_check", "separator", "a_lock", "a_nodes_visible",
+                      "separator", "a_activate", "a_deactivate",
+                      "a_activate_all", "separator", "a_undo", "a_redo"],
+            "views": ["a_fit", "a_iso", "a_top", "a_front", "a_right",
+                      "separator", "a_orbit", "a_node_labels",
+                      "a_element_labels", "a_grid", "a_deformed",
+                      "a_extruded", "a_clean_view", "separator", "a_fit_sel"],
+        }
+        self._toolbar_settings = QSettings("OpenSees Studio", "OpenSees Studio")
+        self._toolbar_state = {
+            name: self._load_toolbar_keys(name, defaults)
+            for name, defaults in self._toolbar_defaults.items()
+        }
+
         quick = QToolBar("Quick access", self)
         quick.setObjectName("quick_toolbar")
-        quick.setMovable(False)
-        quick.setFloatable(False)
-        quick.setContextMenuPolicy(Qt.PreventContextMenu)
+        quick.setMovable(True)
+        quick.setFloatable(True)
+        quick.setContextMenuPolicy(Qt.CustomContextMenu)
+        quick.customContextMenuRequested.connect(
+            lambda pos: self._toolbar_context_menu(
+                "quick", quick.mapToGlobal(pos)))
         quick.setToolButtonStyle(Qt.ToolButtonIconOnly)
         quick.setIconSize(QSize(16, 16))
-        for action in (self.a_save, None, self.a_run, self.a_modal, self.a_results,
-                       self.a_check, None, self.a_lock, self.a_nodes_visible,
-                       None, self.a_activate, self.a_deactivate,
-                       self.a_activate_all, None, self.a_undo, self.a_redo):
-            if action is None:
-                quick.addSeparator()
-            else:
-                quick.addAction(action)
         self.addToolBar(Qt.TopToolBarArea, quick)
         self.quick_toolbar = quick
+        self._populate_toolbar(quick, self._toolbar_state["quick"])
 
         views = QToolBar("Quick views", self)
         views.setObjectName("quickview_toolbar")
-        views.setMovable(False)
-        views.setFloatable(False)
-        views.setContextMenuPolicy(Qt.PreventContextMenu)
+        views.setMovable(True)
+        views.setFloatable(True)
+        views.setContextMenuPolicy(Qt.CustomContextMenu)
+        views.customContextMenuRequested.connect(
+            lambda pos: self._toolbar_context_menu(
+                "views", views.mapToGlobal(pos)))
         views.setToolButtonStyle(Qt.ToolButtonIconOnly)
         views.setIconSize(QSize(18, 18))
-        for action in (self.a_fit, self.a_iso, self.a_top, self.a_front, self.a_right,
-                       None, self.a_orbit, self.a_node_labels, self.a_element_labels,
-                       self.a_grid, self.a_deformed,
-                       self.a_extruded, self.a_clean_view, None, self.a_fit_sel):
-            if action is None:
-                views.addSeparator()
-            else:
-                views.addAction(action)
         views.setFixedWidth(38)
         self.addToolBar(Qt.RightToolBarArea, views)
         self.quick_view_toolbar = views
+        self._populate_toolbar(views, self._toolbar_state["views"])
+
+    def _load_toolbar_keys(self, name: str, defaults: List[str]) -> List[str]:
+        import os
+        if os.environ.get("OPENSEES_STUDIO_IN_PROCESS") == "1":
+            return list(defaults)
+        stored = self._toolbar_settings.value(f"toolbar/{name}", [])
+        if isinstance(stored, str):
+            stored = [stored]
+        keys = [str(key) for key in (stored or [])
+                if key == "separator" or str(key) in self._toolbar_registry]
+        return keys or list(defaults)
+
+    def _populate_toolbar(self, toolbar: QToolBar, keys: List[str]) -> None:
+        toolbar.clear()
+        for key in keys:
+            if key == "separator":
+                toolbar.addSeparator()
+            elif key in self._toolbar_registry:
+                toolbar.addAction(self._toolbar_registry[key])
+
+    def _toolbar_context_menu(self, which: str, pos) -> None:
+        menu = QMenu(self)
+        customize = menu.addAction("Customize Toolbar...")
+        customize.triggered.connect(lambda: self._customize_toolbar(which))
+        reset = menu.addAction("Reset Toolbar")
+        reset.triggered.connect(lambda: self._reset_toolbar(which))
+        menu.addSeparator()
+        toolbar = (self.quick_toolbar if which == "quick"
+                   else self.quick_view_toolbar)
+        hide = menu.addAction("Hide Toolbar")
+        hide.triggered.connect(toolbar.hide)
+        menu.exec(pos)
+
+    def _toolbar_choice_menu(self) -> None:
+        menu = QMenu(self)
+        quick = menu.addAction("Quick Access")
+        quick.setCheckable(True)
+        quick.setChecked(not self.quick_toolbar.isHidden())
+        quick.triggered.connect(
+            lambda checked: self.quick_toolbar.setVisible(bool(checked)))
+        views = menu.addAction("Quick Views")
+        views.setCheckable(True)
+        views.setChecked(not self.quick_view_toolbar.isHidden())
+        views.triggered.connect(
+            lambda checked: self.quick_view_toolbar.setVisible(bool(checked)))
+        menu.addSeparator()
+        menu.addAction("Customize Quick Access...",
+                       lambda: self._customize_toolbar("quick"))
+        menu.addAction("Customize Quick Views...",
+                       lambda: self._customize_toolbar("views"))
+        menu.addSeparator()
+        menu.addAction("Reset Quick Access",
+                       lambda: self._reset_toolbar("quick"))
+        menu.addAction("Reset Quick Views",
+                       lambda: self._reset_toolbar("views"))
+        menu.exec(QCursor.pos())
+
+    def _customize_toolbar(self, which: str) -> None:
+        if which not in self._toolbar_defaults:
+            return
+        title = ("Customize Quick Access" if which == "quick"
+                 else "Customize Quick Views")
+        dialog = ToolbarCustomizeDialog(
+            title, self._toolbar_catalog, self._toolbar_state[which],
+            self._toolbar_defaults[which], self)
+        if not dialog.exec():
+            return
+        keys = dialog.selected_keys()
+        self._toolbar_state[which] = keys
+        self._populate_toolbar(
+            self.quick_toolbar if which == "quick" else self.quick_view_toolbar,
+            keys)
+        self._save_toolbar_keys(which)
+
+    def _reset_toolbar(self, which: str) -> None:
+        if which not in self._toolbar_defaults:
+            return
+        self._toolbar_state[which] = list(self._toolbar_defaults[which])
+        self._populate_toolbar(
+            self.quick_toolbar if which == "quick" else self.quick_view_toolbar,
+            self._toolbar_state[which])
+        self._save_toolbar_keys(which)
+
+    def _save_toolbar_keys(self, which: str) -> None:
+        import os
+        if os.environ.get("OPENSEES_STUDIO_IN_PROCESS") == "1":
+            return
+        self._toolbar_settings.setValue(
+            f"toolbar/{which}", self._toolbar_state[which])
+        self._toolbar_settings.sync()
 
     # ============================================================ results view
     def _toggle_beam_diagram(self, checked: bool) -> None:
@@ -964,6 +1100,10 @@ class MainWindow(QMainWindow):
         self._status(f"Beam diagrams: {scenario} · {', '.join(comps)}")
         self.viewport.update()
 
+    def _deformation_values_changed(self, checked: bool) -> None:
+        self.viewport.show_deformation_values = bool(checked)
+        self.viewport.update()
+
     def _apply_deformation(self) -> None:
         scenario = self.results_panel.deformation_scenario() or self.scenario_combo.currentText()
         res = self._ensure_static_results(scenario)
@@ -982,6 +1122,8 @@ class MainWindow(QMainWindow):
         self.scale_spin.setValue(scale)
         self.scale_spin.blockSignals(False)
         self.viewport.show_deformed = True
+        self.viewport.show_deformation_values = (
+            self.results_panel.deformation_show_values())
         self.a_deformed.blockSignals(True)
         self.a_deformed.setChecked(True)
         self.a_deformed.blockSignals(False)
@@ -1074,6 +1216,8 @@ class MainWindow(QMainWindow):
         self.results_panel = ResultsPanel(self)
         self.results_panel.diagramRequested.connect(self._apply_beam_diagram)
         self.results_panel.deformationRequested.connect(self._apply_deformation)
+        self.results_panel.deform_values.toggled.connect(
+            self._deformation_values_changed)
         dock4 = QDockWidget("Results View", self)
         dock4.setObjectName("results_dock")
         dock4.setWidget(self.results_panel)
@@ -1387,20 +1531,9 @@ class MainWindow(QMainWindow):
         b = group("Boundary", "boundary")
         g_sup = group("Supports", "supports",
                       sum(1 for n in p.nodes.values() if any(n.support)), b)
-        support_groups: Dict[str, List[int]] = {}
         for n in p.nodes.values():
             if any(n.support):
-                support_groups.setdefault(n.support_code(), []).append(n.tag)
-        for code, tags in sorted(support_groups.items(),
-                                 key=lambda item: support_group_label(item[0])):
-            item = add_child(g_sup, f"{support_group_label(code)} ({len(tags)})",
-                             "support_group", tuple(sorted(tags)))
-            item.setToolTip(0, "Double-click: select these nodes. "
-                               "Right-click: select, table or clear supports.")
-        g_preset = group("Presets", "support_presets", parent=b)
-        for label, key in (("Fixed", "fixed"), ("Pinned", "pinned"),
-                           ("Roller Z", "roller_z")):
-            add_child(g_preset, label, "support_preset", key)
+                add_child(g_sup, f"{n.tag}   {n.support_code()}", "node", n.tag)
         g_spring = group("Point Springs", "springs", len(p.springs), b)
         for s in sorted(p.springs.values(), key=lambda item: item.tag):
             label = SPRING_DOFS[s.dof - 1] if 1 <= s.dof <= 6 else "?"
@@ -1665,6 +1798,11 @@ class MainWindow(QMainWindow):
         keys = {key for key, _tag in data_items}
         kind, tag = data
         menu = QMenu(self)
+        if tag is None:
+            self._build_group_menu(menu, kind)
+            if menu.actions():
+                menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
         if keys == {"support_group"}:
             groups = [group for _key, group in data_items if group]
             tags = sorted({node for group in groups for node in group})
@@ -1772,6 +1910,44 @@ class MainWindow(QMainWindow):
                 removed += 1
         if removed:
             self._commit(f"Deleted {removed} model item(s)")
+
+    def _build_group_menu(self, menu: QMenu, kind: str) -> None:
+        def add(text: str, slot) -> None:
+            action = menu.addAction(text)
+            action.triggered.connect(slot)
+
+        if kind == "nodes":
+            add("Open node table", lambda: self.open_tables(0))
+        elif kind == "elements":
+            add("Open element table", lambda: self.open_tables(2))
+        elif kind == "materials":
+            add("Add new material...", lambda: self.materials(add_new=True))
+            add("Open material library", self.materials)
+            add("Open material table", lambda: self.open_tables(3))
+        elif kind == "sections":
+            add("Add new section...", lambda: self.sections(add_new=True))
+            add("Open section library", self.sections)
+            add("Open section table", lambda: self.open_tables(4))
+        elif kind == "hinges":
+            add("Add new hinge...", lambda: self.edit_hinge_defs(add_new=True))
+            add("Open hinge library", self.edit_hinge_defs)
+        elif kind == "supports":
+            add("Assign supports...", self.assign_supports)
+            add("Open supports table", lambda: self.open_tables(1))
+        elif kind == "springs":
+            add("Add point spring...", self.add_point_springs)
+        elif kind == "constraints":
+            add("Rigid link...", self.add_rigid_link)
+            add("Equal DOF...", self.add_equal_dof)
+            add("Rigid diaphragm...", self.add_diaphragm)
+        elif kind == "cases":
+            add("Add new load case...", lambda: self.load_cases(add_new=True))
+            add("Open load case table", lambda: self.open_tables(5))
+        elif kind == "self_weight":
+            add("Set self weight...", self.self_weight)
+        elif kind == "combos":
+            add("Add new combination...", lambda: self.combinations(add_new=True))
+            add("Open combination table", lambda: self.open_tables(8))
 
     def _select_case_elements(self, case: str) -> None:
         element_tags = sorted({load.elem for load in self.project.elem_loads
@@ -2011,6 +2187,86 @@ class MainWindow(QMainWindow):
                     f"{len(sel_n)} node(s) and {len(sel_e)} element(s) selected")
 
     # ==================================================================== utils
+    def _viewport_context_menu(self, kind: str, tag: int, pos) -> None:
+        menu = QMenu(self)
+        show = menu.addAction("Show details")
+        if kind == "node":
+            show.triggered.connect(lambda: self._show_node_details(tag))
+            edit = menu.addAction("Edit node properties")
+            edit.setEnabled(not self.model_locked)
+            edit.triggered.connect(lambda: self._edit_node(tag))
+            table = menu.addAction("Open node table")
+            table.triggered.connect(lambda: self.open_tables(0))
+        else:
+            show.triggered.connect(lambda: self._show_element_details(tag))
+            edit = menu.addAction("Edit element properties")
+            edit.setEnabled(not self.model_locked)
+            edit.triggered.connect(lambda: self._edit_element(tag))
+            table = menu.addAction("Open element table")
+            table.triggered.connect(lambda: self.open_tables(2))
+        menu.addSeparator()
+        delete = menu.addAction("Delete")
+        delete.setEnabled(not self.model_locked)
+        delete.triggered.connect(self.delete_selection)
+        menu.exec(pos)
+
+    def _show_node_details(self, tag: int) -> None:
+        node = self.project.nodes.get(tag)
+        if node is None:
+            return
+        springs = [s for s in self.project.springs.values() if s.node == tag]
+        QMessageBox.information(
+            self, f"Node {tag}",
+            f"<b>Node {tag}</b><br>"
+            f"X = {fmt(UNITS.length(node.x), 3)} {UNITS.length_unit}<br>"
+            f"Y = {fmt(UNITS.length(node.y), 3)} {UNITS.length_unit}<br>"
+            f"Z = {fmt(UNITS.length(node.z), 3)} {UNITS.length_unit}<br>"
+            f"Restraints = {node.support_code()}<br>"
+            f"Point springs = {len(springs)}")
+
+    def _show_element_details(self, tag: int) -> None:
+        element = self.project.elements.get(tag)
+        if element is None:
+            return
+        material = self.project.material_of(element)
+        section = self.project.section_of(element)
+        extra = ""
+        if element.kind in DEVICE_KINDS:
+            device = element.device or {}
+            extra = f"<br>Device = {device.get('type', element.kind)}"
+        elif element.kind in ("force_beam", "disp_beam"):
+            extra = (f"<br>Integration = {element.integration} "
+                     f"({element.integration_points} points)")
+        QMessageBox.information(
+            self, f"Element {tag}",
+            f"<b>Element {tag}</b><br>"
+            f"Type = {element.kind}<br>"
+            f"Nodes = {element.nodes}<br>"
+            f"Length = {fmt(UNITS.length(self.project.element_length(element)), 3)} "
+            f"{UNITS.length_unit}<br>"
+            f"Material = {material.tag} {material.name}<br>"
+            f"Section = {section.tag} {section.name}{extra}")
+
+    def _edit_node(self, tag: int) -> None:
+        self.viewport.select_nodes([tag])
+        self.props_dock.show()
+        self.props_dock.raise_()
+        self.a_props_visible.blockSignals(True)
+        self.a_props_visible.setChecked(True)
+        self.a_props_visible.blockSignals(False)
+        self.props.setCurrentIndex(1)
+        self._on_selection()
+
+    def _edit_element(self, tag: int) -> None:
+        self.viewport.select_elements([tag])
+        self.props_dock.show()
+        self.props_dock.raise_()
+        self.a_props_visible.blockSignals(True)
+        self.a_props_visible.setChecked(True)
+        self.a_props_visible.blockSignals(False)
+        self.props.setCurrentIndex(2)
+        self._on_selection()
+
     def _log(self, text: str) -> None:
         if text:
             self.log_view.appendPlainText(text)
@@ -2849,8 +3105,10 @@ class MainWindow(QMainWindow):
             self.project.constraints.pop(int(tag), None)
             self._commit(f"Deleted constraint {tag}")
 
-    def materials(self) -> None:
+    def materials(self, add_new: bool = False) -> None:
         dlg = dialogs.MaterialDialog(self.project, self)
+        if add_new:
+            dlg._add()
         if not dlg.exec():
             return
         missing = [e.tag for e in self.project.elements.values()
@@ -2861,8 +3119,10 @@ class MainWindow(QMainWindow):
         self.project.materials = dlg.materials
         self._commit("Edited materials")
 
-    def sections(self) -> None:
+    def sections(self, add_new: bool = False) -> None:
         dlg = dialogs.SectionDialog(self.project, self)
+        if add_new:
+            dlg.start_new()
         if not dlg.exec():
             return
         missing = [e.tag for e in self.project.elements.values()
@@ -2873,11 +3133,13 @@ class MainWindow(QMainWindow):
         self.project.sections = dlg.sections
         self._commit("Edited sections")
 
-    def edit_hinge_defs(self) -> None:
+    def edit_hinge_defs(self, add_new: bool = False) -> None:
         if self.model_locked:
             self._status("Model is locked - press Ctrl+L to unlock before editing.")
             return
         dlg = HingeLibraryDialog(self.project, self)
+        if add_new:
+            dlg._new()
         if not dlg.exec():
             return
         self.project.hinge_defs = dlg.defs
@@ -2901,8 +3163,10 @@ class MainWindow(QMainWindow):
         self._commit(f"Assigned hinges to {len(dlg.assignments)} element(s)")
 
     # =================================================================== loads
-    def load_cases(self) -> None:
+    def load_cases(self, add_new: bool = False) -> None:
         dlg = dialogs.LoadCaseDialog(self.project, self)
+        if add_new:
+            dlg._add()
         if not dlg.exec():
             return
         cases = dlg.collect()
@@ -2987,8 +3251,10 @@ class MainWindow(QMainWindow):
             self.project.self_weight[case] = factor
         self._commit(f"Self weight factor {fmt(factor, 3)} on {case}")
 
-    def combinations(self) -> None:
+    def combinations(self, add_new: bool = False) -> None:
         dlg = dialogs.ComboDialog(self.project, self)
+        if add_new:
+            dlg._add()
         if not dlg.exec():
             return
         self.project.combos = dlg.combos
@@ -3495,6 +3761,8 @@ class MainWindow(QMainWindow):
         self.viewport.set_static_results(self.static_results)
         self._apply_scale()
         self.viewport.show_deformed = True
+        self.viewport.show_deformation_values = (
+            self.results_panel.deformation_show_values())
         self.a_deformed.setChecked(True)
         self.viewport.fit()
 
@@ -3573,6 +3841,17 @@ class MainWindow(QMainWindow):
         self._commit(f"Updated element {tag}")
 
     # ================================================================== tables
+    def open_tables_for_current_tab(self) -> None:
+        """Open the table most relevant to the active ribbon tab."""
+        title = self.ribbon.current_title() if hasattr(self, "ribbon") else ""
+        tab = {
+            "Node/Element": 2,
+            "Properties": 4,
+            "Boundary": 1,
+            "Load": 7,
+        }.get(title, 0)
+        self.open_tables(tab)
+
     def open_tables(self, tab: int = 0) -> None:
         if self.model_locked:
             self._status("Model is locked - press Ctrl+L to unlock before editing.")

@@ -110,7 +110,10 @@ class ResultsPanel(QWidget):
         self.deform_scale.setSpecialValueText("Auto")
         self.deform_scale.setToolTip("Deformed-shape magnification; Auto fits the view")
         form.addRow("Scale", self.deform_scale)
+        self.deform_values = QCheckBox("Show deformation values")
+        self.deform_values.setToolTip("Show the resultant displacement at each node")
         lay.addLayout(form)
+        lay.addWidget(self.deform_values)
         btn = QPushButton("Show deformation")
         btn.setDefault(True)
         btn.clicked.connect(self.deformationRequested.emit)
@@ -184,6 +187,9 @@ class ResultsPanel(QWidget):
 
     def deformation_scale_value(self) -> float:
         return float(self.deform_scale.value())
+
+    def deformation_show_values(self) -> bool:
+        return self.deform_values.isChecked()
 
     def set_deformation_scale(self, value: float) -> None:
         self.deform_scale.blockSignals(True)

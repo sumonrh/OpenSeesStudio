@@ -125,6 +125,7 @@ class Viewport(QWidget):
     elementDrawRequested = Signal(int, int)
     drawModeCancelled = Signal()
     modelItemDropped = Signal(str, object)
+    contextMenuRequested = Signal(str, int, QPoint)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -162,6 +163,7 @@ class Viewport(QWidget):
         self.modal_results: Optional[ModalResults] = None
         self.mode_index = 1
         self.show_deformed = True
+        self.show_deformation_values = False
         self.deformed_scale: Optional[float] = None
         self.load_scenario: str = ""
         self.display_cases: Set[str] = set()
@@ -185,6 +187,7 @@ class Viewport(QWidget):
         self._hover_node: Optional[int] = None
         self._hover_elem: Optional[int] = None
         self._moved = False
+        self._suppress_context = False
 
         self._anim_phase = 0.0
         self._anim_timer = QTimer(self)
@@ -624,6 +627,10 @@ class Viewport(QWidget):
                 if not self.is_node_visible(tag):
                     continue
                 p.drawText(QPointF(s[0] + 6, s[1] - 5), str(tag))
+        if (self.show_deformation_values and self.show_deformed
+                and self.static_results and not self.modal_results
+                and len(node_points) <= 400):
+            self._draw_deformation_values(p, node_points)
         if self.show_element_labels and len(self.project.elements) <= 600:
             p.setFont(QFont("Segoe UI", 7))
             p.setPen(QPen(QColor("#7b8ea3")))
@@ -1249,6 +1256,22 @@ class Viewport(QWidget):
         p.setPen(QPen(color.darker(130)))
         p.drawText(QPointF(x, y + fm.ascent()), text)
 
+    def _draw_deformation_values(self, p: QPainter, node_points) -> None:
+        if not self.static_results:
+            return
+        p.setFont(QFont("Segoe UI", 7))
+        p.setPen(QPen(QColor("#8a4b08")))
+        for tag, screen in node_points.items():
+            if not self.is_node_visible(tag):
+                continue
+            d = self.static_results.displacements.get(tag)
+            if d is None:
+                continue
+            mag = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+            text = "0" if mag < 1e-12 else (
+                f"{fmt(UNITS.length(mag), 3)} {UNITS.length_unit}")
+            p.drawText(QPointF(screen[0] + 7, screen[1] + 13), text)
+
     def _screen_dir(self, world_dir, signed_value: float):
         _eye, _f, r, u = self.camera.basis()
         vx = _dot(world_dir, r)
@@ -1482,6 +1505,7 @@ class Viewport(QWidget):
             self._press = None
             self._band = None
             self._moved = False
+            self._suppress_context = True
             self.update()
             return
         if ev.button() == Qt.LeftButton and self.draw_element_mode:
@@ -1508,6 +1532,7 @@ class Viewport(QWidget):
                 self.setCursor(Qt.ClosedHandCursor)
         elif ev.button() == Qt.RightButton:
             self._orbiting = True
+            self._suppress_context = False
             self.setCursor(Qt.SizeAllCursor)
         self.update()
 
@@ -1567,6 +1592,25 @@ class Viewport(QWidget):
                 self.statusMessage.emit(f"Element {elem}   {e.kind}   nodes {e.nodes}")
 
     def mouseReleaseEvent(self, ev) -> None:
+        if (ev.button() == Qt.RightButton and not self._moved
+                and not self.draw_element_mode and not self._suppress_context):
+            pos = ev.position().toPoint()
+            node, elem = self._hit(pos)
+            if node is not None:
+                self.select_nodes([node])
+                self.contextMenuRequested.emit("node", node,
+                                                self.mapToGlobal(pos))
+            elif elem is not None:
+                self.select_elements([elem])
+                self.contextMenuRequested.emit("element", elem,
+                                                self.mapToGlobal(pos))
+            self._panning = False
+            self._orbiting = False
+            self._press = None
+            self._moved = False
+            self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
+            self.update()
+            return
         if self._band is not None:
             rect = self._band.normalized()
             self._band = None
@@ -1594,6 +1638,7 @@ class Viewport(QWidget):
         self._orbiting = False
         self._press = None
         self._moved = False
+        self._suppress_context = False
         if self.draw_element_mode:
             self.setCursor(Qt.CrossCursor)
         else:

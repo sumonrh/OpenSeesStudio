@@ -1172,6 +1172,20 @@ class SectionDialog(BaseDialog):
         self.sections[tag] = s
         self._reload(select_tag=tag)
 
+    def start_new(self) -> None:
+        """Prepare a blank custom section for the Add button."""
+        tag = max(self.sections, default=0) + 1
+        s = Section(tag, f"Section {tag}", "Rectangle", b=300.0, h=600.0)
+        s.compute()
+        self.current = s
+        self.name.setText(s.name)
+        self.tabs.setCurrentIndex(1)
+        idx = self.shape.findData("Rectangle")
+        self.shape.setCurrentIndex(idx if idx >= 0 else 0)
+        self._set_custom_values(s)
+        self._sync_custom_fields()
+        self._update_props()
+
     def _duplicate(self) -> None:
         if self.current is None:
             return

@@ -19,8 +19,10 @@ from .units import UNITS
 
 
 def _num(v: float) -> str:
-    if abs(v) < 5e-5:
+    if abs(v) < 1e-12:
         return "0"
+    if abs(v) < 0.005:
+        return f"{v:.3e}"
     return f"{v:.4f}".rstrip("0").rstrip(".")
 
 

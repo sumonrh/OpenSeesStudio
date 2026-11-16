@@ -65,7 +65,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   Dynamic, Pushover, Results, Tools, Help) with command groups and captions.
 - Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
   vertical view strip (fit, iso, top, front, right, orbit, node labels, element
-  labels, grid, deformed, extruded).
+  labels, grid, deformed, extruded). Right-click either toolbar or use
+  **View > Panels > Toolbars** to add, remove and reorder favourite buttons.
 - **Update badge** in the top-right corner of the ribbon appears only when a newer
   GitHub release with a Setup installer exists; click it to download the installer.
 - **About** shows the current application version.
@@ -73,8 +74,11 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   default and can be opened from **View > Panels**.
 - **Run Analysis (F5)** opens a run-control checklist: static, modal, pushover, time
   history and response spectrum, with unavailable analyses disabled and explained.
-- Materials, sections, hinges and support presets can be dragged from the model tree
-  onto the viewport and are applied to the selected elements or nodes.
+- Materials, sections and hinges can be dragged from the model tree onto the viewport
+  and are applied to the selected elements. Right-click a tree header to add new
+  materials, sections, hinges, cases or combinations.
+- Right-click a node or element in the viewport for **Show details**, **Edit
+  properties**, table and delete actions.
 - **Help** tab with Quick Start, a FAQ, About, and links to the official
   OpenSees wiki and documentation.
 - **Clean View** hides deformation, loads and labels for a plain structural view.
@@ -113,8 +117,8 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
 - Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
   the original. The plane is previewed in the viewport while the dialog is open.
 - Supports: fixed, pinned, roller Z, or any combination of 6 DOF. The model tree
-  groups identical restraint patterns with their node count, and the supports table
-  separates restrained and collapsible unrestrained node groups.
+  lists each restrained node with its six-digit 1/0 restraint code; the supports
+  table separates restrained and collapsible unrestrained node groups.
 - The model tree supports Ctrl multi-selection; double-click or use the right-click
   menu to act on every selected material, section, support group or load case.
 - **Point springs** (`zeroLength`): linear Elastic stiffness, multi-linear
@@ -147,8 +151,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   the loaded elements; right-click for **Display**, **Undisplay**, **Table** and
   **Delete** from a case context menu.
 - Spreadsheet **Tables** editor for every entity, with validation and Excel-compatible
-  copy/paste (Ctrl+C / Ctrl+V). The load table can be filtered to one load case and
-  edits element loads row by row.
+  copy/paste (Ctrl+C / Ctrl+V). Ribbon table buttons open the tab for their group
+  (nodes, elements, supports, materials, sections, cases, loads or combinations).
+  The load table can be filtered to one load case and edits element loads row by row.
 
 **Loads**
 - Load cases (Dead, Live, Wind, Seismic, …), each becomes an OpenSees pattern.
@@ -210,7 +215,9 @@ Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
   along each member from its end forces and applied loads, with fill, scale, value and
   deformed-shape overlay options.
 - **Deformation** sidebar: deformed shape for any load case or combination, with an
-  automatic or manual scale; the undeformed shape stays visible as a dashed outline.
+  automatic or manual scale and an optional **Show deformation values** overlay. The
+  undeformed shape stays visible as a dashed outline, and small displacement-table
+  values use scientific notation instead of rounding to 0.00.
 - Selecting another case or combination in either sidebar solves it automatically and
   caches the result, so results can be reviewed case by case without rerunning the model.
 - Finished analyses switch to the **Results** ribbon tab instead of opening a dialog.
@@ -438,7 +445,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.10-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.11-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

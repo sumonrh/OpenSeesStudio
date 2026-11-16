@@ -11,7 +11,7 @@ os.environ["OPENSEES_STUDIO_IN_PROCESS"] = "1"
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import (QApplication, QLabel, QTableWidget,
+from PySide6.QtWidgets import (QApplication, QLabel, QMenu, QTableWidget,
                                QTableWidgetItem, QTableWidgetSelectionRange,
                                QToolButton)
 
@@ -23,6 +23,7 @@ from app.mainwindow import MainWindow  # noqa: E402
 from app.model import (Project, Section, HingeDefinition, Element, Node,  # noqa: E402
                        default_project)
 from app.tables import TablesDialog  # noqa: E402
+from app.toolbar_dialog import ToolbarCustomizeDialog  # noqa: E402
 from app.units import UNITS  # noqa: E402
 from app.version import APP_VERSION  # noqa: E402
 
@@ -253,9 +254,30 @@ grid_button.click()
 win.ribbon.set_current("Load")
 check("ribbon tab switching", win.ribbon.current_title() == "Load")
 win.ribbon.set_current("Structure")
+orig_open_tables = win.open_tables
+table_tabs = []
+win.open_tables = lambda tab=0: table_tabs.append(tab)
+for tab_name in ("Node/Element", "Properties", "Boundary", "Load"):
+    win.ribbon.set_current(tab_name)
+    win.open_tables_for_current_tab()
+win.open_tables = orig_open_tables
+check("ribbon tables open the relevant tab",
+      table_tabs == [2, 4, 1, 7], f"({table_tabs})")
+win.ribbon.set_current("Structure")
 check("quick access toolbar", win.a_run in win.quick_toolbar.actions())
 check("quick view toolbar", win.a_fit in win.quick_view_toolbar.actions()
       and win.a_orbit in win.quick_view_toolbar.actions())
+check("quick toolbars are movable and customizable",
+      win.quick_toolbar.isMovable() and win.quick_view_toolbar.isMovable()
+      and hasattr(win, "_toolbar_catalog"))
+tc = ToolbarCustomizeDialog("Toolbar", win._toolbar_catalog,
+                            ["a_save", "separator", "a_run"],
+                            ["a_save"], win)
+check("toolbar customization keeps order",
+      tc.selected_keys() == ["a_save", "separator", "a_run"])
+tc._reset()
+check("toolbar customization reset", tc.selected_keys() == ["a_save"])
+tc.close()
 view_page = win.ribbon._pages[0]
 check("view tab has no deformed button",
       all(b.defaultAction() is not win.a_deformed
@@ -375,6 +397,15 @@ if mat_group.childCount() >= 2:
           bool(expected) and expected <= win.viewport.sel_elements,
           f"({len(expected)} expected, {len(win.viewport.sel_elements)} selected)")
     win.tree.clearSelection()
+menu = QMenu(win)
+win._build_group_menu(menu, "materials")
+menu_texts = [a.text() for a in menu.actions()]
+check("tree material header has add-new menu",
+      any("Add new material" in text for text in menu_texts), f"({menu_texts})")
+menu = QMenu(win)
+win._build_group_menu(menu, "sections")
+check("tree section header has add-new menu",
+      any("Add new section" in a.text() for a in menu.actions()))
 check("analysis icons are unique",
       len({win.a_run.icon().cacheKey(), win.a_modal.icon().cacheKey(),
            win.a_animate.icon().cacheKey()}) == 3)
@@ -412,14 +443,16 @@ check("tree lists sections",
 boundary_item = tree_items["Boundary"]
 sup_item = next(boundary_item.child(i) for i in range(boundary_item.childCount())
                 if boundary_item.child(i).text(0).startswith("Supports"))
-support_codes = [n.support_code() for n in win.project.nodes.values()
-                 if any(n.support)]
-check("support tree groups identical restraints",
-      sup_item.childCount() == len(set(support_codes)),
-      f"({sup_item.childCount()} groups, {len(set(support_codes))} patterns)")
-check("support tree groups show instance counts",
-      all("(" in sup_item.child(i).text(0)
-          for i in range(sup_item.childCount())))
+restrained = [n for n in win.project.nodes.values() if any(n.support)]
+check("support tree lists individual restraints",
+      sup_item.childCount() == len(restrained),
+      f"({sup_item.childCount()} rows, {len(restrained)} restrained)")
+check("support tree uses 1/0 restraint codes",
+      all(n.support_code() in sup_item.child(i).text(0)
+          for i, n in enumerate(restrained)))
+check("boundary presets removed from the tree",
+      all(not boundary_item.child(i).text(0).startswith("Presets")
+          for i in range(boundary_item.childCount())))
 loads_item = tree_items["Loads"]
 load_cases_item = next(loads_item.child(i) for i in range(loads_item.childCount())
                        if loads_item.child(i).text(0).startswith("Load Cases"))
@@ -496,6 +529,13 @@ moved_nodes = any(
         for i in range(3)) > 1e-9
     for tag in display_nodes)
 check("deformed shape moves the nodes with the elements", moved_nodes)
+win.results_panel.deform_values.setChecked(True)
+check("deformation values checkbox drives the viewport",
+      win.viewport.show_deformation_values)
+win.results_panel.deform_values.setChecked(False)
+check("small deformation results use scientific notation",
+      "e" in results_mod._num(0.0001).lower()
+      and results_mod._num(0.0) == "0")
 check("model auto-locked after analysis",
       win.model_locked and win.a_lock.isChecked() and not win.a_nodes.isEnabled())
 win.a_lock.trigger()
@@ -778,6 +818,17 @@ check("model stays in base units", abs(win.project.nodes[9].x - x0) < 1e-9,
 win.viewport.select_nodes([9])
 check("node props converted", abs(win.nd_x.value() - x0 / 1000.0) < 1e-6,
       f"({win.nd_x.value():.3f} m)")
+win._edit_node(9)
+check("context edit opens node properties",
+      win.viewport.sel_nodes == {9} and win.props.currentIndex() == 1
+      and not win.props_dock.isHidden())
+win._edit_element(1)
+check("context edit opens element properties",
+      win.viewport.sel_elements == {1} and win.props.currentIndex() == 2)
+check("viewport exposes a context-menu signal",
+      hasattr(win.viewport, "contextMenuRequested"))
+win.viewport.select_nodes([9])
+win._on_selection()
 
 dlg_u = TablesDialog(win.project)
 row5 = next(r for r in range(dlg_u.page_nodes.table.rowCount())
