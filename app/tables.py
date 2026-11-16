@@ -543,7 +543,13 @@ class TablesDialog(QDialog):
                 s.Iy = UNITS.inertia_base(num(row[10], f"Section {t} Iy", 1))
                 s.Iz = UNITS.inertia_base(num(row[11], f"Section {t} Iz", 1))
                 s.J = UNITS.inertia_base(num(row[12], f"Section {t} J", 1))
-                s.catalog, s.designation, s.family = "Custom", "", ""
+                s.catalog, s.designation = "Custom", ""
+                if old is not None:
+                    s.family = old.family
+                    s.outline_outer = [list(pt) for pt in old.outline_outer]
+                    s.outline_inner = [list(pt) for pt in old.outline_inner]
+                else:
+                    s.family = ""
             elif (old is not None and old.is_standard and old.shape == s.shape
                   and all(abs(a - b) < 0.01 for a, b in
                           ((old.b, s.b), (old.h, s.h), (old.d, s.d),

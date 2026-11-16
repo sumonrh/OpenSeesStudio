@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton,
 
 from . import theme
 from .dialogs import BaseDialog, hint
-from .hinge_catalog import MATERIALS as HINGE_MATERIALS
+from .hinge_catalog import (MATERIALS as HINGE_MATERIALS,
+                            SPRING_HINGE_MATERIALS)
 from .model import Project
 
 
@@ -32,6 +33,19 @@ def fibre_hinge_elements(project: Project) -> list[int]:
              and HINGE_MATERIALS[h.material].kind == "fiber"}
     return [e for e, h in project.hinge_assignments.items()
             if h in fibre and e in project.elements
+            and project.elements[e].kind == "beam"]
+
+
+def hinge_elements(project: Project) -> list[int]:
+    """Beam elements assigned to a fibre or spring hinge definition."""
+    usable = {h.tag for h in project.hinge_defs.values()
+              if h.material in HINGE_MATERIALS
+              and (HINGE_MATERIALS[h.material].kind == "fiber"
+                   or (HINGE_MATERIALS[h.material].kind == "spring"
+                       and h.material in SPRING_HINGE_MATERIALS
+                       and h.curve))}
+    return [e for e, h in project.hinge_assignments.items()
+            if h in usable and e in project.elements
             and project.elements[e].kind == "beam"]
 
 
@@ -58,11 +72,11 @@ class RunControlDialog(BaseDialog):
                   "Eigenvalue analysis; requires material density for mass",
                   bool(project.elements and has_mass),
                   checked=bool(project.settings.get("modal_configured", False)))
-        hinges = fibre_hinge_elements(project)
+        hinges = hinge_elements(project)
         lateral = lateral_case(project)
-        push_reason = (f"{len(hinges)} fibre-hinged element(s), lateral case "
+        push_reason = (f"{len(hinges)} hinged element(s), lateral case "
                        f"'{lateral}'" if hinges and lateral else
-                       "Requires assigned fibre hinges and a lateral load case")
+                       "Requires assigned fibre or spring hinges and a lateral load case")
         self._add("pushover", "Pushover analysis", push_reason,
                   bool(project.elements and hinges and lateral),
                   checked=bool(project.settings.get("pushover_configured", False)

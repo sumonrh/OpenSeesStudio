@@ -9,12 +9,11 @@ combinations, static and modal analysis, pushover, time history, response spectr
 result review. The interface uses a ribbon with task tabs, command groups and group
 captions, and the installer also includes an MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.12** — customizable toolbars, support-pattern groups with
-> double-click selection, a 0/1 support editor, deformation-value labels, scientific
-> notation for small displacements, viewport context menus, modal solver settings and
-> refreshed template screenshots.
+> **Latest release: 1.0.13** - Section Property Pro and Moment Curvature Pro in
+> the Tools tab, transferable custom sections, and moment-rotation spring hinges
+> for pushover and nonlinear time history.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.12 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.12).
+> or read the [1.0.13 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.13).
 
 ## Install on Windows
 
@@ -65,6 +64,40 @@ never changes the analysis.
 | Distributed load | kN/mm (10 kN/m = 0.01 kN/mm) |
 
 Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
+
+## Design tools
+
+**Tools > Section Properties** is the Section Property Pro calculator. It handles
+I, T, C, L, rectangular, hollow rectangular, open-top box, solid circle, pipe,
+hexagon, octagon, double-angle, double-channel and octagon-with-hole shapes.
+Area, centroid, strong/weak inertias, product and principal inertias, section
+moduli, radii of gyration, torsion constant `J` and warping constant `Cw` are
+computed from a Green's-theorem polygon engine and, where no closed form exists,
+a triangular Saint-Venant finite-element solve. **Transfer to Section Library**
+adds the result as a User-defined custom section with A, Iy, Iz and J populated,
+and stores the calculated outline for the section preview and 3D view.
+
+![Section Property Pro](docs/section_property_pro.png)
+
+**Tools > Moment Curvature** is the Moment Curvature Pro calculator. It supports
+rectangular and circular reinforced-concrete sections with cover, longitudinal
+bars, ties, axial load and member length. Concrete uses the Mander confined and
+unconfined envelopes, steel uses the Park envelope, and the section is integrated
+over a fibre grid for strong-axis and weak-axis behaviour. The tool reports
+yield, peak and ultimate moments, rotations, curvature ductility, the confined
+strength/strain and the plastic hinge length.
+
+![Moment Curvature Pro](docs/moment_curvature_pro.png)
+
+The calculated curve is idealised to a trilinear moment-rotation backbone. **Create
+Hinge** stores it as a `MomentBackbone` hinge definition; the same tool can assign
+it directly to the selected beam elements. `MomentBackbone` definitions build
+rotational `zeroLength` spring hinges at both member ends, so they are used by
+pushover and nonlinear time history. The same backbone is applied to both local
+bending axes and torsion remains elastic. The other moment-rotation library
+materials remain reference-only until they receive a stored backbone.
+
+![Moment-rotation backbone](docs/moment_backbone.png)
 
 ## Features
 
@@ -216,18 +249,19 @@ made with the built-in templates:
 - **Mode shapes** are available from a dropdown in the **Results** ribbon tab;
   select any mode and use **Animate** without opening the results table.
 - **Pushover** ribbon tab: displacement-controlled nonlinear static analysis with
-  `beamWithHinges` lumped plastic hinges. Use **Define Hinges** to create reusable
-  hinge materials and **Assign Hinges** to selected beam elements. Hinge
-  definitions are grouped by material family and use the exact OpenSees names:
-  `Steel01`, `Steel02`, `Hardening`, `ElasticBilin`, `Concrete01`, `Concrete02`,
-  `Concrete02IS`, `Concrete04`, `Hysteretic`, `HystereticSM`, `HystereticSmooth`,
-  `HystereticAsym`, `Pinching4`, `BoucWen`, `FlagShape`, `SelfCentering`, and
-  moment-rotation `IMKBilin`, `IMKPeakOriented`, `IMKPinching`.
-  Moment-rotation definitions are library-only until rotational spring hinges are
-  added. Fibre models can use different steel and concrete definitions; unassigned
-  members stay elastic.
-  The hinge definition dialog provides the published OpenSees reference diagram,
-  parameter values and definitions for each material.
+  `beamWithHinges` fibre hinges or beam-end rotational spring hinges. Use
+  **Define Hinges** to create reusable hinge materials and **Assign Hinges** to
+  selected beam elements. Hinge definitions are grouped by material family and
+  use the exact OpenSees names: `Steel01`, `Steel02`, `Hardening`,
+  `ElasticBilin`, `Concrete01`, `Concrete02`, `Concrete02IS`, `Concrete04`,
+  `Hysteretic`, `HystereticSM`, `HystereticSmooth`, `HystereticAsym`,
+  `Pinching4`, `BoucWen`, `FlagShape`, `SelfCentering`, and moment-rotation
+  `MomentBackbone`, `IMKBilin`, `IMKPeakOriented`, `IMKPinching`.
+  `MomentBackbone` definitions come from **Tools > Moment Curvature** and build
+  `zeroLength` rotational springs at both member ends for pushover and nonlinear
+  time history. Fibre models can use different steel and concrete definitions;
+  unassigned members stay elastic. The hinge definition dialog provides the
+  published OpenSees reference diagram, parameter values and definitions.
   Results include the capacity curve, step table, hinge rotations/moments,
   yielding state and deformed shape per step.
 - The model tree lists the created hinge definitions under **Hinges**; double-click
@@ -475,7 +509,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.12-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.13-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

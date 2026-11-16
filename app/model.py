@@ -137,6 +137,8 @@ class Section:
     family: str = ""
     cy: float = 0.0
     cz: float = 0.0
+    outline_outer: List[List[float]] = field(default_factory=list)
+    outline_inner: List[List[float]] = field(default_factory=list)
 
     @property
     def is_standard(self) -> bool:
@@ -254,6 +256,11 @@ class Section:
                    (-b / 2, web_h), (-web_t / 2, web_h)]
             return [[(y - self.cy, z - self.cz) for y, z in pts], None]
         if self.shape == "User" and self.A > 0:
+            if len(self.outline_outer) >= 3:
+                outer = [(float(pt[0]), float(pt[1])) for pt in self.outline_outer]
+                inner = ([(float(pt[0]), float(pt[1])) for pt in self.outline_inner]
+                         if len(self.outline_inner) >= 3 else None)
+                return [outer, inner]
             side = math.sqrt(self.A)
             b = h = max(side, 1.0)
         return [[(-b / 2, -h / 2), (b / 2, -h / 2),
@@ -357,11 +364,13 @@ class HingeDefinition:
     family: str = "Steel"
     length_ratio: float = 0.10
     params: Dict[str, float] = field(default_factory=dict)
+    curve: List[List[float]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {"tag": self.tag, "name": self.name, "material": self.material,
                 "family": self.family, "length_ratio": self.length_ratio,
-                "params": dict(self.params)}
+                "params": dict(self.params),
+                "curve": [list(pt) for pt in self.curve]}
 
     @staticmethod
     def from_dict(d: dict) -> "HingeDefinition":
@@ -371,6 +380,8 @@ class HingeDefinition:
                                 str(d["material"]), str(d.get("family", "")),
                                 _f(d.get("length_ratio", 0.10)))
             h.params = {str(k): _f(v) for k, v in (d.get("params") or {}).items()}
+            h.curve = [[_f(pt[0]), _f(pt[1])] for pt in (d.get("curve") or [])
+                       if isinstance(pt, (list, tuple)) and len(pt) >= 2]
             return h
         # Legacy GUI format (Bilinear/Trilinear/Takeda/Flag) -> OpenSees material.
         old = str(d.get("model", "Trilinear"))

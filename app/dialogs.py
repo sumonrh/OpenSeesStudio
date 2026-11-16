@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
 
 from . import steelsections, theme
 from .groundmotion import load_ground_motion
-from .hinge_catalog import MATERIALS as HINGE_MATERIALS, image_path as hinge_image
+from .hinge_catalog import (MATERIALS as HINGE_MATERIALS,
+                            SPRING_HINGE_MATERIALS,
+                            image_path as hinge_image)
 from .model import (COMBINATION_KINDS, ELEMENT_KINDS, LOADCASE_KINDS,
                     LOAD_DIRECTIONS, MATERIAL_KINDS, SECTION_SHAPES,
                     SHAPE_LABELS, Element, LoadCase, LoadCombination, Material,
@@ -660,7 +662,8 @@ class SectionPreview(QWidget):
 
 
 class SectionDialog(BaseDialog):
-    def __init__(self, project: Project, parent=None) -> None:
+    def __init__(self, project: Project, parent=None,
+                 select_tag: Optional[int] = None) -> None:
         super().__init__("Section Library", parent, 1040)
         self.project = project
         self.sections: Dict[int, Section] = copy.deepcopy(project.sections)
@@ -737,7 +740,7 @@ class SectionDialog(BaseDialog):
         self.name.textChanged.connect(self._name_changed)
         self._fill_families()
         self._populate_standard()
-        self._reload()
+        self._reload(select_tag=select_tag)
         self.buttons("Save")
 
     # ------------------------------------------------------------------ setup
@@ -1624,12 +1627,11 @@ class PushoverDialog(BaseDialog):
         self.preview_btn.clicked.connect(self._show_hysteresis)
         self.body.addWidget(self.preview_btn)
         self.body.addWidget(hint(
-            "Hinge definitions are created in Pushover > Define Hinges and assigned "
-            "to beam elements in Pushover > Assign Hinges. Unassigned elements "
-            "remain elastic, so steel and concrete members can use different "
-            "laws. The diagram button explains the selected definition's "
-            "parameters; hinge rotation is reported as local curvature × plastic "
-            "hinge length."))
+            "Hinge definitions are created in Pushover > Define Hinges or with "
+            "Tools > Moment Curvature and assigned to beam elements in Pushover > "
+            "Assign Hinges. Fibre definitions build beamWithHinges; MomentBackbone "
+            "definitions add rotational spring hinges at both member ends for "
+            "pushover and nonlinear time history. Unassigned elements remain elastic."))
 
         # defaults
         gravity = cfg.get("gravity_case") or ("DL" if "DL" in project.cases else "")
@@ -1665,28 +1667,32 @@ class PushoverDialog(BaseDialog):
 
     def _update_hinge_summary(self) -> None:
         n_defs = len(self.project.hinge_defs)
-        fiber_defs = {h.tag for h in self.project.hinge_defs.values()
-                      if h.material in HINGE_MATERIALS
-                      and HINGE_MATERIALS[h.material].kind == "fiber"}
+        usable_defs = {h.tag for h in self.project.hinge_defs.values()
+                       if h.material in HINGE_MATERIALS
+                       and (HINGE_MATERIALS[h.material].kind == "fiber"
+                            or (HINGE_MATERIALS[h.material].kind == "spring"
+                                and h.material in SPRING_HINGE_MATERIALS
+                                and h.curve))}
         total = sum(1 for e in self.project.elements.values() if e.kind == "beam")
         n = sum(1 for e, h in self.project.hinge_assignments.items()
-                if h in fiber_defs
+                if h in usable_defs
                 and e in self.project.elements
                 and self.project.elements[e].kind == "beam")
         if n:
             self.hinge_summary.setText(
                 f"{n_defs} hinge definition(s); {n} of {total} beam elements "
-                "are assigned to fibre hinges.")
+                "are assigned to fibre or spring hinges.")
             self.hinge_summary.setStyleSheet(f"color:{theme.ACCENT_DARK};")
-        elif fiber_defs:
+        elif usable_defs:
             self.hinge_summary.setText(
-                f"{n_defs} hinge definition(s), but no fibre hinges are assigned. "
+                f"{n_defs} hinge definition(s), but none are assigned. "
                 "Use Pushover > Assign Hinges.")
             self.hinge_summary.setStyleSheet("color:#c92a2a; font-weight:600;")
         elif n_defs:
             self.hinge_summary.setText(
-                "Only moment-rotation definitions exist. They are spring-only; "
-                "create a fibre model and assign it before running pushover.")
+                "The hinge definitions have no usable fibre model or spring "
+                "backbone. Create a MomentBackbone with Tools > Moment Curvature "
+                "or add a fibre model, then assign it.")
             self.hinge_summary.setStyleSheet("color:#c92a2a; font-weight:600;")
         else:
             self.hinge_summary.setText(

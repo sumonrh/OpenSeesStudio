@@ -335,6 +335,53 @@ check("example frame moved to Structure tab", win.a_example in structure_actions
 check("example frame removed from Tools",
       win.a_example not in [b.defaultAction()
                             for b in win.ribbon._pages[10].findChildren(QToolButton)])
+tools_actions = [b.defaultAction()
+                 for b in win.ribbon._pages[10].findChildren(QToolButton)]
+check("tools tab has section property and moment curvature actions",
+      win.a_section_props in tools_actions
+      and win.a_moment_curvature in tools_actions)
+from app.tools_dialogs import (MomentCurvatureDialog,  # noqa: E402
+                               SectionPropertyDialog)
+spd = SectionPropertyDialog(win.project)
+spd.shape.setCurrentIndex(spd.shape.findData("IShape"))
+spd._calculate()
+check("section property dialog calculates",
+      spd.result is not None and spd.result.A > 0
+      and spd.result.J > 0, f"(A={spd.result.A if spd.result else 0:.0f})")
+section = spd.result_section()
+check("section property transfers strong/weak inertia",
+      section is not None and abs(section.Iy - spd.result.Ix) < 1e-6
+      and abs(section.Iz - spd.result.Iy) < 1e-6
+      and section.shape == "User" and section.catalog == "Custom")
+check("section property stores an outline",
+      section is not None
+      and len(section.outline_outer) == len(spd.result.outers[0]))
+spd.close()
+win.project.sections[section.tag] = section
+section_dialog = dialogs.SectionDialog(win.project, select_tag=section.tag)
+check("section dialog selects the transferred custom section",
+      section_dialog.current is not None
+      and section_dialog.current.tag == section.tag
+      and section_dialog.tabs.currentIndex() == 1)
+section_dialog.close()
+del win.project.sections[section.tag]
+mcd = MomentCurvatureDialog(win.project)
+mcd._calculate()
+check("moment curvature dialog calculates",
+      mcd.result is not None and len(mcd.result.strong.moments) > 10)
+hinge = mcd.hinge()
+check("moment curvature dialog creates a spring hinge",
+      hinge is not None and hinge.material == "MomentBackbone"
+      and len(hinge.curve) == 3 and hinge.curve[0][1] > 0)
+mcd.close()
+win.project.hinge_defs[hinge.tag] = hinge
+from app.hinges import AssignHingesDialog  # noqa: E402
+assign_dialog = AssignHingesDialog(win.project)
+check("assign hinges lists moment backbone definitions",
+      any(assign_dialog.table.cellWidget(row, 3).findData(hinge.tag) >= 0
+          for row in range(assign_dialog.table.rowCount())))
+assign_dialog.close()
+del win.project.hinge_defs[hinge.tag]
 check("node/element tab has selection group",
       win.a_sel_all in [b.defaultAction()
                         for b in win.ribbon._pages[2].findChildren(QToolButton)]

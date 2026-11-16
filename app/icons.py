@@ -845,6 +845,36 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         p.drawPolygon(QPolygonF([QPointF(8.8, 13.3), QPointF(15.2, 13.3),
                                   QPointF(12, 18.0)]))
 
+    elif name == "curvature":
+        _pen(p, INK, 1.6)
+        p.drawLine(QPointF(2.5, 20.5), QPointF(21.5, 20.5))
+        p.drawLine(QPointF(2.5, 20.5), QPointF(2.5, 3.0))
+        path = QPainterPath()
+        path.moveTo(4.0, 18.0)
+        path.cubicTo(8.0, 6.0, 13.0, 6.0, 21.0, 12.0)
+        p.setPen(QPen(QColor(accent), 1.9))
+        p.drawPath(path)
+        _fill(p, ORANGE)
+        p.drawEllipse(QPointF(15.2, 8.1), 1.8, 1.8)
+        _pen(p, INK, 1.2)
+        p.drawLine(QPointF(15.2, 8.1), QPointF(18.8, 6.1))
+
+    elif name == "section_props":
+        _pen(p, INK, 1.5)
+        p.drawPolyline([QPointF(5, 3), QPointF(19, 3), QPointF(19, 7),
+                        QPointF(14.5, 7), QPointF(14.5, 17),
+                        QPointF(19, 17), QPointF(19, 21), QPointF(5, 21),
+                        QPointF(5, 17), QPointF(9.5, 17), QPointF(9.5, 7),
+                        QPointF(5, 7), QPointF(5, 3)])
+        p.setBrush(QBrush(QColor("#dcebf9")))
+        p.setPen(Qt.NoPen)
+        p.drawRect(QRectF(9.5, 7, 5, 10))
+        _pen(p, accent, 1.3)
+        p.drawLine(QPointF(1.5, 7), QPointF(1.5, 17))
+        _fill(p, accent)
+        _arrow_head(p, 1.5, 8.0, 0, -1, 1.8)
+        _arrow_head(p, 1.5, 16.0, 0, 1, 1.8)
+
     else:  # generic square
         _pen(p, "#8ea6bd")
         p.drawRect(QRectF(5, 5, 14, 14))

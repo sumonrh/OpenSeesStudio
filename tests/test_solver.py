@@ -648,6 +648,108 @@ peak = max(abs(v) for vec in captured_res.displacements.values() for v in vec)
 check("script captured model solves",
       1 if math.isfinite(peak) and 0.0 < peak < 1000.0 else 0, 1, 0)
 
+print("== section property calculator ==")
+from app.section_property import compute_section_properties  # noqa: E402
+from app.moment_curvature import (MomentCurvatureInput,  # noqa: E402
+                                  run_moment_curvature)
+from app.hinge_catalog import defaults as hinge_defaults  # noqa: E402
+
+r = compute_section_properties("IShape", {"b": 200, "d": 400, "tf": 20, "tw": 10})
+area = 2 * 200 * 20 + (400 - 40) * 10
+ix = (200 * 400 ** 3 - (200 - 10) * 360 ** 3) / 12
+iy = (2 * 20 * 200 ** 3 + 360 * 10 ** 3) / 12
+check("section property I area", r.A, area, 1e-9)
+check("section property I strong inertia", r.Ix, ix, 1e-9)
+check("section property I weak inertia", r.Iy, iy, 1e-9)
+check("section property I torsion", r.J,
+      2 / 3 * 200 * 20 ** 3 + 1 / 3 * 360 * 10 ** 3, 1e-9)
+check("section property I warping", r.Cw, iy * (400 - 20) ** 2 / 4, 1e-9)
+circle = compute_section_properties("SolidCircle", {"d": 400})
+check("section property circle area", circle.A, math.pi * 200 ** 2, 1e-9)
+check("section property circle torsion", circle.J,
+      math.pi * 200 ** 4 / 2, 1e-9)
+check("section property circle warping", circle.Cw, 0.0, 1e-9)
+source = Section(99, "SPP", "User")
+source.A, source.Iy, source.Iz, source.J = r.A, r.Ix, r.Iy, r.J
+outer, inner = r.outline()
+source.outline_outer = [[x, y] for x, y in outer]
+clone = Project.from_dict(Project.to_dict(default_project()))
+source.name = "ported"
+clone.sections[99] = source
+clone2 = Project.from_dict(Project.to_dict(clone))
+check("custom section outline persists",
+      1 if len(clone2.sections[99].outline_outer) == len(outer) else 0, 1, 0)
+
+print("== moment curvature backbone ==")
+mc = run_moment_curvature(MomentCurvatureInput(
+    section="rectangular", B=400, H=600, cover=40, nx=4, ny=4,
+    db=25, dbt=10, s=100, fc=30, fy=420, P=500, L=4000))
+check("moment curvature points", 1 if len(mc.strong.moments) > 20 else 0, 1, 0)
+check("moment curvature peak positive",
+      1 if mc.strong.peak_moment > 0 else 0, 1, 0)
+check("moment curvature backbone points", len(mc.strong.backbone), 4, 0)
+check("moment curvature yield before ultimate",
+      1 if 0 < mc.strong.yield_rotation < mc.strong.ultimate_rotation else 0, 1, 0)
+check("moment curvature ductility", 1 if mc.strong.ductility > 1 else 0, 1, 0)
+check("moment curvature weak axis present", 1 if mc.weak is not None else 0, 1, 0)
+circular_mc = run_moment_curvature(MomentCurvatureInput(
+    section="circular", D=600, cover=40, n_bars=12, db=25, dbt=10, s=100,
+    fc=30, fy=420, P=500, L=4000))
+check("circular moment curvature has no weak axis", 1 if circular_mc.weak is None else 0, 1, 0)
+check("circular moment curvature peak", 1 if circular_mc.strong.peak_moment > 0 else 0, 1, 0)
+
+print("== moment backbone spring hinge ==")
+from app.hinge_catalog import build_command  # noqa: E402
+curve = [[0.005, 50000.0], [0.05, 60000.0], [0.10, 60000.0]]
+command, args = build_command("MomentBackbone", 77,
+                              hinge_defaults("MomentBackbone"), 1.0, curve)
+check("moment backbone material command", 1 if command == "Hysteretic" else 0, 1, 0)
+ops.wipe()
+ops.model("BasicBuilder", "-ndm", 3, "-ndf", 6)
+try:
+    ops.uniaxialMaterial(command, 77, *args)
+    check("moment backbone material creates", 1, 1)
+except Exception as exc:
+    check("moment backbone material creates", 0, 1)
+    print("   ", exc)
+
+ps = default_project()
+ps.nodes[1] = Node(1, 0, 0, 0, support=[True] * 6)
+ps.nodes[2] = Node(2, 0, 0, 1000)
+ps.elements[1] = Element(1, "beam", [1, 2], 1, 2, vecxz=None)
+ps.cases["LAT"] = LoadCase("LAT")
+ps.nodal_loads.append(NodalLoad(1, 2, "LAT", [10.0, 0, 0, 0, 0, 0]))
+spring = HingeDefinition(1, "MC hinge", "MomentBackbone",
+                         "Moment-rotation (spring)", 0.1,
+                         hinge_defaults("MomentBackbone"))
+spring.curve = [list(p) for p in curve]
+ps.hinge_defs[1] = spring
+ps.hinge_assignments[1] = 1
+cfg = {"gravity_case": "", "lateral_case": "LAT", "control_node": 2,
+       "control_dof": 1, "target_displacement": 20.0, "steps": 5}
+spring_push = opsgen.run_pushover(ps, cfg)
+check("spring hinge pushover steps", len(spring_push.steps), 6, 0)
+check("spring hinge pushover base shear",
+      1 if spring_push.steps[-1].base_shear > 1.0 else 0, 1, 0)
+check("spring hinge pushover rotation",
+      1 if spring_push.max_hinge_rotation(spring_push.steps[-1]) > 0 else 0, 1, 0)
+check("spring hinge yield moment", spring_push.hinge_yield.get(1, 0.0), 50000.0)
+check("spring hinge model label",
+      1 if "MomentBackbone" in spring_push.hinge_model else 0, 1, 0)
+ps.time_history = TimeHistoryCase(source="sine", dt=0.01, n_steps=20,
+                                  direction=1, damping_ratio=0.05,
+                                  sine_amplitude=0.10, sine_period=1.0)
+spring_th = opsgen.run_time_history(ps)
+check("spring hinge time-history steps", spring_th.n_steps, 20, 0)
+check("spring hinge time-history peak",
+      1 if spring_th.peak_disp > 0 else 0, 1, 0)
+check("spring hinge time-history forces",
+      1 if spring_th.element_forces.get(1) else 0, 1, 0)
+spring_json = spring.to_dict()
+restored = HingeDefinition.from_dict(spring_json)
+check("spring hinge curve persists",
+      1 if restored.curve == spring.curve else 0, 1, 0)
+
 print()
 if FAILS:
     print("FAILURES:", FAILS)

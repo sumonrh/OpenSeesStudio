@@ -26,7 +26,8 @@ from .wizard_dialog import StructureWizard
 from .analysis_runner import AnalysisProgressDialog, AnalysisRunner
 from .groundmotion_dialog import GroundMotionCatalogDialog
 from .hinges import AssignHingesDialog, HingeLibraryDialog
-from .hinge_catalog import MATERIALS as HINGE_MATERIALS
+from .hinge_catalog import (MATERIALS as HINGE_MATERIALS,
+                            SPRING_HINGE_MATERIALS)
 from .model import (BoundaryConstraint, DEVICE_KINDS, Element, LoadCase,
                     LoadCombination, Material, NodalLoad, Node, Project, Section,
                     SPRING_DOFS, SpringSupport, default_project, fmt)
@@ -203,6 +204,12 @@ class MainWindow(QMainWindow):
         self.a_console = self._act(
             "Script Console", "console", self.open_console, "",
             "Write and run OpenSeesPy Python or OpenSees Tcl model scripts")
+        self.a_section_props = self._act(
+            "Section Properties", "section_props", self.section_properties, "",
+            "Calculate section properties and transfer them to the section library")
+        self.a_moment_curvature = self._act(
+            "Moment Curvature", "curvature", self.moment_curvature, "",
+            "Create a moment-rotation backbone for pushover and nonlinear time history")
         self.a_example = self._act("Example Frame", "example", self.load_example, "",
                                    "Load the built-in three-storey steel frame")
         self.a_exit = self._act("Exit", "exit", self.close, "Alt+F4")
@@ -470,7 +477,8 @@ class MainWindow(QMainWindow):
                              self.a_combo, self.a_delete, self.a_undo, self.a_redo,
                              self.a_settings, self.a_modal_settings, self.a_ground_motion,
                              self.a_gm_catalog, self.a_spectrum_case,
-                             self.a_import_tcl)
+                             self.a_import_tcl, self.a_section_props,
+                             self.a_moment_curvature)
 
     def _toggle(self, node_labels=None, element_labels=None, grid=None, deformed=None,
                 loads=None, supports=None, extruded=None, nodes=None,
@@ -772,6 +780,9 @@ class MainWindow(QMainWindow):
         group = page.add_group("Exchange")
         group.add_large(self.a_export_tcl)
         group.add_large(self.a_import_tcl)
+        group = page.add_group("Design tools")
+        group.add_large(self.a_section_props)
+        group.add_large(self.a_moment_curvature)
         group = page.add_group("Scripting")
         group.add_large(self.a_console)
 
@@ -3140,6 +3151,58 @@ class MainWindow(QMainWindow):
         self.project.materials = dlg.materials
         self._commit("Edited materials")
 
+    def section_properties(self) -> None:
+        from .tools_dialogs import SectionPropertyDialog
+
+        dlg = SectionPropertyDialog(self.project, self)
+        if not dlg.exec():
+            return
+        section = dlg.result_section()
+        if section is None:
+            return
+        self.project.sections[section.tag] = section
+        self._commit(f"Added custom section {section.name}")
+        self.refresh_all()
+        self._log(f"Section Property Pro: {section.name} - "
+                  f"A={fmt(UNITS.area(section.A), 2)} {UNITS.area_unit}, "
+                  f"Iy={fmt(UNITS.inertia(section.Iy), 2)} {UNITS.inertia_unit}, "
+                  f"Iz={fmt(UNITS.inertia(section.Iz), 2)} {UNITS.inertia_unit}, "
+                  f"J={fmt(UNITS.inertia(section.J), 2)} {UNITS.inertia_unit}.")
+        library = dialogs.SectionDialog(self.project, self,
+                                        select_tag=section.tag)
+        if library.exec():
+            self.project.sections = library.sections
+            self._commit("Edited section library")
+            self.refresh_all()
+
+    def moment_curvature(self) -> None:
+        from .tools_dialogs import MomentCurvatureDialog
+
+        selected = [t for t in self.viewport.sel_elements
+                    if t in self.project.elements
+                    and self.project.elements[t].kind == "beam"]
+        dlg = MomentCurvatureDialog(self.project, selected, self)
+        if not dlg.exec():
+            return
+        hinge = dlg.hinge()
+        if hinge is None:
+            return
+        self.project.hinge_defs[hinge.tag] = hinge
+        assigned = 0
+        if dlg.assign.isChecked():
+            for tag in selected:
+                self.project.hinge_assignments[tag] = hinge.tag
+                assigned += 1
+        points = ", ".join(f"{r:.4g} rad / {m / 1000.0:.4g} {UNITS.moment_unit}"
+                           for r, m in hinge.curve)
+        self._commit(f"Created moment backbone hinge {hinge.name}")
+        self.refresh_all()
+        self._log(f"Moment Curvature Pro: {hinge.name} "
+                  f"(H{hinge.tag}, {hinge.material}); backbone "
+                  f"{points}; {assigned} beam element(s) assigned.")
+        self._status(f"Moment backbone H{hinge.tag} created"
+                     + (f" and assigned to {assigned} element(s)" if assigned else ""))
+
     def sections(self, add_new: bool = False) -> None:
         dlg = dialogs.SectionDialog(self.project, self)
         if add_new:
@@ -3488,7 +3551,10 @@ class MainWindow(QMainWindow):
         assigned = [e for e, h in self.project.hinge_assignments.items()
                     if h in self.project.hinge_defs
                     and HINGE_MATERIALS.get(self.project.hinge_defs[h].material) is not None
-                    and HINGE_MATERIALS[self.project.hinge_defs[h].material].kind == "fiber"
+                    and (HINGE_MATERIALS[self.project.hinge_defs[h].material].kind == "fiber"
+                         or (HINGE_MATERIALS[self.project.hinge_defs[h].material].kind == "spring"
+                             and self.project.hinge_defs[h].material in SPRING_HINGE_MATERIALS
+                             and self.project.hinge_defs[h].curve))
                     and e in self.project.elements
                     and self.project.elements[e].kind == "beam"]
         if not assigned:

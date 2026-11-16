@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
                                QVBoxLayout, QWidget)
 
 from . import theme
-from .hinge_catalog import FAMILIES, MATERIALS, defaults, image_path
+from .hinge_catalog import (FAMILIES, MATERIALS, SPRING_HINGE_MATERIALS,
+                            defaults, image_path)
 from .hysteresis import HysteresisDialog
 from .model import HingeDefinition, Project
 from .units import UNITS
@@ -41,8 +42,9 @@ class HingeLibraryDialog(QDialog):
         lay.addWidget(QLabel(
             "Each definition is a real OpenSees uniaxial material. Families are "
             "separated into tabs so material-specific parameters are never mixed. "
-            "Fibre models can be assigned to beam elements; moment-rotation models "
-            "are library-only until spring hinges are available."))
+            "Fibre models can be assigned to beam elements for fibre hinges; "
+            "MomentBackbone definitions carry a moment-rotation curve and are "
+            "assigned as rotational spring hinges at member ends."))
 
         body = QHBoxLayout()
         left = QVBoxLayout()
@@ -85,6 +87,10 @@ class HingeLibraryDialog(QDialog):
         self.note.setWordWrap(True)
         self.note.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
         right.addWidget(self.note)
+        self.curve_note = QLabel()
+        self.curve_note.setWordWrap(True)
+        self.curve_note.setStyleSheet(f"color:{theme.ACCENT_DARK}; font-size:11px;")
+        right.addWidget(self.curve_note)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.form_host = QWidget()
@@ -165,6 +171,7 @@ class HingeLibraryDialog(QDialog):
             self.form.removeRow(0)
         self._param_widgets = {}
         self.note.setText("")
+        self.curve_note.setText("")
 
     def _fill_materials(self, family: str, preferred: str = "") -> None:
         self.material.blockSignals(True)
@@ -206,7 +213,27 @@ class HingeLibraryDialog(QDialog):
             self._param_widgets[p.key] = widget
         self.note.setText((spec.note + "  " if spec.note else "") +
                           "Source: OpenSees documentation. " +
-                          ("Moment-rotation material: spring hinge only." if spec.kind == "spring" else ""))
+                          ("Moment-rotation material: assigned as a rotational "
+                           "spring hinge when a backbone is stored." if spec.kind == "spring"
+                           else ""))
+
+    def _update_curve_note(self, h: HingeDefinition) -> None:
+        if h.material != "MomentBackbone":
+            self.curve_note.setText(
+                "Moment-rotation material without a stored backbone: library "
+                "reference only." if MATERIALS.get(h.material)
+                and MATERIALS[h.material].kind == "spring" else "")
+            return
+        if not h.curve:
+            self.curve_note.setText(
+                "No stored backbone yet. Use Tools > Moment Curvature to "
+                "generate one, then assign it to beam ends.")
+            return
+        parts = []
+        for rotation, moment in h.curve[:4]:
+            parts.append(f"{float(rotation):.4g} rad / "
+                         f"{UNITS.moment(float(moment)):.4g} {UNITS.moment_unit}")
+        self.curve_note.setText("Stored backbone: " + ", ".join(parts))
 
     # ------------------------------------------------------------------ state
     def _selection_changed(self, _row: int) -> None:
@@ -228,6 +255,7 @@ class HingeLibraryDialog(QDialog):
         for key, widget in self._param_widgets.items():
             value = float(h.params.get(key, defaults_for_material.get(key, 0.0)))
             self._set_widget(widget, key, value)
+        self._update_curve_note(h)
         self._loading = False
 
     def _tab_changed(self, _index: int) -> None:
@@ -251,6 +279,7 @@ class HingeLibraryDialog(QDialog):
         self.current.family = MATERIALS[material].family
         self.current.params = defaults(material)
         self._build_params(material)
+        self._update_curve_note(self.current)
         for key, p in enumerate(MATERIALS[material].params):
             self._set_widget(self._param_widgets[p.key], p.key, p.default)
 
@@ -380,7 +409,10 @@ class AssignHingesDialog(QDialog):
         self.project = project
         self.defs = {tag: h for tag, h in project.hinge_defs.items()
                      if MATERIALS.get(h.material) is not None
-                     and MATERIALS[h.material].kind == "fiber"}
+                     and (MATERIALS[h.material].kind == "fiber"
+                          or (MATERIALS[h.material].kind == "spring"
+                              and h.material in SPRING_HINGE_MATERIALS
+                              and h.curve))}
         self.assignments: Dict[int, int] = {
             e: h for e, h in project.hinge_assignments.items() if h in self.defs}
         self.beams = sorted(tag for tag, e in project.elements.items()
@@ -394,8 +426,10 @@ class AssignHingesDialog(QDialog):
         lay.addWidget(title)
         if not self.defs:
             warning = QLabel(
-                "No fibre hinge definitions exist. Create one in Define Hinges. "
-                "Moment-rotation definitions are spring-only and are not listed here.")
+                "No assignable hinge definitions exist. Create a fibre hinge in "
+                "Define Hinges, or a moment-rotation backbone with Tools > "
+                "Moment Curvature. Definitions without a stored backbone cannot "
+                "be assigned as spring hinges.")
             warning.setWordWrap(True)
             warning.setStyleSheet("color:#c92a2a; font-weight:600;")
             lay.addWidget(warning)

@@ -20,7 +20,7 @@ from .model import (Element, ElementLoad, Material, Node, Project, Section,
                     ResponseSpectrumCase, TimeHistoryCase, G_ACC,
                     DEVICE_KINDS)
 from .groundmotion import load_ground_motion
-from .hinge_catalog import MATERIALS, build_command
+from .hinge_catalog import MATERIALS, SPRING_HINGE_MATERIALS, build_command
 
 _EPS = 1e-12
 
@@ -381,13 +381,72 @@ def _device_orientation(project: Project, e: Element):
     return x, y
 
 
+def _add_spring_hinge(project: Project, element, sec: Section, mat: Material,
+                      hinge, transf_tag: int,
+                      material_cache: Dict[tuple, int],
+                      log: List[str]) -> bool:
+    """Build a zeroLength moment-rotation spring at both beam ends.
+
+    The elastic beam spans two internal nodes.  Translations are tied to the
+    original nodes with equalDOF; rotations pass through the spring material.
+    This keeps the original element tag for element loads and result queries.
+    """
+    from .hinge_catalog import MATERIALS as _MATERIALS
+    spec = _MATERIALS.get(hinge.material)
+    if spec is None or spec.kind != "spring":
+        return False
+    key = (hinge.material,
+           tuple(sorted((str(k), round(float(v), 9))
+                        for k, v in hinge.params.items())),
+           tuple((round(float(a), 12), round(float(b), 6))
+                 for a, b in hinge.curve))
+    mat_tag = material_cache.get(key)
+    if mat_tag is None:
+        mat_tag = 2_500_000 + len(material_cache) * 2
+        try:
+            command, args = build_command(hinge.material, mat_tag,
+                                          hinge.params, 1.0, hinge.curve)
+            ops.uniaxialMaterial(command, mat_tag, *args)
+        except Exception as exc:
+            log.append(f"Spring hinge {hinge.name}: cannot build "
+                       f"{hinge.material}: {exc}")
+            return False
+        material_cache[key] = mat_tag
+    length = max(project.element_length(element), 1e-6)
+    torsion_k = max(float(mat.G) * float(sec.J) / length, 1e-9)
+    torsion_tag = 2_600_000 + element.tag * 2
+    ops.uniaxialMaterial("Elastic", torsion_tag, torsion_k)
+    node_i = 20_000_000 + element.tag * 4
+    node_j = node_i + 2
+    ops.node(node_i, *project.node_xyz(element.nodes[0]))
+    ops.node(node_j, *project.node_xyz(element.nodes[1]))
+    ops.equalDOF(element.nodes[0], node_i, 1, 2, 3)
+    ops.equalDOF(element.nodes[1], node_j, 1, 2, 3)
+    ops.element("zeroLength", 30_000_000 + element.tag * 4,
+                element.nodes[0], node_i,
+                "-mat", torsion_tag, mat_tag, mat_tag,
+                "-dir", 4, 5, 6)
+    ops.element("zeroLength", 30_000_000 + element.tag * 4 + 1,
+                element.nodes[1], node_j,
+                "-mat", torsion_tag, mat_tag, mat_tag,
+                "-dir", 4, 5, 6)
+    ops.element("elasticBeamColumn", element.tag, node_i, node_j,
+                sec.A, mat.E, mat.G, sec.J, sec.Iy, sec.Iz, transf_tag)
+    log.append(f"Spring hinge on element {element.tag}: {hinge.name} "
+               f"[{hinge.material}], end moments from the stored backbone.")
+    return True
+
+
 def build(project: Project, scenario: Optional[str] = None,
           verbose: bool = False,
-          pushover: Optional[dict] = None) -> List[str]:
+          pushover: Optional[dict] = None,
+          spring_hinges: bool = False) -> List[str]:
     """Build a fresh OpenSees model.  If *scenario* is given, loads are applied.
 
     If *pushover* is given, beam elements are built as ``beamWithHinges`` with
-    fiber hinge sections using the selected hysteresis law.
+    fiber hinge sections using the selected hysteresis law.  Spring hinges are
+    added when *spring_hinges* is true, or for pushover when a spring-type
+    hinge definition is assigned.
     """
     log: List[str] = []
 
@@ -513,6 +572,7 @@ def build(project: Project, scenario: Optional[str] = None,
     hinge_cache: Dict[tuple, int] = {}
     hinge_mat_tag = 2_000_000
     hinge_sec_tag = 1_000_000
+    spring_material_cache: Dict[tuple, int] = {}
     fiber_sections: Dict[Tuple[int, int], int] = {}
     integrations: Dict[Tuple[int, str, int], int] = {}
 
@@ -664,9 +724,17 @@ def build(project: Project, scenario: Optional[str] = None,
                             transf_cache[key], int_tag)
             continue
 
-        if pushover is not None and e.tag in project.hinge_assignments:
-            hinge = project.hinge_defs.get(project.hinge_assignments[e.tag])
-            if hinge is not None:
+        hinge = (project.hinge_defs.get(project.hinge_assignments.get(e.tag))
+                 if e.tag in project.hinge_assignments else None)
+        if hinge is not None:
+            spec = MATERIALS.get(hinge.material)
+            if (spring_hinges and spec is not None and spec.kind == "spring"
+                    and hinge.material in SPRING_HINGE_MATERIALS and hinge.curve
+                    and _add_spring_hinge(project, e, sec, mat, hinge,
+                                          transf_cache[key],
+                                          spring_material_cache, log)):
+                continue
+            if pushover is not None and spec is not None and spec.kind == "fiber":
                 hp = hinge.to_dict()
                 cache_key = (
                     sec.tag, mat.tag, hinge.material,
@@ -1131,7 +1199,10 @@ def run_pushover(project: Project, config: Optional[dict] = None,
         if (e is not None and h is not None and e.kind == "beam"
                 and len(e.nodes) >= 2
                 and MATERIALS.get(h.material) is not None
-                and MATERIALS[h.material].kind == "fiber"):
+                and (MATERIALS[h.material].kind == "fiber"
+                     or (MATERIALS[h.material].kind == "spring"
+                         and h.material in SPRING_HINGE_MATERIALS
+                         and h.curve))):
             hinges[element] = h
     if not hinges:
         raise ValueError("No hinges are assigned. Create hinge definitions and "
@@ -1152,7 +1223,7 @@ def run_pushover(project: Project, config: Optional[dict] = None,
     steps = max(1, int(cfg.get("steps") or 20))
 
     log: List[str] = []
-    log += build(project, None, pushover=cfg)
+    log += build(project, None, pushover=cfg, spring_hinges=True)
     ops.wipeAnalysis()
 
     if gravity:
@@ -1195,7 +1266,16 @@ def run_pushover(project: Project, config: Optional[dict] = None,
 
     hinge_tags = sorted(hinges)
     lp_cache = {}
+    spring_extra_nodes: List[int] = []
     for tag in hinge_tags:
+        h = hinges[tag]
+        if MATERIALS[h.material].kind == "spring":
+            e = project.elements[tag]
+            for end, original in enumerate(e.nodes[:2]):
+                support_node = project.nodes.get(original)
+                if support_node is not None and any(support_node.support):
+                    spring_extra_nodes.append(20_000_000 + tag * 4 + end * 2)
+            continue
         length = project.element_length(project.elements[tag])
         ratio = max(0.01, min(0.25, float(hinges[tag].length_ratio)))
         lp_cache[tag] = min(length * ratio, 0.2 * length)
@@ -1208,6 +1288,14 @@ def run_pushover(project: Project, config: Optional[dict] = None,
         e = project.elements[tag]
         sec = _ensure_section(project.section_of(e))
         h = hinges[tag]
+        if MATERIALS[h.material].kind == "spring":
+            points = sorted(
+                (pt for pt in h.curve
+                 if len(pt) >= 2 and float(pt[0]) > 0.0 and float(pt[1]) > 0.0),
+                key=lambda pt: float(pt[0]))
+            result.hinge_yield[tag] = (float(points[0][1]) if points
+                                       else abs(float(h.params.get("fy", 1.0))))
+            continue
         fy = abs(float(h.params.get("fy")
                       or h.params.get("sigAct")
                       or h.params.get("fpc")
@@ -1223,6 +1311,8 @@ def run_pushover(project: Project, config: Optional[dict] = None,
         base_shear = -sum(
             float(ops.nodeReaction(tag, dof))
             for tag, n in project.nodes.items() if any(n.support))
+        base_shear -= sum(float(ops.nodeReaction(tag, dof))
+                          for tag in spring_extra_nodes)
         displacements = {
             tag: [float(ops.nodeDisp(tag, i)) for i in range(1, 7)]
             for tag in project.nodes
@@ -1232,19 +1322,43 @@ def run_pushover(project: Project, config: Optional[dict] = None,
         for tag in hinge_tags:
             rot = []
             mom = []
-            for sec_num in (1, 6):
+            if MATERIALS[hinges[tag].material].kind == "spring":
+                for end, zl_offset in ((0, 0), (1, 1)):
+                    zl_tag = 30_000_000 + tag * 4 + zl_offset
+                    try:
+                        deform = [float(v) for v in ops.eleResponse(
+                            zl_tag, "deformation")]
+                    except Exception:
+                        deform = []
+                    if deform:
+                        value = max(deform[1:3], key=abs) if len(deform) >= 3 else deform[-1]
+                        rot.append(abs(value))
+                    else:
+                        rot.append(0.0)
                 try:
-                    force = ops.eleResponse(tag, "section", sec_num, "force")
-                    deform = ops.eleResponse(tag, "section", sec_num,
-                                             "deformation")
+                    force = [float(v) for v in ops.eleResponse(tag, "localForce")]
                 except Exception:
-                    force, deform = [], []
-                m = max((abs(float(v)) for v in force[1:3]), default=0.0) \
-                    if force else 0.0
-                k = max((abs(float(v)) for v in deform[1:3]), default=0.0) \
-                    if deform else 0.0
-                mom.append(m)
-                rot.append(k * lp_cache.get(tag, 0.0))
+                    force = []
+                if len(force) >= 12:
+                    for a, b in ((4, 5), (10, 11)):
+                        pair = (force[a], force[b])
+                        mom.append(max(pair, key=abs))
+                else:
+                    mom = [0.0, 0.0]
+            else:
+                for sec_num in (1, 6):
+                    try:
+                        force = ops.eleResponse(tag, "section", sec_num, "force")
+                        deform = ops.eleResponse(tag, "section", sec_num,
+                                                 "deformation")
+                    except Exception:
+                        force, deform = [], []
+                    m = max((abs(float(v)) for v in force[1:3]), default=0.0) \
+                        if force else 0.0
+                    k = max((abs(float(v)) for v in deform[1:3]), default=0.0) \
+                        if deform else 0.0
+                    mom.append(m)
+                    rot.append(k * lp_cache.get(tag, 0.0))
             rotations[tag] = rot
             moments[tag] = mom
         result.steps.append(PushoverStep(
@@ -1357,7 +1471,7 @@ def run_time_history(project: Project,
         cfg.update(config)
     case = TimeHistoryCase.from_dict(cfg)
     log: List[str] = []
-    log += build(project, None)
+    log += build(project, None, spring_hinges=True)
     ops.wipeAnalysis()
 
     # Optional gravity preload, held constant and reset to transient time 0.
