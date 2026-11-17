@@ -337,10 +337,17 @@ check("example frame removed from Tools",
                             for b in win.ribbon._pages[10].findChildren(QToolButton)])
 tools_actions = [b.defaultAction()
                  for b in win.ribbon._pages[10].findChildren(QToolButton)]
+load_actions = [b.defaultAction()
+                for b in win.ribbon._pages[5].findChildren(QToolButton)]
 check("tools tab has section property and moment curvature actions",
       win.a_section_props in tools_actions
       and win.a_moment_curvature in tools_actions)
-check("tools tab has bridge live load action", win.a_live_load in tools_actions)
+check("load tab has vehicle, lane and live-load case actions",
+      all(a in load_actions for a in
+          (win.a_vehicle_def, win.a_lane_def, win.a_live_load)))
+check("live-load actions removed from Tools",
+      all(a not in tools_actions for a in
+          (win.a_vehicle_def, win.a_lane_def, win.a_live_load)))
 from app.tools_dialogs import (MomentCurvatureDialog,  # noqa: E402
                                SectionPropertyDialog)
 spd = SectionPropertyDialog(win.project)
@@ -385,19 +392,129 @@ assign_dialog.close()
 del win.project.hinge_defs[hinge.tag]
 from app.live_load_dialog import LiveLoadDialog  # noqa: E402
 lld = LiveLoadDialog(win.project, [])
-check("live load dialog has default spans and CL-625 axles",
-      len(lld._spans()) == 3 and len(lld._axles()) == 5
-      and lld.truck_model.currentData() == "CL-625")
+check("live load dialog reads model spans and CL-625 axles",
+      len(lld._spans()) >= 1
+      and len(lld.support_x) == len(lld._spans()) + 1
+      and len(lld._axles()) == 5
+      and lld.truck_model.currentData() == "CL-625"
+      and not lld.bcl_subdivision.isEnabled()
+      and len(lld.vehicle_diagram.rows) == 5)
+check("live load dialog has no manual span table",
+      not hasattr(lld, "span_table")
+      and lld.support_label.text().startswith("Support x"))
+check("CL-625 hides the BCL spacing control",
+      lld.bcl_subdivision.isHidden()
+      and lld.bcl_label is not None and lld.bcl_label.isHidden())
+lld.truck_model.setCurrentIndex(1)
+check("BCL-625 shows the BCL spacing control",
+      not lld.bcl_subdivision.isHidden()
+      and not lld.bcl_label.isHidden())
+lld.truck_model.setCurrentIndex(0)
 lld._analyze()
 check("live load dialog calculates envelopes",
       lld.results is not None
-      and len(lld.results.moment) > 0
-      and lld.plot.xs)
-check("live load dialog fills reaction table",
-      lld.reaction_table.rowCount() == len(lld.results.reactions))
-check("live load dialog builds influence line",
-      len(lld.results.influence.get("moment_mid", [])) > 0)
+      and "truck" in lld.results.cases
+      and "envelope" in lld.results.cases)
+check("live load dialog has no result tabs",
+      lld.tabs.count() == 2 and not hasattr(lld, "plot"))
 lld.close()
+from app.lane_dialog import LaneDialog  # noqa: E402
+
+lane_nodes = sorted(win.project.nodes)[:2]
+lane_dlg = LaneDialog(win.project, lane_nodes)
+lane_dlg._pick_nodes()
+lane_dlg.offset.setValue(1.5)
+lane_dlg._apply()
+check("lane dialog creates a lane", len(lane_dlg.lanes) == 1)
+lane = next(iter(lane_dlg.lanes.values()))
+check("lane dialog uses selected nodes",
+      abs(lane.start[0] - win.project.nodes[lane_nodes[0]].x) < 1e-6
+      and abs(lane.end[0] - win.project.nodes[lane_nodes[1]].x) < 1e-6)
+check("lane dialog applies lateral shift", abs(lane.offset - 1500.0) < 1e-6)
+check("lane preview follows shift", abs(lane_dlg.preview.offset - 1500.0) < 1e-6)
+check("lane section preview follows shift",
+      abs(lane_dlg.section_preview.offset - 1500.0) < 1e-6)
+win.project.lanes = {lane.tag: lane}
+win.refresh_all()
+_stack = [win.tree.topLevelItem(i)
+          for i in range(win.tree.topLevelItemCount())]
+lane_group = None
+while _stack:
+    _item = _stack.pop()
+    if _item.text(0).startswith("Traffic Lanes"):
+        lane_group = _item
+        break
+    _stack.extend(_item.child(i) for i in range(_item.childCount()))
+check("lane tree group lists lane",
+      lane_group is not None and lane_group.childCount() == 1)
+lld2 = LiveLoadDialog(win.project, [])
+lld2._refresh_lanes()
+lld2.lane_combo.setCurrentIndex(1)
+lld2._lane_changed()
+check("live load dialog reads saved lane",
+      abs(lld2.config().lane_offset - 1.5) < 1e-6
+      and lld2.config().lane_start is not None
+      and lld2.config().lane_end is not None)
+lld2.close()
+win.project.lanes.clear()
+win.refresh_all()
+lane_dlg.close()
+first_beam = next((tag for tag, e in win.project.elements.items()
+                   if e.kind == "beam"), None)
+if first_beam is not None:
+    chain_dlg = LaneDialog(win.project, [], [first_beam])
+    chain_dlg._pick_elements()
+    check("lane from selected element chain",
+          len(chain_dlg._points) == 2 and len(chain_dlg._elements) == 1)
+    a, b = chain_dlg._points[0], chain_dlg._points[-1]
+    chain_dlg._reverse_chain()
+    check("lane chain direction reverses",
+          chain_dlg._points[0] == b and chain_dlg._points[-1] == a)
+    chain_dlg.close()
+from app.vehicle_dialog import VehicleDialog  # noqa: E402
+from app.live_load_case_dialog import LiveLoadCaseDialog  # noqa: E402
+from app.model import Lane  # noqa: E402
+
+vehicle_dlg = VehicleDialog(win.project)
+check("vehicle dialog lists presets", len(vehicle_dlg.vehicles) >= 2)
+vehicle_dlg.close()
+first_beam = next((tag for tag, e in win.project.elements.items()
+                   if e.kind == "beam"), None)
+if first_beam is not None:
+    e = win.project.elements[first_beam]
+    a, b = win.project.node_xyz(e.nodes[0]), win.project.node_xyz(e.nodes[1])
+    win.project.lanes[3] = Lane(3, "Test lane", a, b, 0.0,
+                                points=[a, b], element_tags=[first_beam])
+    case_dlg = LiveLoadCaseDialog(win.project, [])
+    check("live load case selects saved vehicles and lanes",
+          case_dlg.vehicle_combo.count() >= 2
+          and case_dlg.lane_combo.count() == 1)
+    case_dlg._analyze()
+    check("live load case runs envelopes", case_dlg.results is not None)
+    case_dlg.close()
+    win.project.lanes.pop(3, None)
+from app.viewport import Viewport  # noqa: E402
+
+ll_view = Viewport()
+ll_view.set_project(win.project)
+ll_view.set_live_load_envelope(
+    [(0.0, 100.0, -50.0), (1.0, 200.0, -80.0)],
+    [(0.0, (0.0, 0.0, 0.0)), (1.0, (1000.0, 0.0, 0.0))],
+    "LL All", "both")
+check("live-load envelope overlay state",
+      ll_view.live_load_envelope is not None
+      and not ll_view.show_diagrams
+      and ll_view.live_load_mode == "both")
+ll_view.set_live_load_envelopes(
+    {"My": [(0.0, 100.0, -50.0), (1.0, 200.0, -80.0)],
+     "Vz": [(0.0, 40.0, -30.0), (1.0, 60.0, -45.0)]},
+    [(0.0, (0.0, 0.0, 0.0)), (1.0, (1000.0, 0.0, 0.0))],
+    "LL All", "both")
+check("live-load shear and moment envelopes coexist",
+      set(ll_view.live_load_envelopes) == {"My", "Vz"})
+ll_view.clear_live_load_envelope()
+check("live-load envelope clears", ll_view.live_load_envelope is None)
+ll_view.deleteLater()
 check("node/element tab has selection group",
       win.a_sel_all in [b.defaultAction()
                         for b in win.ribbon._pages[2].findChildren(QToolButton)]
@@ -632,6 +749,9 @@ win.a_beam_diagram.trigger()
 check("beam diagrams open", win.viewport.show_diagrams
       and not win.results_dock.isHidden())
 check("load case results cached", win.results_scenario in win.static_cache)
+win.bridge_show_diagram({"scenario": win.results_scenario, "components": ["My"]})
+check("bridge show diagram command",
+      win.viewport.show_diagrams and win.viewport.diagram_components == {"My"})
 win.a_beam_diagram.trigger()
 check("beam diagrams clear", not win.viewport.show_diagrams)
 win.viewport.show_deformed = True

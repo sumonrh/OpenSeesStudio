@@ -29,6 +29,7 @@ from .hinges import AssignHingesDialog, HingeLibraryDialog
 from .hinge_catalog import (MATERIALS as HINGE_MATERIALS,
                             SPRING_HINGE_MATERIALS)
 from .model import (BoundaryConstraint, DEVICE_KINDS, Element, LoadCase,
+                    LiveLoadCase,
                     LoadCombination, Material, NodalLoad, Node, Project, Section,
                     SPRING_DOFS, SpringSupport, default_project, fmt)
 from .pushover import PushoverResultsDialog
@@ -211,8 +212,14 @@ class MainWindow(QMainWindow):
             "Moment Curvature", "curvature", self.moment_curvature, "",
             "Create a moment-rotation backbone for pushover and nonlinear time history")
         self.a_live_load = self._act(
-            "Live Load", "truck", self.live_load, "",
-            "Bridge moving-truck and lane-load envelopes and influence lines")
+            "Live Load Case", "case", self.live_load, "",
+            "Define a moving-load case from a saved vehicle and lane")
+        self.a_lane_def = self._act(
+            "Lanes", "lane", self.lane_definitions, "",
+            "Define traffic lane start/end points, lateral shift and wheel lines")
+        self.a_vehicle_def = self._act(
+            "Vehicles", "truck", self.vehicle_definitions, "",
+            "Define moving vehicles by axle loads and spacing")
         self.a_example = self._act("Example Frame", "example", self.load_example, "",
                                    "Load the built-in three-storey steel frame")
         self.a_exit = self._act("Exit", "exit", self.close, "Alt+F4")
@@ -481,7 +488,8 @@ class MainWindow(QMainWindow):
                              self.a_settings, self.a_modal_settings, self.a_ground_motion,
                              self.a_gm_catalog, self.a_spectrum_case,
                              self.a_import_tcl, self.a_section_props,
-                             self.a_moment_curvature, self.a_live_load)
+                             self.a_moment_curvature, self.a_live_load,
+                             self.a_lane_def, self.a_vehicle_def)
 
     def _toggle(self, node_labels=None, element_labels=None, grid=None, deformed=None,
                 loads=None, supports=None, extruded=None, nodes=None,
@@ -719,6 +727,10 @@ class MainWindow(QMainWindow):
         group.add_large(self.a_sw)
         group = page.add_group("Display")
         group.add_column((self.a_loads_visible,))
+        group = page.add_group("Live load")
+        group.add_large(self.a_vehicle_def)
+        group.add_large(self.a_lane_def)
+        group.add_large(self.a_live_load)
         group = page.add_group("Model data")
         group.add_large(self.a_tables_cases)
         group.add_column((self.a_tables_nodal, self.a_tables_element_loads,
@@ -786,8 +798,6 @@ class MainWindow(QMainWindow):
         group = page.add_group("Design tools")
         group.add_large(self.a_section_props)
         group.add_large(self.a_moment_curvature)
-        group = page.add_group("Bridge live load")
-        group.add_large(self.a_live_load)
         group = page.add_group("Scripting")
         group.add_large(self.a_console)
 
@@ -1101,6 +1111,10 @@ class MainWindow(QMainWindow):
             self._status("Select at least one diagram component (Fx, Vy, Vz, Mx, My, Mz).")
             return
         scenario = self.results_panel.diagram_scenario() or self.scenario_combo.currentText()
+        modes = getattr(self, "live_load_modes", {})
+        if scenario in modes and getattr(self, "live_load_results", None) is not None:
+            self._apply_live_load_envelope(scenario)
+            return
         res = self._ensure_static_results(scenario)
         if res is None:
             return
@@ -1129,6 +1143,52 @@ class MainWindow(QMainWindow):
         self.results_dock.raise_()
         self._status(f"Beam diagrams: {scenario} · {', '.join(comps)}")
         self.viewport.update()
+
+    def _apply_live_load_envelope(self, scenario: str) -> None:
+        modes = getattr(self, "live_load_modes", {})
+        result = getattr(self, "live_load_results", None)
+        geometry = getattr(self, "live_load_geometry", None)
+        if result is None or scenario not in modes:
+            return
+        if geometry is None or len(geometry.get("points", [])) < 2:
+            self._status("No beam-chain geometry available for the live-load envelope.")
+            return
+        case_key, mode = modes[scenario]
+        case = result.cases.get(case_key)
+        if case is None:
+            return
+        comps = [c for c in self.results_panel.components()
+                 if c in ("My", "Vz", "Vy")]
+        if not comps:
+            comps = ["My", "Vz"]
+        envelopes = {}
+        if "My" in comps:
+            envelopes["My"] = [(p.x, p.max, p.min) for p in case.moment]
+        if "Vz" in comps or "Vy" in comps:
+            envelopes["Vz"] = [(p.x, p.max, p.min) for p in case.shear]
+        if not envelopes:
+            envelopes["My"] = [(p.x, p.max, p.min) for p in case.moment]
+        self.viewport.set_live_load_envelopes(
+            envelopes,
+            geometry["points"], scenario, mode,
+            self.results_panel.diagram_scale_value(),
+            self.results_panel.diagram_has_fill())
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
+        self.viewport.show_deformed = False
+        self.a_deformed.blockSignals(True)
+        self.a_deformed.setChecked(False)
+        self.a_deformed.blockSignals(False)
+        self.a_beam_diagram.blockSignals(True)
+        self.a_beam_diagram.setChecked(True)
+        self.a_beam_diagram.blockSignals(False)
+        self.ribbon.set_current("Results")
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self._status(f"Live-load envelope: {scenario} · "
+                     f"{', '.join(envelopes)}")
 
     def _deformation_values_changed(self, checked: bool) -> None:
         self.viewport.show_deformation_values = bool(checked)
@@ -1586,6 +1646,15 @@ class MainWindow(QMainWindow):
                       f"{c.master} -> {len(c.slaves)} node(s)",
                       "constraint", c.tag)
         g_constraint.setToolTip(0, "Right-click a constraint to delete it.")
+        g_lane = group("Traffic Lanes", "lanes", len(p.lanes), b)
+        for lane in sorted(p.lanes.values(), key=lambda item: item.tag):
+            add_child(
+                g_lane,
+                f"L{lane.tag}   {lane.name}   "
+                f"x {lane.start[0]/1000:g}->{lane.end[0]/1000:g} m   "
+                f"shift {lane.offset/1000:+g} m",
+                "lane", lane.tag)
+        g_lane.setToolTip(0, "Double-click: edit lane start/end and lateral shift.")
 
         ld = group("Loads", "loads")
         g_cases = group("Load Cases", "cases", len(p.cases), ld)
@@ -1671,9 +1740,16 @@ class MainWindow(QMainWindow):
             if key in ("material", "section"):
                 self._select_elements_using(key, tag)
             elif key == "case":
-                self._select_case_elements(tag)
+                if (tag in getattr(self, "live_load_modes", {})
+                        and getattr(self, "live_load_results", None) is not None):
+                    self.results_panel.set_current_scenario(str(tag))
+                    self._apply_beam_diagram()
+                else:
+                    self._select_case_elements(tag)
             elif key == "hinge":
                 self.edit_hinge_defs()
+            elif key == "lane":
+                self.lane_definitions()
             return
         if key in ("nodes", "elements"):
             return
@@ -2421,6 +2497,21 @@ class MainWindow(QMainWindow):
         self._status(f"MCP: static results for {res.scenario}")
         self._set_locked(True)
         self.ribbon.set_current("Results")
+
+    def bridge_show_diagram(self, payload: dict) -> None:
+        scenario = str(payload.get("scenario") or self.results_scenario
+                       or self.scenario_combo.currentText())
+        components = payload.get("components") or ["My"]
+        allowed = ("Fx", "Vy", "Vz", "Mx", "My", "Mz")
+        components = [str(c) for c in components if str(c) in allowed]
+        if not components:
+            components = ["My"]
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_current_scenario(scenario)
+            for comp, box in self.results_panel.component_boxes.items():
+                box.setChecked(comp in components)
+        self._apply_beam_diagram()
+        self._status(f"MCP: beam diagrams for {scenario}")
 
     def bridge_show_mode(self, payload: dict) -> None:
         modes = [opsgen.ModeResult(int(m["mode"]), float(m["eigenvalue"]),
@@ -3216,26 +3307,95 @@ class MainWindow(QMainWindow):
         self._status(f"Moment backbone H{hinge.tag} created"
                      + (f" and assigned to {assigned} element(s)" if assigned else ""))
 
+    def vehicle_definitions(self) -> None:
+        from .vehicle_dialog import VehicleDialog
+
+        dlg = VehicleDialog(self.project, self)
+        if not dlg.exec():
+            return
+        self.project.vehicles = dict(dlg.vehicles)
+        self._commit("Edited moving vehicles")
+        self._log(f"Moving vehicles: {len(self.project.vehicles)} defined.")
+        self._status("Vehicle definitions updated")
+
+    def lane_definitions(self) -> None:
+        from .lane_dialog import LaneDialog
+
+        node_tags = set(self.viewport.sel_nodes)
+        for tag in self.viewport.sel_elements:
+            e = self.project.elements.get(tag)
+            if e is not None:
+                node_tags.update(e.nodes)
+        selected = sorted(
+            (tag for tag in node_tags if tag in self.project.nodes),
+            key=lambda tag: self.project.nodes[tag].xyz)
+        dlg = LaneDialog(self.project, selected,
+                         sorted(self.viewport.sel_elements), self)
+        if not dlg.exec():
+            return
+        self.project.lanes = {
+            tag: lane for tag, lane in dlg.lanes.items() if lane.length > 1e-6}
+        self._commit("Edited traffic lanes")
+        self.viewport.update()
+        self._log(f"Traffic lanes: {len(self.project.lanes)} defined.")
+        self._status("Traffic lane definitions updated")
+
     def live_load(self) -> None:
-        from .live_load_dialog import LiveLoadDialog
+        from .live_load_case_dialog import LiveLoadCaseDialog
 
         selected = [t for t in self.viewport.sel_elements
                     if t in self.project.elements]
-        dlg = LiveLoadDialog(self.project, selected, self)
+        dlg = LiveLoadCaseDialog(self.project, selected, self)
         if not dlg.exec():
             return
         if dlg.results is None:
             return
         result = dlg.results
+        for name in ("LL Max", "LL Min", "LL All"):
+            if name not in self.project.cases:
+                self.project.cases[name] = LoadCase(name, "Live")
+        vehicle_tag = dlg.vehicle_combo.currentData()
+        lane_tag = dlg.lane_combo.currentData()
+        case_name = dlg.case_name.text().strip() or "LL"
+        self.project.live_load_cases[case_name] = LiveLoadCase(
+            case_name,
+            int(vehicle_tag) if vehicle_tag is not None else 0,
+            int(lane_tag) if lane_tag is not None else 0,
+            dlg.lane_udl.value(),
+            (dlg.dla_override.value() / 100.0
+             if dlg.dla_mode.currentData() == "manual" else None),
+            dlg.dla_multiplier.value() / 100.0)
         self.project.settings["live_load"] = result.config.__dict__
+        self.live_load_results = result
+        self.live_load_geometry = dlg.chain_geometry
+        self.live_load_modes = {
+            "LL Max": ("truck", "max"),
+            "LL Min": ("truck", "min"),
+            "LL All": ("envelope", "both"),
+        }
         self._commit("Live load analysis")
+        self._refresh_results_panel()
+        self.results_scenario = "LL All"
+        self.scenario_combo.setCurrentText("LL All")
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_current_scenario("LL All")
+            self.results_panel.component_boxes["My"].setChecked(True)
+            self.results_panel.component_boxes["Vz"].setChecked(True)
+            self.results_panel.component_boxes["Mz"].setChecked(False)
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self._apply_beam_diagram()
+        env = result.cases["envelope"].moment
+        truck = result.cases["truck"].moment
         self._log(
             f"Live load: {result.load_case}, spans "
             f"{', '.join(f'{s.length:g}' for s in result.spans)} m, "
             f"{len(result.axles)} axles, {result.increment_used:g} m sweep; "
-            f"max moment {max(p.max for p in result.moment):.3f} kN m, "
-            f"max shear {max(p.max for p in result.shear):.3f} kN.")
-        self._status("Live load envelopes calculated")
+            f"LL Max {max(p.max for p in truck):.3f} kN m, "
+            f"LL Min {min(p.min for p in truck):.3f} kN m, "
+            f"LL All {max(p.max for p in env):.3f} / "
+            f"{min(p.min for p in env):.3f} kN m.")
+        self._status("Live-load envelopes applied to the model")
 
     def sections(self, add_new: bool = False) -> None:
         dlg = dialogs.SectionDialog(self.project, self)

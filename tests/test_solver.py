@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.model import (Project, Element, Node, NodalLoad, LoadCase, Section,
                        HingeDefinition, TimeHistoryCase, GroundMotionRecord,
-                       ResponseSpectrumCase, default_project)
+                       ResponseSpectrumCase, Lane, default_project)
 from app import opsgen
 from app import groundmotion
 
@@ -774,7 +774,7 @@ print("== bridge live load ==")
 from app.live_load import (Axle as LLAxle, Span as LLSpan,  # noqa: E402
                           LiveLoadConfig, analyze as live_analyze,
                           beam_chain_from_project, build_bcl_spacings,
-                          compute_effective_increment)
+                          compute_effective_increment, truck_positions)
 ll_cfg = LiveLoadConfig(elems_per_span=8, truck_increment=0.2,
                         load_case="truck", dla_override=0.0,
                         dla_multiplier=1.0, truck_model="Custom")
@@ -799,6 +799,118 @@ check("live load lane deflection",
       min(p.min for p in ll_lane.deflection),
       -5.0 * 9000.0 * 8.0 ** 4 / (384.0 * 200e9 * 0.005), 2e-6)
 check("live load lane has no DLA", ll_lane.dla_used, 0.0)
+
+print("== traffic lanes and truck travel ==")
+lane = Lane(1, "Lane A", (0.0, 0.0, 0.0), (10000.0, 0.0, 0.0), 2000.0)
+check("lane length", lane.length, 10000.0)
+check("lane lateral axis",
+      1 if lane.lateral_axis == (0.0, 1.0, 0.0) else 0, 1)
+check("lane shifted start",
+      1 if lane.shifted_start == (0.0, 2000.0, 0.0) else 0, 1)
+(left0, left1), (right0, right1) = lane.wheel_lines(1800.0)
+check("lane left wheel line", 1 if left0 == (0.0, 2900.0, 0.0) else 0, 1)
+check("lane right wheel line", 1 if right0 == (0.0, 1100.0, 0.0) else 0, 1)
+
+lp = default_project()
+lp.lanes[1] = lane
+restored = Project.from_dict(lp.to_dict())
+check("lane survives project round trip", len(restored.lanes), 1)
+check("restored lane offset", restored.lanes[1].offset, 2000.0)
+
+poly = Lane(2, "Curved lane",
+            (0.0, 0.0, 0.0), (10000.0, 0.0, 0.0), 0.0,
+            points=[(0.0, 0.0, 0.0), (5000.0, 1000.0, 0.0),
+                    (10000.0, 0.0, 0.0)],
+            element_tags=[1, 2])
+lp.lanes[2] = poly
+restored = Project.from_dict(lp.to_dict())
+check("curved lane survives round trip",
+      1 if len(restored.lanes[2].points) == 3 else 0, 1)
+check("curved lane element tags survive round trip",
+      1 if restored.lanes[2].element_tags == [1, 2] else 0, 1)
+
+chain_project = Project()
+chain_project.nodes[1] = Node(1, 0, 0, 0)
+chain_project.nodes[2] = Node(2, 5000, 0, 0)
+chain_project.nodes[3] = Node(3, 10000, 0, 0)
+chain_project.elements[1] = Element(1, "beam", [1, 2], 1, 1)
+chain_project.elements[2] = Element(2, "beam", [2, 3], 1, 1)
+from app.live_load import chain_geometry  # noqa: E402
+geometry = chain_geometry(chain_project, [1, 2])
+check("element-chain geometry vertices",
+      len(geometry["points"]) if geometry else 0, 3)
+check("element-chain geometry elements",
+      len(geometry["element_tags"]) if geometry else 0, 2)
+check("element-chain geometry length",
+      geometry["points"][-1][0] if geometry else 0.0, 10.0)
+
+lane_spans = [LLSpan(20.0), LLSpan(25.0), LLSpan(20.0)]
+lane_supports = [0.0, 20.0, 45.0, 65.0]
+lane_axles = [LLAxle(50.0, 3.6), LLAxle(125.0, 1.2),
+              LLAxle(125.0, 6.6), LLAxle(175.0, 6.6), LLAxle(150.0, 0.0)]
+truck_len = sum(a.spacing for a in lane_axles[:-1])
+
+
+def reference_positions(supports, axles, step):
+    start = -sum(a.spacing for a in axles[:-1])
+    end = supports[-1] - start
+    count = max(2, int((end - start) / step + 1e-6) + 1)
+    values = {min(end, start + i * step) for i in range(count)}
+    values.add(end)
+    from app.live_load import reverse_axles
+    for direction in (list(axles), reverse_axles(axles)):
+        for support in supports:
+            distance = 0.0
+            for i, axle in enumerate(direction):
+                for sign in (1, -1):
+                    lead = support + sign * distance
+                    for offset in (-1e-6, 0.0, 1e-6):
+                        if start <= lead + offset <= end:
+                            values.add(lead + offset)
+                if i < len(direction) - 1:
+                    distance += axle.spacing
+    return sorted(values)
+
+
+default_positions = truck_positions(lane_supports, lane_axles, 0.25)
+check("default travel matches reference algorithm",
+      1 if default_positions == reference_positions(
+          lane_supports, lane_axles, 0.25) else 0, 1)
+check("default travel enters at minus truck length",
+      default_positions[0], -truck_len)
+check("default travel exits at span end plus truck length",
+      default_positions[-1], lane_supports[-1] + truck_len)
+lane_positions = truck_positions(lane_supports, lane_axles, 0.25, 10.0, 55.0)
+check("lane start bounds the sweep", lane_positions[0], 10.0 - truck_len)
+check("lane end bounds the sweep", lane_positions[-1], 55.0 + truck_len)
+
+full_cfg = LiveLoadConfig(elems_per_span=8, truck_increment=0.5,
+                          load_case="truck", dla_override=0.25,
+                          truck_model="Custom")
+full = live_analyze([LLSpan(35.0), LLSpan(35.0), LLSpan(35.0)],
+                    [LLAxle(100.0, 8.0), LLAxle(80.0, 0.0)], full_cfg)
+lane_cfg = LiveLoadConfig(elems_per_span=8, truck_increment=0.5,
+                          load_case="truck", dla_override=0.25,
+                          truck_model="Custom", lane_start=0.0, lane_end=105.0,
+                          lane_offset=1.5, lane_name="Lane A")
+lane_full = live_analyze([LLSpan(35.0), LLSpan(35.0), LLSpan(35.0)],
+                         [LLAxle(100.0, 8.0), LLAxle(80.0, 0.0)], lane_cfg)
+check("full-bridge lane preserves moment envelope",
+      max(p.max for p in lane_full.moment), max(p.max for p in full.moment))
+check("full-bridge lane preserves moment minimum",
+      min(p.min for p in lane_full.moment), min(p.min for p in full.moment))
+check("lane appears in result summary",
+      1 if "Lane A" in lane_full.summary() else 0, 1)
+short_cfg = LiveLoadConfig(elems_per_span=8, truck_increment=0.5,
+                           load_case="truck", dla_override=0.25,
+                           truck_model="Custom", lane_start=50.0,
+                           lane_end=55.0)
+short = live_analyze([LLSpan(35.0), LLSpan(35.0), LLSpan(35.0)],
+                     [LLAxle(100.0, 8.0), LLAxle(80.0, 0.0)], short_cfg)
+short_at_14 = min(short.moment, key=lambda p: abs(p.x - 14.0)).max
+full_at_14 = min(full.moment, key=lambda p: abs(p.x - 14.0)).max
+check("short lane restrains travel into span 1",
+      1 if short_at_14 < full_at_14 else 0, 1)
 ll_auto = live_analyze([LLSpan(8.0)], [LLAxle(100.0, 0.0)],
                        LiveLoadConfig(elems_per_span=8, truck_increment=0.2,
                                       load_case="truck", dla_override=None,

@@ -1,4 +1,4 @@
-"""Analysis run control: choose available analyses, like SAP2000."""
+"""Analysis run control: choose from the available analysis types."""
 
 from __future__ import annotations
 

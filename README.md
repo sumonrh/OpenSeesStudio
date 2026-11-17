@@ -10,12 +10,12 @@ bridge live-load envelopes and result review. The interface uses a ribbon with
 task tabs, command groups and group captions, and the installer also includes an
 MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.16** - Corrected the beam-diagram bending-moment sign:
-> sagging `My` now plots on the correct side, active diagrams refresh when MCP
-> updates a result, and the three-span CL-625 example uses its governing truck
-> position.
+> **Latest release: 1.0.19** - Live-load workflow: separate
+> Vehicle, Lane and Live Load Case commands on the Load tab, persistent
+> definitions, and LL Max/Min/All moment plus shear envelopes in the main model
+> view.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.16 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.16).
+> or read the [1.0.19 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.19).
 
 ## Install on Windows
 
@@ -112,17 +112,29 @@ four unit-load influence solves per element.
 
 ![Bridge live load envelopes](docs/live_load.png)
 
-- **Structure:** add/remove spans, set E, I, elements per span and the truck
-  sweep increment, or import the spans and mean E/I from a selected beam chain
-  in the 3D model.
+- **Model:** support locations, span lengths and mean E/I are read from the
+  selected continuous beam chain in the 3D model; the dialog shows the detected
+  supports and spans, and only the influence-engine mesh and truck sweep
+  increment are analysis settings.
 - **Vehicle and lane:** CL-625, BCL-625 (variable axle 3-4 spacing from 6.6 m to
-  18 m) or a custom vehicle/train with 1-20 axles; lane name, lane UDL, DLA
-  mode and DLA multiplier d.
-- **Load cases:** Truck only, Lane load (80% truck plus favourable lane UDL
-  zones without DLA) or Envelope.
-- **Results:** shear, moment and deflection max/min envelopes with governing
-  positions; support reaction maxima/minima and governing lead positions;
-  unit-load influence lines; summary diagnostics and CSV export.
+  18 m) or a custom vehicle/train with 1-20 axles; an axle elevation
+  shows loads and spacing dimensions; lane name, lane UDL, DLA mode and DLA
+  multiplier d. The BCL axle-spacing control is shown only for BCL-625.
+- **Vehicle, lane and case:** the Load tab has separate **Vehicles**,
+  **Lanes** and **Live Load Case** commands. Vehicles store axle loads/spacing;
+  lanes store a straight or curved element chain and lateral shift; a live-load
+  case selects a saved vehicle and lane plus DLA and lane UDL.
+- **Traffic lanes:** define a lane from a selected single line of beam elements,
+  straight or curved, with the direction set from the start to the end of the
+  chain (reverse if needed). A lateral shift places the lane and its CL-625 wheel
+  lines across the bridge.
+- **Result cases:** **LL Max** displays the upper truck envelope, **LL Min** the
+  lower truck envelope, and **LL All** both curves for the combined live-load
+  envelope. Moment **My** and vertical shear **Vz** can be displayed together in
+  the main model view.
+- **Dialog scope:** the live-load case dialog only selects the saved vehicle and
+  lane and runs the analysis; it contains no result plots. Envelopes are
+  displayed by selecting LL Max, LL Min or LL All in the Results view.
 
 The truck is swept in both axle orientations. Auto DLA uses the selected-axle
 40/30/25% groups; a manual override and the d multiplier are also available.
@@ -330,7 +342,7 @@ made with the built-in templates:
 ![results and model lock](docs/results_lock.png)
 
 **AI integration**
-- MCP server (89 tools) so AI agents can build models, run analyses and read
+- MCP server (95 tools) so AI agents can build models, run analyses and read
   results; optional live GUI bridge with screenshots, visibility and labels.
 
 **Project and scripting**
@@ -411,7 +423,7 @@ commands are reported in the message log.
 ## MCP server (AI agents)
 
 `mcp_server/` exposes OpenSees Studio to AI agents over the **Model Context
-Protocol** (stdio transport, 89 tools). Agents can build the whole model,
+Protocol** (stdio transport, 95 tools). Agents can build the whole model,
 run analyses and read results.
 
 **Tools** (grouped): project new/open/save/summary; nodes (single, list, line,
@@ -545,7 +557,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.16-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.19-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

@@ -66,7 +66,217 @@ class Node:
                     [_f(s) for s in d.get("spring", [0.0] * 6)])
 
 
+@dataclass
+class Lane:
+    """Straight traffic lane in plan.
+
+    Start/end are model coordinates (mm).  ``offset`` is a lateral shift in mm,
+    positive to the left of the start -> end direction.  The lane is used by the
+    live-load sweep to bound truck travel and by the viewport to place the lane
+    and its wheel lines.
+    """
+
+    tag: int
+    name: str = "Lane 1"
+    start: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    end: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    offset: float = 0.0
+    width: float = 0.0
+    points: List[Tuple[float, float, float]] = field(default_factory=list)
+    element_tags: List[int] = field(default_factory=list)
+
+    @property
+    def path(self) -> List[Tuple[float, float, float]]:
+        if len(self.points) >= 2:
+            return list(self.points)
+        return [self.start, self.end]
+
+    @property
+    def length(self) -> float:
+        pts = self.path
+        return sum(math.dist(a, b) for a, b in zip(pts[:-1], pts[1:]))
+
+    @property
+    def direction(self) -> Tuple[float, float, float]:
+        pts = self.path
+        length = math.dist(pts[0], pts[-1])
+        if length <= 1e-12:
+            return (1.0, 0.0, 0.0)
+        return ((pts[-1][0] - pts[0][0]) / length,
+                (pts[-1][1] - pts[0][1]) / length,
+                (pts[-1][2] - pts[0][2]) / length)
+
+    @property
+    def lateral_axis(self) -> Tuple[float, float, float]:
+        """Unit horizontal vector 90 deg left of the lane direction."""
+        dx, dy, _dz = self.direction
+        length = math.hypot(dx, dy)
+        if length <= 1e-12:
+            return (0.0, 1.0, 0.0)
+        return (-dy / length, dx / length, 0.0)
+
+    def _vertex_normals(self) -> List[Tuple[float, float, float]]:
+        pts = self.path
+        normals = []
+        for i in range(len(pts)):
+            if i == 0:
+                dx = pts[1][0] - pts[0][0]
+                dy = pts[1][1] - pts[0][1]
+            elif i == len(pts) - 1:
+                dx = pts[-1][0] - pts[-2][0]
+                dy = pts[-1][1] - pts[-2][1]
+            else:
+                dx = pts[i + 1][0] - pts[i - 1][0]
+                dy = pts[i + 1][1] - pts[i - 1][1]
+            length = math.hypot(dx, dy)
+            if length <= 1e-12:
+                normals.append((0.0, 1.0, 0.0))
+            else:
+                normals.append((-dy / length, dx / length, 0.0))
+        return normals
+
+    def shifted_points(self, lateral: Optional[float] = None) -> List[
+            Tuple[float, float, float]]:
+        shift = self.offset if lateral is None else float(lateral)
+        pts = self.path
+        normals = self._vertex_normals()
+        return [(p[0] + n[0] * shift, p[1] + n[1] * shift, p[2])
+                for p, n in zip(pts, normals)]
+
+    def shifted_point(self, point: Tuple[float, float, float],
+                      lateral: float) -> Tuple[float, float, float]:
+        ax, ay, _az = self.lateral_axis
+        return (point[0] + ax * lateral, point[1] + ay * lateral, point[2])
+
+    @property
+    def shifted_start(self) -> Tuple[float, float, float]:
+        return self.shifted_points()[0]
+
+    @property
+    def shifted_end(self) -> Tuple[float, float, float]:
+        return self.shifted_points()[-1]
+
+    def wheel_paths(self, gauge: float):
+        half = max(float(gauge), 0.0) / 2.0
+        return (self.shifted_points(self.offset + half),
+                self.shifted_points(self.offset - half))
+
+    def wheel_lines(self, gauge: float) -> Tuple[
+            Tuple[Tuple[float, float, float], Tuple[float, float, float]],
+            Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+        left, right = self.wheel_paths(gauge)
+        return (left[0], left[-1]), (right[0], right[-1])
+
+    def to_dict(self) -> dict:
+        return {
+            "tag": self.tag,
+            "name": self.name,
+            "start": [float(v) for v in self.start],
+            "end": [float(v) for v in self.end],
+            "offset": float(self.offset),
+            "width": float(self.width),
+            "points": [[float(v) for v in p] for p in self.points],
+            "element_tags": [int(t) for t in self.element_tags],
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Lane":
+        start = d.get("start", [0.0, 0.0, 0.0])
+        end = d.get("end", [0.0, 0.0, 0.0])
+        points = [tuple(float(v) for v in p) for p in d.get("points", [])]
+        if len(points) >= 2:
+            start, end = points[0], points[-1]
+        return Lane(
+            int(d["tag"]),
+            str(d.get("name", "Lane")),
+            (float(start[0]), float(start[1]), float(start[2])),
+            (float(end[0]), float(end[1]), float(end[2])),
+            _f(d.get("offset")),
+            _f(d.get("width")),
+            points,
+            [int(t) for t in d.get("element_tags", [])],
+        )
+
+
 MATERIAL_KINDS = ("Elastic", "ElasticPP", "Steel02", "Concrete02")
+
+
+@dataclass
+class Vehicle:
+    """Saved moving-load vehicle definition."""
+
+    tag: int
+    name: str = "CL-625"
+    model: str = "CL-625"
+    axles: List[Tuple[float, float]] = field(default_factory=list)
+    bcl_subdivision: float = 1.0
+
+    def to_dict(self) -> dict:
+        return {
+            "tag": self.tag,
+            "name": self.name,
+            "model": self.model,
+            "axles": [[float(a), float(s)] for a, s in self.axles],
+            "bcl_subdivision": float(self.bcl_subdivision),
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Vehicle":
+        return Vehicle(
+            int(d["tag"]),
+            str(d.get("name", "Vehicle")),
+            str(d.get("model", "CL-625")),
+            [(float(a), float(s)) for a, s in d.get("axles", [])],
+            _f(d.get("bcl_subdivision", 1.0)),
+        )
+
+
+@dataclass
+class LiveLoadCase:
+    """Named vehicle + lane moving-load definition."""
+
+    name: str
+    vehicle_tag: int = 0
+    lane_tag: int = 0
+    lane_udl: float = 9.0
+    dla_override: Optional[float] = None
+    dla_multiplier: float = 1.0
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "vehicle_tag": int(self.vehicle_tag),
+            "lane_tag": int(self.lane_tag),
+            "lane_udl": float(self.lane_udl),
+            "dla_override": (None if self.dla_override is None
+                             else float(self.dla_override)),
+            "dla_multiplier": float(self.dla_multiplier),
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "LiveLoadCase":
+        override = d.get("dla_override")
+        return LiveLoadCase(
+            str(d.get("name", "LL")),
+            int(d.get("vehicle_tag", 0) or 0),
+            int(d.get("lane_tag", 0) or 0),
+            _f(d.get("lane_udl", 9.0)),
+            None if override is None else _f(override),
+            _f(d.get("dla_multiplier", 1.0)),
+        )
+
+
+def default_vehicles() -> Dict[int, Vehicle]:
+    return {
+        1: Vehicle(1, "CL-625", "CL-625", [
+            (50.0, 3.6), (125.0, 1.2), (125.0, 6.6),
+            (175.0, 6.6), (150.0, 0.0)]),
+        2: Vehicle(2, "BCL-625", "BCL-625", [
+            (50.0, 3.6), (140.0, 1.2), (140.0, 6.6),
+            (175.0, 6.6), (120.0, 0.0)], 1.0),
+    }
+
+
 
 
 @dataclass
@@ -736,6 +946,9 @@ class Project:
         self.ground_motions: Dict[int, GroundMotionRecord] = {}
         self.time_history: TimeHistoryCase = TimeHistoryCase()
         self.response_spectrum: ResponseSpectrumCase = ResponseSpectrumCase()
+        self.lanes: Dict[int, Lane] = {}
+        self.vehicles: Dict[int, Vehicle] = default_vehicles()
+        self.live_load_cases: Dict[str, LiveLoadCase] = {}
         self.settings: dict = dict(DEFAULT_SETTINGS)
         self.title: str = "Untitled"
         self.path: str = ""
@@ -768,6 +981,12 @@ class Project:
 
     def next_ground_motion(self) -> int:
         return self._next(self.ground_motions.keys())
+
+    def next_lane(self) -> int:
+        return self._next(self.lanes.keys())
+
+    def next_vehicle(self) -> int:
+        return self._next(self.vehicles.keys())
 
     def next_load(self) -> int:
         return max([l.tag for l in self.nodal_loads] + [l.tag for l in self.elem_loads] + [0]) + 1
@@ -919,6 +1138,10 @@ class Project:
             "ground_motions": [g.to_dict() for g in self.ground_motions.values()],
             "time_history": self.time_history.to_dict(),
             "response_spectrum": self.response_spectrum.to_dict(),
+            "lanes": [lane.to_dict() for lane in self.lanes.values()],
+            "vehicles": [vehicle.to_dict() for vehicle in self.vehicles.values()],
+            "live_load_cases": [case.to_dict()
+                                for case in self.live_load_cases.values()],
             "settings": self.settings,
         }
 
@@ -958,6 +1181,14 @@ class Project:
         }
         p.response_spectrum = ResponseSpectrumCase.from_dict(
             d.get("response_spectrum", {}))
+        p.lanes = {lane.tag: lane for lane in (
+            Lane.from_dict(x) for x in d.get("lanes", []))}
+        p.vehicles = {vehicle.tag: vehicle for vehicle in (
+            Vehicle.from_dict(x) for x in d.get("vehicles", []))}
+        if not p.vehicles:
+            p.vehicles = default_vehicles()
+        p.live_load_cases = {case.name: case for case in (
+            LiveLoadCase.from_dict(x) for x in d.get("live_load_cases", []))}
         legacy = d.get("hinges", [])
         if legacy and not p.hinge_defs:
             grouped = {}
