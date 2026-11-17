@@ -169,6 +169,7 @@ class Viewport(QWidget):
         self.load_scenario: str = ""
         self.display_cases: Set[str] = set()
         self.load_filter_active = False
+        self.show_lanes = True
 
         self.mirror_plane: Optional[Tuple[int, float]] = None
 
@@ -179,6 +180,14 @@ class Viewport(QWidget):
         self.diagram_scale: float = 0.0
         self.diagram_values = False
         self.diagram_fill = True
+
+        self.live_load_envelope = None
+        self.live_load_envelopes = {}
+        self.live_load_path = []
+        self.live_load_name = ""
+        self.live_load_mode = "both"
+        self.live_load_scale = 0.0
+        self.live_load_fill = True
 
         self._band: Optional[QRect] = None
         self._press: Optional[QPoint] = None
@@ -267,6 +276,9 @@ class Viewport(QWidget):
         self.static_results = res
         self.modal_results = None
         self.deformed_scale = None
+        self.live_load_envelope = None
+        self.live_load_envelopes = {}
+        self.live_load_path = []
         self.update()
 
     def set_modal_results(self, res: Optional[ModalResults], mode: int = 1) -> None:
@@ -276,6 +288,9 @@ class Viewport(QWidget):
         self.deformed_scale = None
         self.diagram_results = None
         self.show_diagrams = False
+        self.live_load_envelope = None
+        self.live_load_envelopes = {}
+        self.live_load_path = []
         self.update()
 
     def set_load_scenario(self, scenario: str) -> None:
@@ -301,11 +316,53 @@ class Viewport(QWidget):
         self.diagram_values = bool(values)
         self.diagram_fill = bool(fill)
         self.show_diagrams = bool(res and self.diagram_components)
+        self.live_load_envelope = None
+        self.live_load_envelopes = {}
+        self.live_load_path = []
         self.update()
 
     def clear_diagrams(self) -> None:
         self.diagram_results = None
         self.show_diagrams = False
+        self.live_load_envelope = None
+        self.live_load_envelopes = {}
+        self.live_load_path = []
+        self.update()
+
+    def set_live_load_envelope(self, moment, path, name: str = "LL All",
+                               mode: str = "both", scale: float = 0.0,
+                               fill: bool = True) -> None:
+        """Draw one moving-load moment envelope along a model chain."""
+        self.set_live_load_envelopes(
+            {"My": moment}, path, name, mode, scale, fill)
+
+    def set_live_load_envelopes(self, envelopes, path,
+                                name: str = "LL All", mode: str = "both",
+                                scale: float = 0.0, fill: bool = True) -> None:
+        """Draw moving-load envelopes for one or more force components.
+
+        ``envelopes`` maps component names (My, Vz) to sequences of
+        ``(x, max, min)`` in m and model force units. ``path`` is a sequence of
+        ``(x, (x, y, z))`` with x in m along the chain.
+        """
+        self.live_load_envelopes = {
+            str(comp): [(float(p[0]), float(p[1]), float(p[2])) for p in points]
+            for comp, points in envelopes.items() if points}
+        first = next(iter(self.live_load_envelopes.values()), None)
+        self.live_load_envelope = first
+        self.live_load_path = [
+            (float(p[0]), tuple(float(v) for v in p[1])) for p in path]
+        self.live_load_name = name
+        self.live_load_mode = mode
+        self.live_load_scale = max(float(scale), 0.0)
+        self.live_load_fill = bool(fill)
+        self.show_diagrams = False
+        self.update()
+
+    def clear_live_load_envelope(self) -> None:
+        self.live_load_envelope = None
+        self.live_load_envelopes = {}
+        self.live_load_path = []
         self.update()
 
     def clear_results(self) -> None:
@@ -582,6 +639,14 @@ class Viewport(QWidget):
         # ---- beam force diagrams --------------------------------------
         if self.show_diagrams and self.diagram_results:
             self._draw_diagrams(p, w, h)
+
+        # ---- traffic lanes ---------------------------------------------
+        if self.show_lanes:
+            self._draw_lanes(p, w, h)
+
+        # ---- moving-load envelope --------------------------------------
+        if self.live_load_envelope and self.live_load_path:
+            self._draw_live_load_envelope(p, w, h)
 
         # ---- loads -----------------------------------------------------
         if self.show_loads:
@@ -871,6 +936,113 @@ class Viewport(QWidget):
 
         self._draw_diagram_legend(p, w, h, comps, scenario)
 
+    def _draw_live_load_envelope(self, p: QPainter, w: int, h: int) -> None:
+        """Draw LL Max/Min/All envelopes for the selected components."""
+        envelopes = self.live_load_envelopes
+        if not envelopes and self.live_load_envelope:
+            envelopes = {"My": self.live_load_envelope}
+        path = self.live_load_path
+        if not envelopes or not path:
+            return
+        mode = self.live_load_mode
+        (x0, y0, z0), (x1, y1, z1) = self.project.bbox()
+        diag = max(math.dist((x0, y0, z0), (x1, y1, z1)), 1.0)
+        user_scale = self.live_load_scale if self.live_load_scale > 0 else 1.0
+        cam = self.camera
+
+        def point_at(x: float):
+            if x <= path[0][0]:
+                return path[0][1]
+            if x >= path[-1][0]:
+                return path[-1][1]
+            for i in range(1, len(path)):
+                xa, pa = path[i - 1]
+                xb, pb = path[i]
+                if x <= xb:
+                    t = 0.0 if xb == xa else (x - xa) / (xb - xa)
+                    return tuple(a + (b - a) * t for a, b in zip(pa, pb))
+            return path[-1][1]
+
+        zero = []
+        for _x, point in path:
+            s = cam.project(point, w, h)
+            if s:
+                zero.append(s)
+        if len(zero) < 2:
+            return
+        p.setPen(QPen(QColor("#9aa9b9"), 1.0, Qt.DashLine))
+        p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in zero]))
+
+        colors = {
+            "My": ("#0f6fb8", "#c92a2a"),
+            "Vz": ("#7c5cbf", "#e8622c"),
+            "Vy": ("#7c5cbf", "#e8622c"),
+        }
+        legend_rows = []
+        for comp in ("My", "Vz", "Vy"):
+            env = envelopes.get(comp)
+            if not env:
+                continue
+            values = []
+            if mode in ("max", "both"):
+                values.extend(abs(v[1]) for v in env)
+            if mode in ("min", "both"):
+                values.extend(abs(v[2]) for v in env)
+            max_abs = max(values, default=0.0)
+            if max_abs <= 0:
+                continue
+            factor = 0.10 * diag / max_abs * user_scale
+            max_color, min_color = colors.get(comp, ("#0f6fb8", "#c92a2a"))
+            mx, mn = [], []
+            for x, hi, lo in env:
+                base = point_at(x)
+                if mode in ("max", "both"):
+                    s = cam.project(
+                        (base[0], base[1], base[2] + hi * factor), w, h)
+                    if s:
+                        mx.append(s)
+                if mode in ("min", "both"):
+                    s = cam.project(
+                        (base[0], base[1], base[2] + lo * factor), w, h)
+                    if s:
+                        mn.append(s)
+            if self.live_load_fill and mode == "both" and len(mx) == len(mn) >= 2:
+                poly = QPolygonF([QPointF(s[0], s[1]) for s in mx] +
+                                 [QPointF(s[0], s[1]) for s in reversed(mn)])
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(QColor(15, 111, 184, 22)))
+                p.drawPolygon(poly)
+                p.setBrush(Qt.NoBrush)
+            if len(mx) >= 2:
+                p.setPen(QPen(QColor(max_color), 2.2))
+                p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in mx]))
+            if len(mn) >= 2:
+                p.setPen(QPen(QColor(min_color), 2.2, Qt.DashLine))
+                p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in mn]))
+            legend_rows.append((comp, max_color, min_color))
+
+        title = f"{self.live_load_name} envelope"
+        p.setFont(QFont("Segoe UI", 8))
+        fm = p.fontMetrics()
+        rows = [title] + [f"{comp} max/min" for comp, _a, _b in legend_rows]
+        bw = max(fm.horizontalAdvance(s) for s in rows) + 46
+        bh = 10 + len(rows) * (fm.height() + 3) + 4
+        bx = w - bw - 12
+        p.setPen(QPen(QColor(theme.BORDER), 1.0))
+        p.setBrush(QBrush(QColor(255, 255, 255, 225)))
+        p.drawRoundedRect(QRectF(bx, 10, bw, bh), 4, 4)
+        p.setPen(QPen(QColor(theme.ACCENT_DARK)))
+        p.drawText(QPointF(bx + 10, 24), title)
+        y = 24 + fm.height() + 3
+        for comp, max_color, min_color in legend_rows:
+            p.setPen(QPen(QColor(max_color), 2.2))
+            p.drawLine(QPointF(bx + 10, y - 4), QPointF(bx + 24, y - 4))
+            p.setPen(QPen(QColor(min_color), 2.2, Qt.DashLine))
+            p.drawLine(QPointF(bx + 28, y - 4), QPointF(bx + 42, y - 4))
+            p.setPen(QPen(QColor("#41566e")))
+            p.drawText(QPointF(bx + 48, y), f"{comp} max/min")
+            y += fm.height() + 3
+
     def _draw_diagram_legend(self, p: QPainter, w: int, h: int,
                              comps: Sequence[str], scenario: str) -> None:
         p.setFont(QFont("Segoe UI", 8))
@@ -898,6 +1070,46 @@ class Viewport(QWidget):
             p.drawText(QPointF(x + 54, y),
                        UNITS.moment_unit if c in MOMENT_COMPONENTS else UNITS.force_unit)
             y += fm.height() + 3
+
+    def _draw_lanes(self, p: QPainter, w: int, h: int) -> None:
+        """Draw traffic lane centerlines and CL-625 wheel lines in plan."""
+        if not self.project or not self.project.lanes:
+            return
+        cam = self.camera
+        gauge = 1800.0
+        for lane in self.project.lanes.values():
+            pts = lane.shifted_points()
+            projected = [cam.project(point, w, h) for point in pts]
+            if len(projected) < 2 or any(s is None for s in projected):
+                continue
+            # Offset the drawn centerline in screen space so a lane centred on
+            # a girder is not hidden by the member and its diagram.
+            offset_pts = [(s[0], s[1] + 12.0) for s in projected]
+            p.setPen(QPen(QColor("#9aa9b9"), 1.0, Qt.DashLine))
+            p.drawLine(QPointF(projected[0][0], projected[0][1]),
+                       QPointF(offset_pts[0][0], offset_pts[0][1]))
+            p.drawLine(QPointF(projected[-1][0], projected[-1][1]),
+                       QPointF(offset_pts[-1][0], offset_pts[-1][1]))
+            p.setPen(QPen(QColor("#16a34a"), 3.0))
+            p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in offset_pts]))
+            for point in (offset_pts[0], offset_pts[-1]):
+                p.setBrush(QBrush(QColor("#16a34a")))
+                p.setPen(Qt.NoPen)
+                p.drawEllipse(QPointF(point[0], point[1]), 3.5, 3.5)
+            p.setBrush(Qt.NoBrush)
+            left, right = lane.wheel_paths(gauge)
+            for line, dy in ((left, 4.0), (right, 20.0)):
+                screen = [cam.project(point, w, h) for point in line]
+                if len(screen) >= 2 and all(s is not None for s in screen):
+                    p.setPen(QPen(QColor("#7c5cbf"), 1.5, Qt.DashLine))
+                    p.drawPolyline(QPolygonF([
+                        QPointF(s[0], s[1] + dy) for s in screen]))
+            label = lane.name
+            if abs(lane.offset) > 1e-9:
+                label += f"  ({lane.offset / 1000.0:+.2f} m)"
+            p.setFont(QFont("Segoe UI", 7))
+            p.setPen(QPen(QColor("#166534")))
+            p.drawText(QPointF(offset_pts[0][0] + 6, offset_pts[0][1] - 6), label)
 
     def _draw_mirror_plane(self, p: QPainter, w: int, h: int) -> None:
         if self.project is None or not self.project.nodes or self.mirror_plane is None:

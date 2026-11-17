@@ -2,7 +2,7 @@
 
 **Status:** proposed implementation plan  
 **Engine baseline:** OpenSeesPy 3.8.0.0, 3D, 6 DOF per node  
-**Current application:** OpenSees Studio 1.0.16
+**Current application:** OpenSees Studio 1.0.19
 **Prepared:** 2026-11-12
 
 **Implementation status:** the Results-tab mode selector, node visibility toggle,

@@ -67,6 +67,9 @@ class LiveLoadConfig:
     truck_model: str = "Custom"
     bcl_subdivision: float = 1.0
     lane_name: str = "Lane 1"
+    lane_start: Optional[float] = None   # m, start of lane travel
+    lane_end: Optional[float] = None     # m, end of lane travel
+    lane_offset: float = 0.0             # m, lateral shift (informational)
 
 
 @dataclass
@@ -156,6 +159,11 @@ class LiveLoadResults:
             f"Load case: {self.load_case}",
             f"Spans: {', '.join(f'{s.length:g}' for s in self.spans)} m",
             f"Truck: {self.config.truck_model}  ({len(self.axles)} axles)",
+            ("Lane: " + self.config.lane_name
+             + (f"  x={self.config.lane_start:g}..{self.config.lane_end:g} m"
+                if self.config.lane_start is not None
+                and self.config.lane_end is not None else "")
+             + f"  lateral shift {self.config.lane_offset:g} m"),
             f"Effective sweep: {self.increment_used:.4g} m ({self.increment_reason})",
             dla_text,
             f"Positions: {len(self.truck_positions)}",
@@ -305,23 +313,45 @@ def validate(spans: Sequence[Span], axles: Sequence[Axle],
         raise ValueError("DLA multiplier d must be between 0 and 1.")
     if not math.isfinite(config.lane_udl) or config.lane_udl < 0:
         raise ValueError("Lane UDL must be non-negative.")
+    if not math.isfinite(config.lane_offset):
+        raise ValueError("Lane lateral shift must be finite.")
+    if (config.lane_start is not None or config.lane_end is not None):
+        if config.lane_start is None or config.lane_end is None:
+            raise ValueError("Provide both lane start and lane end.")
+        if not (math.isfinite(config.lane_start)
+                and math.isfinite(config.lane_end)):
+            raise ValueError("Lane start/end must be finite.")
+        if config.lane_end <= config.lane_start:
+            raise ValueError("Lane end must be greater than lane start.")
 
 
 def truck_positions(supports: Sequence[float], axles: Sequence[Axle],
-                    step: float) -> List[float]:
+                    step: float, lane_start: Optional[float] = None,
+                    lane_end: Optional[float] = None) -> List[float]:
+    """Truck lead-axle positions for the lane or the full bridge.
+
+    The vehicle is allowed to enter and leave the lane, so the lead axle
+    sweeps from ``lane_start - truck_length`` to ``lane_end + truck_length``.
+    This matches the reference Live-Load-Analyzer sweep when the lane covers
+    the full bridge (lane_start=0, lane_end=total span).
+    """
     length = sum(a.spacing for a in axles[:-1])
-    start = -length
-    end = supports[-1] + length
+    first = supports[0] if lane_start is None else float(lane_start)
+    last = supports[-1] if lane_end is None else float(lane_end)
+    if last <= first:
+        raise ValueError("Lane end must be greater than lane start.")
+    start = first - length
+    end = last + length
     count = max(2, int(math.floor((end - start) / step + 1e-6)) + 1)
     values = {min(end, start + i * step) for i in range(count)}
     values.add(end)
-    # Support and axle alignment positions improve reaction extrema.
-    for direction in (list(axles), reverse_axles(axles)):
-        for support in supports:
+    # Support, lane-end and axle alignment positions improve extrema.
+    for edge in (list(supports) + [first, last]):
+        for direction in (list(axles), reverse_axles(axles)):
             distance = 0.0
             for i, axle in enumerate(direction):
                 for sign in (1, -1):
-                    lead = support + sign * distance
+                    lead = edge + sign * distance
                     for offset in (-1e-6, 0.0, 1e-6):
                         value = lead + offset
                         if start <= value <= end:
@@ -599,7 +629,8 @@ def analyze(spans: Sequence[Span], axles: Sequence[Axle],
     system = BeamSystem(spans, config)
     step, reason = compute_effective_increment(
         spans, longest, config.truck_increment, config.elems_per_span)
-    positions = truck_positions(system.supports, longest, step)
+    positions = truck_positions(system.supports, longest, step,
+                                config.lane_start, config.lane_end)
     progress and progress(0.15, f"Building influence functions ({system.n_elems} elements)...")
 
     udl_cache: Dict[float, Tuple[np.ndarray, np.ndarray]] = {}
@@ -846,6 +877,59 @@ def _case_scalar(system: BeamSystem, lead: float, response: int,
 # --------------------------------------------------------------------------- #
 # import from a selected beam chain
 # --------------------------------------------------------------------------- #
+def chain_geometry(project, selected: Iterable[int]):
+    """Order selected beam elements into a single-node-wide chain.
+
+    Returns ``{"points": [(distance_m, xyz), ...], "element_tags": [...],
+    "node_tags": [...]}`` or ``None`` when the selection is not a single line.
+    """
+    tags = [int(t) for t in selected if int(t) in project.elements]
+    edges = []
+    for tag in tags:
+        e = project.elements[tag]
+        if e.kind == "beam" and len(e.nodes) >= 2:
+            edges.append((tag, int(e.nodes[0]), int(e.nodes[1])))
+    if not edges:
+        return None
+    adjacency: Dict[int, List[Tuple[int, int]]] = {}
+    for tag, a, b in edges:
+        adjacency.setdefault(a, []).append((b, tag))
+        adjacency.setdefault(b, []).append((a, tag))
+    endpoints = [node for node, links in adjacency.items() if len(links) == 1]
+    if len(endpoints) == 2:
+        start = min(endpoints)
+    elif len(endpoints) == 0:
+        start = min(adjacency)
+    else:
+        return None
+    node_path = [start]
+    edge_path: List[int] = []
+    used = set()
+    current = start
+    while len(used) < len(edges):
+        options = [(nxt, tag) for nxt, tag in adjacency.get(current, [])
+                   if tag not in used]
+        if not options:
+            break
+        nxt, tag = options[0]
+        used.add(tag)
+        edge_path.append(tag)
+        node_path.append(nxt)
+        current = nxt
+    if len(used) != len(edges) or len(node_path) != len(edges) + 1:
+        return None
+    if node_path[0] == node_path[-1]:
+        return None
+    points = [(0.0, project.node_xyz(node_path[0]))]
+    distance = 0.0
+    for i in range(1, len(node_path)):
+        distance += project.element_length(
+            project.elements[edge_path[i - 1]]) / 1000.0
+        points.append((distance, project.node_xyz(node_path[i])))
+    return {"points": points, "element_tags": edge_path,
+            "node_tags": node_path}
+
+
 def beam_chain_from_project(project, selected: Iterable[int]
                             ) -> Optional[Tuple[List[Span], float, float, str]]:
     """Return spans, E (Pa), I (m4) and a note for a selected beam chain."""
@@ -947,7 +1031,7 @@ def beam_chain_from_project(project, selected: Iterable[int]
         return None
     E = sum(e_values) / len(e_values)
     I = sum(i_values) / len(i_values)
-    note = (f"Imported {len(edges)} beam element(s), {len(spans)} span(s), "
+    note = (f"Beam chain: {len(edges)} element(s), {len(spans)} span(s), "
             f"{sum(s.length for s in spans):g} m; E={E / 1e9:g} GPa, "
-            f"I={I:.6g} m4 (mean of selected members).")
+            f"I={I:.6g} m4 (mean of the chain members).")
     return spans, E, I, note

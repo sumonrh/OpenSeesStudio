@@ -54,7 +54,7 @@ from app import (groundmotion, hinge_catalog, live_load as live_load_engine,
                  wizards)
 from app import section_property
 from app.model import (BoundaryConstraint, Element, ElementLoad,  # noqa: E402
-                       GroundMotionRecord, HingeDefinition, LoadCase,
+                       GroundMotionRecord, HingeDefinition, Lane, LoadCase,
                        LoadCombination, Material, NodalLoad, Node, Project,
                        ResponseSpectrumCase, Section, SpringSupport,
                        TimeHistoryCase, default_project)
@@ -184,6 +184,9 @@ def _summary() -> dict:
         "supports": sum(1 for n in p.nodes.values() if any(n.support)),
         "springs": len(p.springs),
         "constraints": len(p.constraints),
+        "lanes": len(p.lanes),
+        "vehicles": len(p.vehicles),
+        "live_load_cases": list(p.live_load_cases),
         "load_cases": list(p.cases),
         "combinations": list(p.combos),
         "nodal_loads": len(p.nodal_loads),
@@ -246,7 +249,7 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.16",
+    version="1.0.19",
     instructions=(
         "OpenSees Studio is a graphical model generator and analysis GUI for "
         "OpenSees. Use these tools to build structural models and analyse them.\n\n"
@@ -1280,6 +1283,107 @@ def delete_constraint(tag: int) -> dict:
     return {"ok": True}
 
 
+@server.tool()
+@_locked
+def add_lane(name: str, start: List[float], end: List[float],
+             offset: float = 0.0, width: float = 0.0) -> dict:
+    """Define a straight traffic lane from start/end points (mm).
+
+    offset is the lateral shift in mm, positive to the left of start -> end.
+    """
+    p = _p()
+    if len(start) != 3 or len(end) != 3:
+        raise ValueError("Lane start and end must be [x, y, z] points in mm.")
+    s = tuple(float(v) for v in start)
+    e = tuple(float(v) for v in end)
+    if any(abs(v) == float("inf") or v != v for v in (*s, *e)):
+        raise ValueError("Lane coordinates must be finite.")
+    if (sum((a - b) ** 2 for a, b in zip(s, e))) ** 0.5 <= 1e-6:
+        raise ValueError("Lane start and end must be different points.")
+    lane = Lane(p.next_lane(), name or "Lane", s, e,
+                float(offset), float(width))
+    p.lanes[lane.tag] = lane
+    _changed(f"add traffic lane {lane.tag}")
+    return {"ok": True, **lane.to_dict()}
+
+
+@server.tool()
+@_locked
+def add_lane_from_elements(name: str, beam_tags: List[int],
+                           offset: float = 0.0,
+                           reverse: bool = False) -> dict:
+    """Define a lane from a selected single beam-element chain.
+
+    The element tags must form one continuous line; the lane direction is the
+    chain order, optionally reversed.
+    """
+    p = _p()
+    geometry = live_load_engine.chain_geometry(p, [int(t) for t in beam_tags])
+    if geometry is None:
+        raise ValueError("beam_tags must form a single continuous beam line.")
+    points = [tuple(pt[1]) for pt in geometry["points"]]
+    elements = [int(t) for t in geometry["element_tags"]]
+    if reverse:
+        points.reverse()
+        elements.reverse()
+    lane = Lane(p.next_lane(), name or "Lane", points[0], points[-1],
+                float(offset), 0.0, points, elements)
+    p.lanes[lane.tag] = lane
+    _changed(f"add traffic lane {lane.tag} from elements")
+    return {"ok": True, **lane.to_dict()}
+
+
+@server.tool()
+@_locked
+def list_lanes() -> List[dict]:
+    """List traffic lane definitions."""
+    return [lane.to_dict() for lane in sorted(_p().lanes.values(),
+                                              key=lambda lane: lane.tag)]
+
+
+@server.tool()
+@_locked
+def update_lane(tag: int, name: Optional[str] = None,
+                start: Optional[List[float]] = None,
+                end: Optional[List[float]] = None,
+                offset: Optional[float] = None,
+                width: Optional[float] = None) -> dict:
+    """Update a traffic lane. Omitted fields keep their current values."""
+    p = _p()
+    lane = p.lanes.get(int(tag))
+    if lane is None:
+        raise ValueError(f"Unknown traffic lane {tag}.")
+    if name is not None:
+        lane.name = str(name)
+    if start is not None:
+        if len(start) != 3:
+            raise ValueError("Lane start must be [x, y, z] in mm.")
+        lane.start = tuple(float(v) for v in start)
+    if end is not None:
+        if len(end) != 3:
+            raise ValueError("Lane end must be [x, y, z] in mm.")
+        lane.end = tuple(float(v) for v in end)
+    if offset is not None:
+        lane.offset = float(offset)
+    if width is not None:
+        lane.width = float(width)
+    if lane.length <= 1e-6:
+        raise ValueError("Lane start and end must be different points.")
+    _changed(f"update traffic lane {tag}")
+    return {"ok": True, **lane.to_dict()}
+
+
+@server.tool()
+@_locked
+def delete_lane(tag: int) -> dict:
+    """Delete a traffic lane."""
+    if int(tag) not in _p().lanes:
+        raise ValueError(f"Unknown traffic lane {tag}.")
+    _p().lanes.pop(int(tag), None)
+    _changed(f"delete traffic lane {tag}")
+    return {"ok": True}
+
+
 # --------------------------------------------------------------------------- #
 # loads
 # --------------------------------------------------------------------------- #
@@ -1901,6 +2005,10 @@ def live_load(spans: Optional[List[float]] = None,
               dla_override: Optional[float] = None,
               dla_multiplier: float = 1.0,
               lane_udl: float = 9.0,
+              lane_start: Optional[float] = None,
+              lane_end: Optional[float] = None,
+              lane_offset: float = 0.0,
+              lane_tag: Optional[int] = None,
               beam_tags: Optional[List[int]] = None,
               include_curves: bool = True,
               include_influence: bool = False) -> dict:
@@ -1915,6 +2023,25 @@ def live_load(spans: Optional[List[float]] = None,
     envelope engine, not a time-history vehicle run.
     """
     beam_note = ""
+    lane_note = ""
+    if lane_tag is not None:
+        lane = _p().lanes.get(int(lane_tag))
+        if lane is None:
+            raise ValueError(f"Unknown traffic lane {lane_tag}.")
+        base_m = 0.0
+        if beam_tags:
+            base_m = min((_p().node_xyz(t)[0]
+                          for tag in beam_tags if int(tag) in _p().elements
+                          for t in _p().elements[int(tag)].nodes),
+                         default=0.0) / 1000.0
+        if lane_start is None:
+            lane_start = (min(lane.shifted_start[0], lane.shifted_end[0])
+                          / 1000.0 - base_m)
+        if lane_end is None:
+            lane_end = (max(lane.shifted_start[0], lane.shifted_end[0])
+                        / 1000.0 - base_m)
+        lane_offset = lane.offset / 1000.0
+        lane_note = lane.name
     if beam_tags:
         chain = live_load_engine.beam_chain_from_project(_p(), beam_tags)
         if chain is None:
@@ -1941,7 +2068,10 @@ def live_load(spans: Optional[List[float]] = None,
         dla_multiplier=float(dla_multiplier),
         lane_udl=float(lane_udl),
         truck_model=str(truck_model),
-        bcl_subdivision=float(bcl_subdivision))
+        bcl_subdivision=float(bcl_subdivision),
+        lane_start=(None if lane_start is None else float(lane_start)),
+        lane_end=(None if lane_end is None else float(lane_end)),
+        lane_offset=float(lane_offset))
     result = live_load_engine.analyze(span_objects, axle_objects, config)
 
     def summary(points, scale: float = 1.0) -> dict:
@@ -1985,6 +2115,12 @@ def live_load(spans: Optional[List[float]] = None,
         "increment_reason": result.increment_reason,
         "position_count": len(result.truck_positions),
         "bcl_spacings_m": result.bcl_spacings,
+        "lane": {
+            "name": lane_note or result.config.lane_name,
+            "start_m": result.config.lane_start,
+            "end_m": result.config.lane_end,
+            "offset_m": result.config.lane_offset,
+        },
         "summary": result.summary(),
         "cases": cases_out,
         "units": {"length": "m", "E": "GPa", "I": "m4",
@@ -2164,6 +2300,21 @@ def gui_show_results() -> dict:
         STATE.gui.call("show_mode", _modal_payload(STATE.modal, 1))
         return {"ok": True, "showing": "modal", "mode": 1}
     raise ValueError("No results yet. Run an analysis first.")
+
+
+@server.tool()
+@_locked
+def gui_show_diagram(scenario: str = "",
+                     components: Optional[List[str]] = None) -> dict:
+    """Show beam force diagrams for a static case in the attached GUI."""
+    if not STATE.gui.connected:
+        raise ValueError("No GUI attached. Call gui_connect first.")
+    comps = components or ["My"]
+    result = STATE.gui.call("show_diagram", {
+        "scenario": scenario, "components": comps})
+    return {"ok": True, "showing": "diagram",
+            "scenario": scenario or (STATE.static.scenario if STATE.static else ""),
+            "components": comps, "result": result}
 
 
 # --------------------------------------------------------------------------- #

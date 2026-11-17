@@ -36,7 +36,10 @@ class GuiBridge(QObject):
 
     def stop(self) -> None:
         for sock in list(self._clients):
-            sock.disconnectFromHost()
+            try:
+                sock.disconnectFromHost()
+            except RuntimeError:
+                pass
         self.server.close()
 
     def _accept(self) -> None:
@@ -48,10 +51,15 @@ class GuiBridge(QObject):
             sock.disconnected.connect(lambda s=sock: self._drop(s))
 
     def _drop(self, sock: QTcpSocket) -> None:
-        self._buffers.pop(sock, None)
-        if sock in self._clients:
-            self._clients.remove(sock)
-        sock.deleteLater()
+        try:
+            self._buffers.pop(sock, None)
+            if sock in self._clients:
+                self._clients.remove(sock)
+            sock.deleteLater()
+        except RuntimeError:
+            # Qt may already have destroyed the socket before the queued
+            # disconnected signal is delivered.
+            pass
 
     # ------------------------------------------------------------------ io
     def _read(self, sock: QTcpSocket) -> None:
@@ -130,6 +138,9 @@ class GuiBridge(QObject):
                     "width": pix.width(), "height": pix.height()}
         if cmd == "show_static":
             w.bridge_show_static(params)
+            return True
+        if cmd == "show_diagram":
+            w.bridge_show_diagram(params)
             return True
         if cmd == "show_mode":
             w.bridge_show_mode(params)

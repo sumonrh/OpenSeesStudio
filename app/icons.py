@@ -875,6 +875,15 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         _arrow_head(p, 1.5, 8.0, 0, -1, 1.8)
         _arrow_head(p, 1.5, 16.0, 0, 1, 1.8)
 
+    elif name == "lane":
+        _pen(p, "#8ea6bd", 1.1)
+        p.drawLine(QPointF(4.0, 5.0), QPointF(4.0, 21.0))
+        p.drawLine(QPointF(20.0, 5.0), QPointF(20.0, 21.0))
+        p.setPen(QPen(QColor(accent), 1.5, Qt.DashLine))
+        p.drawLine(QPointF(12.0, 5.0), QPointF(12.0, 21.0))
+        _fill(p, accent)
+        p.drawEllipse(QPointF(12.0, 5.0), 2.0, 2.0)
+
     elif name == "truck":
         _pen(p, INK, 1.4)
         p.drawRoundedRect(QRectF(2.5, 7.0, 12.5, 8.0), 1.2, 1.2)

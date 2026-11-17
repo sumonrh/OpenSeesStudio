@@ -60,7 +60,10 @@ async def main():
                              "assign_supports", "add_nodal_loads", "add_element_loads",
                              "add_load_case", "add_load_combination", "run_static",
                              "run_modal", "get_static_results", "gui_connect",
-                             "section_properties", "moment_curvature", "live_load"):
+                             "section_properties", "moment_curvature", "live_load",
+                             "add_lane", "add_lane_from_elements",
+                             "list_lanes", "update_lane", "delete_lane",
+                             "gui_show_diagram"):
                 check(f"tool {required}", required in names)
 
             resources = await session.list_resources()
@@ -240,6 +243,52 @@ async def main():
                   f"({r['cases']['truck']['moment']['max']:.3f} kN m)")
             check("live_load reaction envelope",
                   abs(r["cases"]["truck"]["reactions"][0]["max_kN"] - 100) < 1e-3)
+            lane = await call("add_lane",
+                              {"name": "Lane A", "start": [0, 0, 0],
+                               "end": [8000, 0, 0], "offset": 1500})
+            check("add lane", lane.get("tag") == 1 and lane.get("offset") == 1500,
+                  f"({lane})")
+            lanes = await call("list_lanes")
+            check("list lanes", len(lanes) == 1 and lanes[0]["name"] == "Lane A")
+            lane = await call("update_lane",
+                              {"tag": 1, "offset": 2000, "name": "Lane B"})
+            check("update lane", lane.get("offset") == 2000
+                  and lane.get("name") == "Lane B")
+            r = await call("live_load",
+                           {"spans": [8], "axles": [[100, 0]],
+                            "truck_model": "Custom", "load_case": "truck",
+                            "E_GPa": 200, "I_m4": 0.005,
+                            "elems_per_span": 8, "truck_increment": 0.2,
+                            "dla_override": 0.0, "include_curves": False,
+                            "lane_start": 0, "lane_end": 8, "lane_offset": 2.0})
+            check("live_load lane fields",
+                  abs(r["lane"]["start_m"]) < 1e-9
+                  and abs(r["lane"]["end_m"] - 8) < 1e-9
+                  and abs(r["lane"]["offset_m"] - 2) < 1e-9)
+            check("live_load lane keeps envelope",
+                  abs(r["cases"]["truck"]["moment"]["max"] - 200) < 1e-3)
+            r = await call("live_load",
+                           {"axles": [[100, 0]], "truck_model": "Custom",
+                            "load_case": "truck", "E_GPa": 200,
+                            "I_m4": 0.005, "elems_per_span": 8,
+                            "truck_increment": 0.2, "dla_override": 0.0,
+                            "include_curves": False, "lane_tag": 1,
+                            "beam_tags": [1]})
+            check("live_load reads lane tag",
+                  r["lane"]["name"] == "Lane B"
+                  and abs(r["lane"]["offset_m"] - 2.0) < 1e-9
+                  and len(r["spans_m"]) == 1 and r["spans_m"][0] > 0,
+                  f"({r.get('lane')}, spans={r.get('spans_m')})")
+            chain_lane = await call("add_lane_from_elements",
+                                    {"name": "Chain Lane", "beam_tags": [1]})
+            check("lane from element chain",
+                  chain_lane.get("tag") == 2
+                  and len(chain_lane.get("points", [])) == 2
+                  and chain_lane.get("element_tags") == [1],
+                  f"({chain_lane})")
+            await call("delete_lane", {"tag": 2})
+            await call("delete_lane", {"tag": 1})
+            check("delete lane", len(await call("list_lanes")) == 0)
             await call("assign_hinges", {"element_tags": [1], "hinge": hinge})
             await call("delete_hinge_definition", {"tag": mb_hinge})
             await call("delete_hinge_definition", {"tag": mc_hinge})
