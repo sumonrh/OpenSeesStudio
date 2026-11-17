@@ -5,15 +5,16 @@
 A graphical model generator and analysis GUI for **OpenSees**, built with Python,
 PySide6 and OpenSeesPy. It covers the complete workflow: model generation, supports and
 constraints, nonlinear frame members, bearings/isolators/dampers, load cases and
-combinations, static and modal analysis, pushover, time history, response spectrum and
-result review. The interface uses a ribbon with task tabs, command groups and group
-captions, and the installer also includes an MCP server so AI agents can drive the model.
+combinations, static and modal analysis, pushover, time history, response spectrum,
+bridge live-load envelopes and result review. The interface uses a ribbon with
+task tabs, command groups and group captions, and the installer also includes an
+MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.13** - Section Property Pro and Moment Curvature Pro in
-> the Tools tab, transferable custom sections, and moment-rotation spring hinges
-> for pushover and nonlinear time history.
+> **Latest release: 1.0.14** - Bridge live load in the Tools tab: CL-625,
+> BCL-625 and custom trucks, lanes, DLA, shear/moment/deflection envelopes,
+> reactions and influence lines from a beam influence-line engine.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.13 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.13).
+> or read the [1.0.14 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.14).
 
 ## Install on Windows
 
@@ -98,6 +99,37 @@ bending axes and torsion remains elastic. The other moment-rotation library
 materials remain reference-only until they receive a stored backbone.
 
 ![Moment-rotation backbone](docs/moment_backbone.png)
+
+## Bridge live load
+
+OpenSees does not provide a built-in truck/lane moving-load or influence-line
+module, so the Tools tab includes a bridge live-load analyser built on the
+influence-line engine from the Live Load Analyzer for Bridges. It analyses a
+continuous Euler-Bernoulli beam with pinned vertical supports at every span
+boundary and continuous rotations, using a single beam-FEM factorization and
+four unit-load influence solves per element.
+
+![Bridge live load envelopes](docs/live_load.png)
+
+- **Structure:** add/remove spans, set E, I, elements per span and the truck
+  sweep increment, or import the spans and mean E/I from a selected beam chain
+  in the 3D model.
+- **Vehicle and lane:** CL-625, BCL-625 (variable axle 3-4 spacing from 6.6 m to
+  18 m) or a custom vehicle/train with 1-20 axles; lane name, lane UDL, DLA
+  mode and DLA multiplier d.
+- **Load cases:** Truck only, Lane load (80% truck plus favourable lane UDL
+  zones without DLA) or Envelope.
+- **Results:** shear, moment and deflection max/min envelopes with governing
+  positions; support reaction maxima/minima and governing lead positions;
+  unit-load influence lines; summary diagnostics and CSV export.
+
+The truck is swept in both axle orientations. Auto DLA uses the selected-axle
+40/30/25% groups; a manual override and the d multiplier are also available.
+The analyser is a moving-load envelope tool, not a time-history vehicle run.
+For design use, match the bridge properties, lane rules and load factors to the
+project specification and obtain engineering review.
+
+![Live-load influence lines](docs/live_load_influence.png)
 
 ## Features
 
@@ -509,7 +541,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.13-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.14-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

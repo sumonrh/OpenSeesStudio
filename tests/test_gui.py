@@ -340,6 +340,7 @@ tools_actions = [b.defaultAction()
 check("tools tab has section property and moment curvature actions",
       win.a_section_props in tools_actions
       and win.a_moment_curvature in tools_actions)
+check("tools tab has bridge live load action", win.a_live_load in tools_actions)
 from app.tools_dialogs import (MomentCurvatureDialog,  # noqa: E402
                                SectionPropertyDialog)
 spd = SectionPropertyDialog(win.project)
@@ -382,6 +383,21 @@ check("assign hinges lists moment backbone definitions",
           for row in range(assign_dialog.table.rowCount())))
 assign_dialog.close()
 del win.project.hinge_defs[hinge.tag]
+from app.live_load_dialog import LiveLoadDialog  # noqa: E402
+lld = LiveLoadDialog(win.project, [])
+check("live load dialog has default spans and CL-625 axles",
+      len(lld._spans()) == 3 and len(lld._axles()) == 5
+      and lld.truck_model.currentData() == "CL-625")
+lld._analyze()
+check("live load dialog calculates envelopes",
+      lld.results is not None
+      and len(lld.results.moment) > 0
+      and lld.plot.xs)
+check("live load dialog fills reaction table",
+      lld.reaction_table.rowCount() == len(lld.results.reactions))
+check("live load dialog builds influence line",
+      len(lld.results.influence.get("moment_mid", [])) > 0)
+lld.close()
 check("node/element tab has selection group",
       win.a_sel_all in [b.defaultAction()
                         for b in win.ribbon._pages[2].findChildren(QToolButton)]

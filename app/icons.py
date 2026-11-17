@@ -875,6 +875,21 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         _arrow_head(p, 1.5, 8.0, 0, -1, 1.8)
         _arrow_head(p, 1.5, 16.0, 0, 1, 1.8)
 
+    elif name == "truck":
+        _pen(p, INK, 1.4)
+        p.drawRoundedRect(QRectF(2.5, 7.0, 12.5, 8.0), 1.2, 1.2)
+        p.drawRect(QRectF(15.0, 9.5, 5.5, 5.5))
+        p.drawLine(QPointF(15.0, 9.5), QPointF(18.0, 7.0))
+        p.drawLine(QPointF(18.0, 7.0), QPointF(20.5, 7.0))
+        _fill(p, accent)
+        p.drawRect(QRectF(15.8, 10.0, 2.0, 2.0))
+        p.setBrush(QBrush(QColor("#ffffff")))
+        p.setPen(QPen(QColor(INK), 1.3))
+        for x in (5.0, 9.0, 18.0, 21.0):
+            p.drawEllipse(QPointF(x, 16.5), 1.8, 1.8)
+        _pen(p, ORANGE, 1.4)
+        p.drawLine(QPointF(1.0, 12.0), QPointF(4.0, 12.0))
+
     else:  # generic square
         _pen(p, "#8ea6bd")
         p.drawRect(QRectF(5, 5, 14, 14))

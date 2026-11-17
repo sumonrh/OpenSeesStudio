@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         self.a_moment_curvature = self._act(
             "Moment Curvature", "curvature", self.moment_curvature, "",
             "Create a moment-rotation backbone for pushover and nonlinear time history")
+        self.a_live_load = self._act(
+            "Live Load", "truck", self.live_load, "",
+            "Bridge moving-truck and lane-load envelopes and influence lines")
         self.a_example = self._act("Example Frame", "example", self.load_example, "",
                                    "Load the built-in three-storey steel frame")
         self.a_exit = self._act("Exit", "exit", self.close, "Alt+F4")
@@ -478,7 +481,7 @@ class MainWindow(QMainWindow):
                              self.a_settings, self.a_modal_settings, self.a_ground_motion,
                              self.a_gm_catalog, self.a_spectrum_case,
                              self.a_import_tcl, self.a_section_props,
-                             self.a_moment_curvature)
+                             self.a_moment_curvature, self.a_live_load)
 
     def _toggle(self, node_labels=None, element_labels=None, grid=None, deformed=None,
                 loads=None, supports=None, extruded=None, nodes=None,
@@ -783,6 +786,8 @@ class MainWindow(QMainWindow):
         group = page.add_group("Design tools")
         group.add_large(self.a_section_props)
         group.add_large(self.a_moment_curvature)
+        group = page.add_group("Bridge live load")
+        group.add_large(self.a_live_load)
         group = page.add_group("Scripting")
         group.add_large(self.a_console)
 
@@ -3202,6 +3207,27 @@ class MainWindow(QMainWindow):
                   f"{points}; {assigned} beam element(s) assigned.")
         self._status(f"Moment backbone H{hinge.tag} created"
                      + (f" and assigned to {assigned} element(s)" if assigned else ""))
+
+    def live_load(self) -> None:
+        from .live_load_dialog import LiveLoadDialog
+
+        selected = [t for t in self.viewport.sel_elements
+                    if t in self.project.elements]
+        dlg = LiveLoadDialog(self.project, selected, self)
+        if not dlg.exec():
+            return
+        if dlg.results is None:
+            return
+        result = dlg.results
+        self.project.settings["live_load"] = result.config.__dict__
+        self._commit("Live load analysis")
+        self._log(
+            f"Live load: {result.load_case}, spans "
+            f"{', '.join(f'{s.length:g}' for s in result.spans)} m, "
+            f"{len(result.axles)} axles, {result.increment_used:g} m sweep; "
+            f"max moment {max(p.max for p in result.moment):.3f} kN m, "
+            f"max shear {max(p.max for p in result.shear):.3f} kN.")
+        self._status("Live load envelopes calculated")
 
     def sections(self, add_new: bool = False) -> None:
         dlg = dialogs.SectionDialog(self.project, self)

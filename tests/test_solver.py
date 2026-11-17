@@ -750,6 +750,73 @@ restored = HingeDefinition.from_dict(spring_json)
 check("spring hinge curve persists",
       1 if restored.curve == spring.curve else 0, 1, 0)
 
+print("== bridge live load ==")
+from app.live_load import (Axle as LLAxle, Span as LLSpan,  # noqa: E402
+                          LiveLoadConfig, analyze as live_analyze,
+                          beam_chain_from_project, build_bcl_spacings,
+                          compute_effective_increment)
+ll_cfg = LiveLoadConfig(elems_per_span=8, truck_increment=0.2,
+                        load_case="truck", dla_override=0.0,
+                        dla_multiplier=1.0, truck_model="Custom")
+ll = live_analyze([LLSpan(8.0)], [LLAxle(100.0, 0.0)], ll_cfg)
+check("live load single-span moment", max(p.max for p in ll.moment), 200.0)
+check("live load single-span shear", max(p.max for p in ll.shear), 100.0)
+check("live load single-span shear minimum", min(p.min for p in ll.shear), -100.0)
+check("live load single-span deflection",
+      min(p.min for p in ll.deflection),
+      -100000.0 * 8.0 ** 3 / (48.0 * 200e9 * 0.005), 1e-10)
+check("live load support reaction", ll.reactions[0].max, 100.0)
+check("live load support reaction minimum",
+      1 if abs(ll.reactions[0].min) < 1e-9 else 0, 1, 0)
+ll_cfg_lane = LiveLoadConfig(elems_per_span=8, truck_increment=0.2,
+                             load_case="lane", dla_override=2.0,
+                             dla_multiplier=1.0, lane_udl=9.0,
+                             truck_model="Custom")
+ll_lane = live_analyze([LLSpan(8.0)], [LLAxle(0.0, 0.0)], ll_cfg_lane)
+check("live load lane UDL moment", max(p.max for p in ll_lane.moment), 72.0)
+check("live load lane support reaction", ll_lane.reactions[0].max, 36.0)
+check("live load lane deflection",
+      min(p.min for p in ll_lane.deflection),
+      -5.0 * 9000.0 * 8.0 ** 4 / (384.0 * 200e9 * 0.005), 2e-6)
+check("live load lane has no DLA", ll_lane.dla_used, 0.0)
+ll_auto = live_analyze([LLSpan(8.0)], [LLAxle(100.0, 0.0)],
+                       LiveLoadConfig(elems_per_span=8, truck_increment=0.2,
+                                      load_case="truck", dla_override=None,
+                                      dla_multiplier=1.0, truck_model="Custom"))
+ll_off = live_analyze([LLSpan(8.0)], [LLAxle(100.0, 0.0)],
+                      LiveLoadConfig(elems_per_span=8, truck_increment=0.2,
+                                     load_case="truck", dla_override=None,
+                                     dla_multiplier=0.0, truck_model="Custom"))
+check("live load auto DLA 40 percent",
+      max(p.max for p in ll_auto.moment),
+      max(p.max for p in ll_off.moment) * 1.4)
+check("BCL spacing configurations", len(build_bcl_spacings(1.0)), 13, 0)
+check("BCL spacing range", build_bcl_spacings(1.0)[0], 6.6, 1e-9)
+check("BCL spacing upper bound", build_bcl_spacings(1.0)[-1], 18.0, 1e-9)
+step, _reason = compute_effective_increment(
+    [LLSpan(1000.0), LLSpan(1000.0)],
+    [LLAxle(50, 3.6), LLAxle(100, 0.0)], 0.001, 40)
+check("live load sweep step floor", step >= 0.02, 1, 0)
+check("live load sweep step cap", (2000.0 + 2 * 3.6) / step <= 6000, 1, 0)
+chain_project = default_project()
+chain_project.nodes = {
+    1: Node(1, 0, 0, 0, support=[True] * 6),
+    2: Node(2, 10000, 0, 0),
+    3: Node(3, 20000, 0, 0, support=[True] * 6),
+}
+chain_project.elements = {
+    1: Element(1, "beam", [1, 2], 1, 1, vecxz=None),
+    2: Element(2, "beam", [2, 3], 1, 1, vecxz=None),
+}
+chain = beam_chain_from_project(chain_project, [1, 2])
+check("live load beam chain spans", len(chain[0]) if chain else 0, 1, 0)
+check("live load beam chain length", chain[0][0].length if chain else 0, 20.0, 0)
+check("live load beam chain E", chain[1] if chain else 0, 200e9, 1e-9)
+chain_project.nodes[2].support = [True] * 6
+chain2 = beam_chain_from_project(chain_project, [1, 2])
+check("live load beam chain intermediate support",
+      1 if chain2 and len(chain2[0]) == 2 else 0, 1, 0)
+
 print()
 if FAILS:
     print("FAILURES:", FAILS)
