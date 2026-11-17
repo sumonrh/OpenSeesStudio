@@ -1,7 +1,7 @@
 ; Inno Setup script for OpenSees Studio
 
 #define MyAppName "OpenSees Studio"
-#define MyAppVersion "1.0.14"
+#define MyAppVersion "1.0.15"
 #define MyAppPublisher "OpenSees Studio"
 #define MyAppExeName "OpenSeesStudio.exe"
 

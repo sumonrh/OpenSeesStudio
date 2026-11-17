@@ -10,11 +10,11 @@ bridge live-load envelopes and result review. The interface uses a ribbon with
 task tabs, command groups and group captions, and the installer also includes an
 MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.14** - Bridge live load in the Tools tab: CL-625,
-> BCL-625 and custom trucks, lanes, DLA, shear/moment/deflection envelopes,
-> reactions and influence lines from a beam influence-line engine.
+> **Latest release: 1.0.15** - MCP parity for the new design tools:
+> section-property, moment-curvature, live-load and stored moment-backbone
+> commands, alongside the GUI features.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.14 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.14).
+> or read the [1.0.15 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.15).
 
 ## Install on Windows
 
@@ -328,7 +328,7 @@ made with the built-in templates:
 ![results and model lock](docs/results_lock.png)
 
 **AI integration**
-- MCP server (86 tools) so AI agents can build models, run analyses and read
+- MCP server (89 tools) so AI agents can build models, run analyses and read
   results; optional live GUI bridge with screenshots, visibility and labels.
 
 **Project and scripting**
@@ -409,18 +409,20 @@ commands are reported in the message log.
 ## MCP server (AI agents)
 
 `mcp_server/` exposes OpenSees Studio to AI agents over the **Model Context
-Protocol** (stdio transport, 86 tools). Agents can build the whole model,
+Protocol** (stdio transport, 89 tools). Agents can build the whole model,
 run analyses and read results.
 
 **Tools** (grouped): project new/open/save/summary; nodes (single, list, line,
 move, copy, mirror, delete); elements (beam/truss/cable/shell, update, delete,
-subdivide); material and section libraries; supports, point springs and node
-constraints (rigid links, equalDOF, diaphragms); load cases, nodal and
-element loads, self weight, combinations; hinge material catalogue, hinge
-definitions and assignments; static, modal, pushover, time-history and
-response-spectrum analyses with result tools; ground-motion catalog and record
-spectra; frame/truss/bridge wizards; model check; Tcl import/export; Python and
-Tcl script execution; and GUI control (`gui_launch`, `gui_connect`, `gui_sync`,
+subdivide); material and section libraries, including custom-section outlines;
+supports, point springs and node constraints (rigid links, equalDOF,
+diaphragms); load cases, nodal and element loads, self weight, combinations;
+hinge material catalogue, hinge definitions and assignments, including stored
+`MomentBackbone` curves; static, modal, pushover, time-history and
+response-spectrum analyses with result tools; section-property, moment-curvature
+and bridge live-load calculators; ground-motion catalog and record spectra;
+frame/truss/bridge wizards; model check; Tcl import/export; Python and Tcl script
+execution; and GUI control (`gui_launch`, `gui_connect`, `gui_sync`,
 `gui_screenshot`, `gui_show_results`, `gui_set_visibility`, `gui_set_labels`).
 
 ### Run it
@@ -541,7 +543,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.14-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.15-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

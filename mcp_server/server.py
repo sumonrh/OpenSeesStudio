@@ -49,7 +49,10 @@ if str(ROOT) not in sys.path:
 
 from mcp.server.mcpserver import Image, MCPServer  # noqa: E402
 
-from app import groundmotion, hinge_catalog, opsgen, tcl, wizards  # noqa: E402
+from app import (groundmotion, hinge_catalog, live_load as live_load_engine,
+                 moment_curvature as moment_curvature_engine, opsgen, tcl,
+                 wizards)
+from app import section_property
 from app.model import (BoundaryConstraint, Element, ElementLoad,  # noqa: E402
                        GroundMotionRecord, HingeDefinition, LoadCase,
                        LoadCombination, Material, NodalLoad, Node, Project,
@@ -128,6 +131,17 @@ def _require_elements(tags: List[int]) -> None:
 def _require_case(name: str) -> None:
     if name not in _p().cases:
         raise ValueError(f"Unknown load case '{name}'. Cases: {list(_p().cases)}")
+
+
+def _curve_points(value) -> List[List[float]]:
+    if value is None:
+        return []
+    points: List[List[float]] = []
+    for pair in value:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError("curve points must be [deformation, force] pairs.")
+        points.append([float(pair[0]), float(pair[1])])
+    return points
 
 
 def _scene(name: str) -> str:
@@ -232,7 +246,7 @@ def _modal_payload(res: opsgen.ModalResults, mode: int = 1) -> dict:
 server = MCPServer(
     name="opensees-studio",
     title="OpenSees Studio",
-    version="1.0.14",
+    version="1.0.15",
     instructions=(
         "OpenSees Studio is a graphical model generator and analysis GUI for "
         "OpenSees. Use these tools to build structural models and analyse them.\n\n"
@@ -249,6 +263,11 @@ server = MCPServer(
         "Point springs use add_point_spring; node constraints use add_constraint.\n\n"
         "For nonlinear work call list_hinge_materials, add_hinge_definition and "
         "assign_hinges, then run_pushover (requires a lateral case and hinges). "
+        "MomentBackbone hinge definitions carry a stored moment-rotation curve "
+        "and build beam-end spring hinges for pushover and nonlinear time "
+        "history. Use section_properties for Section Property Pro values, "
+        "moment_curvature for a reinforced-concrete backbone, and live_load for "
+        "bridge moving-truck/lane envelopes and influence lines. "
         "Point springs use add_point_spring (Elastic, MultiLinear or PySimple1 p-y); "
         "node constraints use add_constraint (rigid_beam, rigid_bar, equal_dof, "
         "rigid_diaphragm). Dynamic work uses add_ground_motion, "
@@ -753,8 +772,14 @@ def list_hinge_materials() -> List[dict]:
 @_locked
 def add_hinge_definition(name: str = "Hinge", material: str = "Steel01",
                          length_ratio: float = 0.10,
-                         params: Optional[Dict[str, float]] = None) -> dict:
-    """Create a reusable hinge definition using an OpenSees material name."""
+                         params: Optional[Dict[str, float]] = None,
+                         curve: Optional[List[List[float]]] = None) -> dict:
+    """Create a reusable hinge definition using an OpenSees material name.
+
+    For material='MomentBackbone', curve contains [rotation_rad, moment_kNmm]
+    points.  The curve is required for a spring hinge that can be assigned to
+    beam ends; use moment_curvature(create_hinge=true) to generate one.
+    """
     spec = hinge_catalog.MATERIALS.get(material)
     if spec is None:
         raise ValueError(f"Unknown hinge material '{material}'. "
@@ -764,9 +789,13 @@ def add_hinge_definition(name: str = "Hinge", material: str = "Steel01",
         if key not in values:
             raise ValueError(f"'{key}' is not a parameter of {material}.")
         values[key] = float(value)
+    points = _curve_points(curve)
+    if material == "MomentBackbone" and len(points) < 2:
+        raise ValueError("MomentBackbone needs at least two curve points.")
     tag = _p().next_hinge()
     hinge = HingeDefinition(int(tag), str(name), material, spec.family,
                             float(length_ratio), values)
+    hinge.curve = points
     _p().hinge_defs[tag] = hinge
     _changed(f"add hinge {tag}")
     return {"ok": True, **hinge.to_dict()}
@@ -785,8 +814,12 @@ def list_hinge_definitions() -> List[dict]:
 def update_hinge_definition(tag: int, name: Optional[str] = None,
                             material: Optional[str] = None,
                             length_ratio: Optional[float] = None,
-                            params: Optional[Dict[str, float]] = None) -> dict:
-    """Update a hinge definition; changing the material resets its parameters."""
+                            params: Optional[Dict[str, float]] = None,
+                            curve: Optional[List[List[float]]] = None) -> dict:
+    """Update a hinge definition; changing the material resets its parameters.
+
+    Pass curve=[] to clear a stored moment-rotation backbone.
+    """
     hinge = _p().hinge_defs.get(int(tag))
     if hinge is None:
         raise ValueError(f"Unknown hinge definition {tag}.")
@@ -805,6 +838,8 @@ def update_hinge_definition(tag: int, name: Optional[str] = None,
         if key not in hinge.params:
             raise ValueError(f"'{key}' is not a parameter of {hinge.material}.")
         hinge.params[key] = float(value)
+    if curve is not None:
+        hinge.curve = _curve_points(curve)
     _changed(f"update hinge {tag}")
     return {"ok": True, **hinge.to_dict()}
 
@@ -826,10 +861,15 @@ def delete_hinge_definition(tag: int) -> dict:
 @server.tool()
 @_locked
 def assign_hinges(element_tags: List[int], hinge: int) -> dict:
-    """Assign a hinge definition to beam elements (fibre hinges)."""
+    """Assign a hinge definition to beam elements (fibre or spring hinge)."""
     _require_elements(element_tags)
-    if int(hinge) not in _p().hinge_defs:
+    definition = _p().hinge_defs.get(int(hinge))
+    if definition is None:
         raise ValueError(f"Unknown hinge definition {hinge}.")
+    if (definition.material == "MomentBackbone" and len(definition.curve) < 2):
+        raise ValueError("MomentBackbone must have a stored curve before "
+                         "assignment. Use moment_curvature(create_hinge=true) or "
+                         "update_hinge_definition(curve=...).")
     bad = [t for t in element_tags if _p().elements[t].kind != "beam"]
     if bad:
         raise ValueError(f"Hinges apply to beam elements only; invalid: {bad}.")
@@ -837,6 +877,7 @@ def assign_hinges(element_tags: List[int], hinge: int) -> dict:
         _p().hinge_assignments[int(tag)] = int(hinge)
     _changed(f"assign hinge {hinge} to {len(element_tags)} element(s)")
     return {"ok": True, "hinge": int(hinge),
+            "material": definition.material,
             "elements": [int(t) for t in element_tags]}
 
 
@@ -851,6 +892,9 @@ def list_hinge_assignments() -> List[dict]:
             "element": element, "hinge": hinge,
             "name": definition.name if definition else "",
             "material": definition.material if definition else "",
+            "kind": (hinge_catalog.MATERIALS[definition.material].kind
+                     if definition and definition.material in hinge_catalog.MATERIALS
+                     else ""),
         })
     return out
 
@@ -869,6 +913,111 @@ def clear_hinge_assignments(element_tags: Optional[List[int]] = None) -> dict:
             p.hinge_assignments.pop(tag, None)
     _changed(f"clear {len(removed)} hinge assignment(s)")
     return {"ok": True, "removed": removed}
+
+
+@server.tool()
+@_locked
+def moment_curvature(section: str = "rectangular",
+                     B: float = 400.0, H: float = 600.0, D: float = 600.0,
+                     cover: float = 40.0, nx: int = 4, ny: int = 4,
+                     n_bars: int = 12, db: float = 25.0, dbt: float = 10.0,
+                     s: float = 100.0, fc: float = 30.0, fy: float = 420.0,
+                     P: float = 0.0, L: float = 4000.0,
+                     Lp_mm: float = 0.0,
+                     axis: str = "strong",
+                     include_curve: bool = True,
+                     create_hinge: bool = False,
+                     name: str = "Moment backbone",
+                     assign_to: Optional[List[int]] = None) -> dict:
+    """Reinforced-concrete moment-curvature and trilinear M-rotation backbone.
+
+    Lengths in mm, fc/fy in MPa, P positive compression in kN.  axis is
+    'strong' or 'weak' (weak applies to rectangular sections).  When
+    create_hinge or assign_to is set, a MomentBackbone hinge definition is
+    stored and optionally assigned to beam elements.  Curve points are
+    [rotation_rad, moment_kNmm].
+    """
+    inputs = moment_curvature_engine.MomentCurvatureInput(
+        section=str(section), B=float(B), H=float(H), D=float(D),
+        cover=float(cover), nx=int(nx), ny=int(ny), n_bars=int(n_bars),
+        db=float(db), dbt=float(dbt), s=float(s), fc=float(fc), fy=float(fy),
+        P=float(P), L=float(L), Lp_mm=float(Lp_mm))
+    result = moment_curvature_engine.run_moment_curvature(inputs)
+    curve = (result.weak if axis.lower() == "weak" and result.weak is not None
+             else result.strong)
+    if axis.lower() == "weak" and result.weak is None:
+        axis = "strong"
+
+    def curve_payload(c, axis_name: str = axis) -> dict:
+        return {
+            "axis": axis_name,
+            "yield_moment_kNm": c.yield_moment / 1000.0,
+            "peak_moment_kNm": c.peak_moment / 1000.0,
+            "ultimate_moment_kNm": c.ultimate_moment / 1000.0,
+            "yield_rotation_rad": c.yield_rotation,
+            "peak_rotation_rad": c.peak_rotation,
+            "ultimate_rotation_rad": c.ultimate_rotation,
+            "initial_stiffness_kNmm_rad": c.initial_stiffness,
+            "post_yield_ratio": c.post_yield_ratio,
+            "ductility": c.ductility,
+            "converged_points": c.converged,
+            "total_points": c.total,
+            "backbone": [[float(r), float(m)] for r, m in c.backbone],
+            "moment_curvature": ([[float(phi), float(m)]
+                                 for phi, m in zip(c.curvatures, c.moments)]
+                                if include_curve else []),
+        }
+
+    payload: Dict[str, Any] = {
+        "section": inputs.section,
+        "axis": axis,
+        "Ag_mm2": result.Ag,
+        "Ast_mm2": result.Ast,
+        "reinforcement_ratio": result.reinforcement_ratio,
+        "Lp_mm": result.Lp_mm,
+        "confinement": {
+            "fcc_MPa": result.confinement.get("fcc"),
+            "ecc": result.confinement.get("ecc"),
+            "ecu": result.confinement.get("ecu"),
+            "fLp_MPa": result.confinement.get("fLp"),
+        },
+        "strong": curve_payload(result.strong, "strong"),
+        "weak": (curve_payload(result.weak, "weak")
+                 if result.weak is not None else None),
+        "warnings": result.warnings,
+    }
+    if create_hinge or assign_to:
+        if assign_to:
+            _require_elements(assign_to)
+            bad = [t for t in assign_to if _p().elements[t].kind != "beam"]
+            if bad:
+                raise ValueError(f"Hinges apply to beam elements only; invalid: {bad}.")
+        points = [[float(r), float(m)] for r, m in curve.backbone[1:]]
+        if len(points) < 2:
+            raise ValueError("The moment-curvature result has no usable backbone.")
+        params = hinge_catalog.defaults("MomentBackbone")
+        params["damage1"] = 0.0
+        params["damage2"] = 0.0
+        tag = _p().next_hinge()
+        ratio = max(0.01, min(0.25, result.Lp_mm / max(inputs.L, 1.0)))
+        definition = HingeDefinition(
+            int(tag), str(name), "MomentBackbone",
+            "Moment-rotation (spring)", ratio, params)
+        definition.curve = points
+        _p().hinge_defs[tag] = definition
+        assigned = []
+        if assign_to:
+            for element in assign_to:
+                _p().hinge_assignments[int(element)] = int(tag)
+                assigned.append(int(element))
+        _changed(f"add moment backbone hinge {tag}")
+        payload["hinge"] = definition.to_dict()
+        payload["assigned_elements"] = assigned
+    return payload
+
+
+    """List the material library."""
+    return [dict(m.__dict__) for m in _p().materials.values()]
 
 
 # --------------------------------------------------------------------------- #
@@ -906,12 +1055,15 @@ def add_section(name: str, shape: str = "Rectangle", b: float = 300.0,
                 h: float = 600.0, d: float = 400.0, t: float = 12.0,
                 tw: float = 10.0, tf: float = 15.0,
                 A: float = 0.0, Iy: float = 0.0, Iz: float = 0.0,
-                J: float = 0.0) -> dict:
+                J: float = 0.0,
+                outline_outer: Optional[List[List[float]]] = None,
+                outline_inner: Optional[List[List[float]]] = None) -> dict:
     """Add a section.
 
     shape = Rectangle | Circle | Hexagon | Octagon | Box | Pipe | I-Shape |
     L-Shape | T-Shape | User.  For User, A/Iy/Iz/J are used as given; other
-    shapes compute them from dimensions (mm, mm^4).
+    shapes compute them from dimensions (mm, mm^4).  outline_outer/inner are
+    optional local (y, z) outlines for custom-section preview and 3D drawing.
     """
     if shape not in ("Rectangle", "Circle", "Hexagon", "Octagon", "Box",
                      "Pipe", "I-Shape", "L-Shape", "T-Shape", "User"):
@@ -920,9 +1072,74 @@ def add_section(name: str, shape: str = "Rectangle", b: float = 300.0,
     s = Section(tag, name, shape, b, h, d, t, tw, tf, A, Iy, Iz, J)
     if shape != "User":
         s.compute()
+    if outline_outer:
+        s.outline_outer = [[float(p[0]), float(p[1])] for p in outline_outer]
+    if outline_inner:
+        s.outline_inner = [[float(p[0]), float(p[1])] for p in outline_inner]
     _p().sections[tag] = s
     _changed(f"add section {tag}")
-    return {"ok": True, "tag": tag, "A": s.A, "Iy": s.Iy, "Iz": s.Iz, "J": s.J}
+    return {"ok": True, "tag": tag, "A": s.A, "Iy": s.Iy, "Iz": s.Iz, "J": s.J,
+            "outline_outer_points": len(s.outline_outer),
+            "outline_inner_points": len(s.outline_inner)}
+
+
+@server.tool()
+@_locked
+def section_properties(shape: str = "IShape", b: float = 200.0,
+                       d: float = 300.0, tf: float = 15.0,
+                       tw: float = 10.0, t: float = 12.0,
+                       b_inner: float = 150.0, d_inner: float = 250.0,
+                       gap: float = 50.0, c: float = 20.0,
+                       holeR: float = 50.0, max_nodes: int = 9000) -> dict:
+    """Section Property Pro: area, inertias, J and Cw for a parametric shape.
+
+    shape is IShape, TShape, CShape, LShape, Rectangle, RectHollow, OpenBox,
+    SolidCircle, Pipe, Hexagon, Octagon, DoubleAngle, DoubleChannel or
+    OctagonHole.  Dimensions are mm.  The returned section_fields mapping is
+    ready for add_section(shape='User', ...).
+    """
+    if shape not in section_property.SHAPE_DEFS:
+        raise ValueError(f"Unknown shape '{shape}'. "
+                         f"Use {list(section_property.SHAPE_DEFS)}.")
+    values = {"b": b, "d": d, "tf": tf, "tw": tw, "t": t,
+              "b_inner": b_inner, "d_inner": d_inner, "gap": gap,
+              "c": c, "holeR": holeR}
+    params = {key: float(values[key])
+              for key in section_property.SHAPE_DEFS[shape][1]}
+    result = section_property.compute_section_properties(
+        shape, params, max_nodes=int(max_nodes))
+    return {
+        "shape": result.shape,
+        "params": result.params,
+        "A_mm2": result.A,
+        "Cx_mm": result.Cx,
+        "Cy_mm": result.Cy,
+        "Ix_mm4": result.Ix,
+        "Iy_mm4": result.Iy,
+        "Ixy_mm4": result.Ixy,
+        "Ip_mm4": result.Ip,
+        "I1_mm4": result.I1,
+        "I2_mm4": result.I2,
+        "principal_angle_deg": result.alpha,
+        "Sx_top_mm3": result.SxTop,
+        "Sx_bottom_mm3": result.SxBot,
+        "Sy_right_mm3": result.SyRight,
+        "Sy_left_mm3": result.SyLeft,
+        "rx_mm": result.rx,
+        "ry_mm": result.ry,
+        "J_mm4": result.J,
+        "Cw_mm6": result.Cw,
+        "torsion_source": result.torsion_source,
+        "warping_source": result.warping_source,
+        "mass_per_length_kg_m": result.mass_per_length,
+        "warnings": result.warnings,
+        "section_fields": {"A": result.A, "Iy": result.Ix,
+                           "Iz": result.Iy, "J": result.J},
+        "outlines": [{"outer": [[float(x), float(y)] for x, y in outer],
+                      "holes": [[[float(x), float(y)] for x, y in hole]
+                                for hole in result.holes]}
+                     for outer in result.outers],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1665,6 +1882,119 @@ def get_response_spectrum_results(node_tags: Optional[List[int]] = None,
     if include_forces:
         out["element_forces"] = {str(t): res.element_forces.get(t, [])
                                  for t in elems}
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# bridge live load
+# --------------------------------------------------------------------------- #
+@server.tool()
+@_locked
+def live_load(spans: Optional[List[float]] = None,
+              axles: Optional[List[List[float]]] = None,
+              truck_model: str = "CL-625",
+              bcl_subdivision: float = 1.0,
+              load_case: str = "truck",
+              E_GPa: float = 200.0, I_m4: float = 0.005,
+              elems_per_span: int = 20,
+              truck_increment: float = 0.25,
+              dla_override: Optional[float] = None,
+              dla_multiplier: float = 1.0,
+              lane_udl: float = 9.0,
+              beam_tags: Optional[List[int]] = None,
+              include_curves: bool = True,
+              include_influence: bool = False) -> dict:
+    """Bridge moving-truck and lane-load envelopes and influence lines.
+
+    spans are continuous-beam span lengths in m.  axles are [load_kN, spacing_m]
+    pairs and are used when truck_model='Custom'.  E_GPa and I_m4 define the
+    constant beam section.  beam_tags optionally imports spans and mean E/I
+    from selected beam elements; spans then default to the detected spans.
+    dla_override is a fraction (0.25 = 25%) or null for auto selected-axle DLA.
+    Envelope curves are returned as [x, max, min] because the analyser is an
+    envelope engine, not a time-history vehicle run.
+    """
+    beam_note = ""
+    if beam_tags:
+        chain = live_load_engine.beam_chain_from_project(_p(), beam_tags)
+        if chain is None:
+            raise ValueError("beam_tags do not form a connected beam chain.")
+        chain_spans, chain_e, chain_i, beam_note = chain
+        if spans is None:
+            spans = [s.length for s in chain_spans]
+            E_GPa = chain_e / 1e9
+            I_m4 = chain_i
+    if spans is None:
+        raise ValueError("Provide spans in metres or beam_tags for a selected chain.")
+    span_objects = [live_load_engine.Span(float(length)) for length in spans]
+    axle_objects = []
+    for pair in (axles or []):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError("axles must be [load_kN, spacing_m] pairs.")
+        axle_objects.append(live_load_engine.Axle(float(pair[0]), float(pair[1])))
+    config = live_load_engine.LiveLoadConfig(
+        E=float(E_GPa) * 1e9, I=float(I_m4),
+        elems_per_span=int(elems_per_span),
+        truck_increment=float(truck_increment),
+        load_case=str(load_case),
+        dla_override=(None if dla_override is None else float(dla_override)),
+        dla_multiplier=float(dla_multiplier),
+        lane_udl=float(lane_udl),
+        truck_model=str(truck_model),
+        bcl_subdivision=float(bcl_subdivision))
+    result = live_load_engine.analyze(span_objects, axle_objects, config)
+
+    def summary(points, scale: float = 1.0) -> dict:
+        high = max(points, key=lambda p: p.max)
+        low = min(points, key=lambda p: p.min)
+        return {"max": float(high.max * scale), "max_x": float(high.x),
+                "min": float(low.min * scale), "min_x": float(low.x)}
+
+    cases_out: Dict[str, Any] = {}
+    for name, case in result.cases.items():
+        case_out: Dict[str, Any] = {
+            "shear": summary(case.shear),
+            "moment": summary(case.moment),
+            "deflection_m": summary(case.deflection),
+            "reactions": [{
+                "support": index + 1, "x": float(reaction.x),
+                "max_kN": float(reaction.max), "min_kN": float(reaction.min),
+                "governing_lead_m": float(reaction.governing_position),
+                "governing_bcl_gap_m": reaction.governing_spacing,
+            } for index, reaction in enumerate(case.reactions)],
+            "dla_used": case.dla_used,
+            "dla_auto": case.dla_auto,
+            "dla_base": case.dla_base,
+            "dla_multiplier": case.dla_multiplier,
+        }
+        if include_curves:
+            case_out["shear_curve"] = [[float(p.x), float(p.max), float(p.min)]
+                                      for p in case.shear]
+            case_out["moment_curve"] = [[float(p.x), float(p.max), float(p.min)]
+                                       for p in case.moment]
+            case_out["deflection_curve_m"] = [
+                [float(p.x), float(p.max), float(p.min)] for p in case.deflection]
+        cases_out[name] = case_out
+    out: Dict[str, Any] = {
+        "load_case": result.load_case,
+        "spans_m": [span.length for span in result.spans],
+        "truck_model": result.config.truck_model,
+        "axle_count": len(result.axles),
+        "increment_m": result.increment_used,
+        "base_increment_m": result.base_increment,
+        "increment_reason": result.increment_reason,
+        "position_count": len(result.truck_positions),
+        "bcl_spacings_m": result.bcl_spacings,
+        "summary": result.summary(),
+        "cases": cases_out,
+        "units": {"length": "m", "E": "GPa", "I": "m4",
+                  "force": "kN", "moment": "kN m", "deflection": "m"},
+        "beam_chain_note": beam_note,
+    }
+    if include_influence:
+        out["influence"] = {
+            key: [[float(x), float(value)] for x, value in points]
+            for key, points in result.influence.items()}
     return out
 
 

@@ -59,7 +59,8 @@ async def main():
             for required in ("add_nodes", "add_elements", "copy_nodes", "mirror_nodes",
                              "assign_supports", "add_nodal_loads", "add_element_loads",
                              "add_load_case", "add_load_combination", "run_static",
-                             "run_modal", "get_static_results", "gui_connect"):
+                             "run_modal", "get_static_results", "gui_connect",
+                             "section_properties", "moment_curvature", "live_load"):
                 check(f"tool {required}", required in names)
 
             resources = await session.list_resources()
@@ -77,6 +78,24 @@ async def main():
                                            "b": 300, "h": 600})
             sec = r["tag"]
             check("add_section", abs(r["Iy"] - 5.4e9) < 1.0)
+
+            print("== design calculators ==")
+            r = await call("section_properties",
+                           {"shape": "IShape", "b": 200, "d": 400,
+                            "tf": 20, "tw": 10})
+            check("section_properties area", abs(r["A_mm2"] - 11600) < 1e-6,
+                  f"({r['A_mm2']:.0f} mm2)")
+            check("section_properties torsion",
+                  abs(r["J_mm4"] - 1186666.6667) < 0.1,
+                  f"({r['J_mm4']:.1f} mm4)")
+            fields = r["section_fields"]
+            r = await call("add_section",
+                           {"name": "SPP I", "shape": "User",
+                            "A": fields["A"], "Iy": fields["Iy"],
+                            "Iz": fields["Iz"], "J": fields["J"],
+                            "outline_outer": r["outlines"][0]["outer"]})
+            check("add_section from properties",
+                  r["tag"] > sec and r["J"] == fields["J"])
 
             r = await call("add_nodes", {"points": [[0, 0, 0], [4000, 0, 0]]})
             n1, n2 = r["nodes"]
@@ -189,6 +208,41 @@ async def main():
             r = await call("update_hinge_definition",
                            {"tag": hinge, "name": "H1", "length_ratio": 0.15})
             check("update_hinge_definition", r["length_ratio"] == 0.15)
+            r = await call("add_hinge_definition",
+                           {"name": "MB hinge", "material": "MomentBackbone",
+                            "curve": [[0.005, 50000], [0.05, 60000],
+                                      [0.10, 60000]]})
+            mb_hinge = r["tag"]
+            check("add MomentBackbone hinge", len(r["curve"]) == 3)
+            r = await call("moment_curvature",
+                           {"section": "rectangular", "B": 300, "H": 500,
+                            "cover": 40, "nx": 3, "ny": 3, "db": 20,
+                            "dbt": 10, "s": 100, "fc": 30, "fy": 420,
+                            "P": 0, "L": 3000, "include_curve": False,
+                            "create_hinge": True, "name": "MC hinge",
+                            "assign_to": [1]})
+            check("moment_curvature peak",
+                  r["strong"]["peak_moment_kNm"] > 0,
+                  f"({r['strong']['peak_moment_kNm']:.2f} kN m)")
+            check("moment_curvature backbone",
+                  len(r["strong"]["backbone"]) == 4
+                  and len(r["hinge"]["curve"]) == 3)
+            check("moment_curvature assigned", r["assigned_elements"] == [1])
+            mc_hinge = r["hinge"]["tag"]
+            r = await call("live_load",
+                           {"spans": [8], "axles": [[100, 0]],
+                            "truck_model": "Custom", "load_case": "truck",
+                            "E_GPa": 200, "I_m4": 0.005,
+                            "elems_per_span": 8, "truck_increment": 0.2,
+                            "dla_override": 0.0, "include_curves": False})
+            check("live_load moment envelope",
+                  abs(r["cases"]["truck"]["moment"]["max"] - 200) < 1e-3,
+                  f"({r['cases']['truck']['moment']['max']:.3f} kN m)")
+            check("live_load reaction envelope",
+                  abs(r["cases"]["truck"]["reactions"][0]["max_kN"] - 100) < 1e-3)
+            await call("assign_hinges", {"element_tags": [1], "hinge": hinge})
+            await call("delete_hinge_definition", {"tag": mb_hinge})
+            await call("delete_hinge_definition", {"tag": mc_hinge})
 
             await call("add_load_case", {"name": "LAT", "kind": "Wind"})
             nodes = await call("list_nodes")
