@@ -10,11 +10,12 @@ bridge live-load envelopes and result review. The interface uses a ribbon with
 task tabs, command groups and group captions, and the installer also includes an
 MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.15** - MCP parity for the new design tools:
-> section-property, moment-curvature, live-load and stored moment-backbone
-> commands, alongside the GUI features.
+> **Latest release: 1.0.16** - Corrected the beam-diagram bending-moment sign:
+> sagging `My` now plots on the correct side, active diagrams refresh when MCP
+> updates a result, and the three-span CL-625 example uses its governing truck
+> position.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.15 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.15).
+> or read the [1.0.16 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.16).
 
 ## Install on Windows
 
@@ -307,7 +308,8 @@ made with the built-in templates:
 - Result viewer: displacements, reactions, element forces (N, Vy, Vz, T, My, Mz at both ends),
   modal periods; CSV export.
 - **Beam Diagrams** sidebar: shear **Vy/Vz**, bending **My/Mz**, torsion **Mx** and
-  axial **Fx** diagrams for any load case or load combination. Diagrams are computed
+  axial **Fx** diagrams for any load case or load combination. Sagging moments are
+  positive for both **My** and **Mz**. Diagrams are computed
   along each member from its end forces and applied loads, with fill, scale, value and
   deformed-shape overlay options.
 - **Deformation** sidebar: deformed shape for any load case or combination, with an
@@ -543,7 +545,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.15-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.16-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

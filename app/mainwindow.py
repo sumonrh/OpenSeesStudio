@@ -2407,6 +2407,14 @@ class MainWindow(QMainWindow):
         self.a_loads_visible.blockSignals(False)
         if hasattr(self, "results_panel"):
             self.results_panel.set_current_scenario(res.scenario)
+        if self.viewport.show_diagrams and hasattr(self, "results_panel"):
+            comps = self.results_panel.components()
+            if comps:
+                self.viewport.set_diagrams(
+                    res, res.scenario, comps,
+                    self.results_panel.diagram_scale_value(),
+                    self.results_panel.diagram_show_values(),
+                    self.results_panel.diagram_has_fill())
         self.viewport.fit()
         self._apply_scale()
         self.a_deformed.setChecked(True)

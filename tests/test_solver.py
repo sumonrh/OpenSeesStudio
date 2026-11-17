@@ -80,6 +80,26 @@ check("diagram shear at free end", vy[-1][1], 0.0, 1e-9)
 check("diagram moment at fixed end", mz[0][1], -0.01 * 4000 ** 2 / 2, 1e-9)
 check("diagram moment at free end", mz[-1][1], 0.0, 1e-9)
 
+print("== beam diagram My sign ==")
+p = default_project()
+p.materials[1].E = 200.0
+s = p.sections[1]
+s.shape, s.b, s.h = "Rectangle", 300.0, 600.0
+s.compute()
+p.nodes[1] = Node(1, 0, 0, 0,
+                 support=[True, True, True, True, False, True])
+p.nodes[2] = Node(2, 4000, 0, 0)
+p.nodes[3] = Node(3, 8000, 0, 0,
+                 support=[True, True, True, True, False, True])
+p.elements[1] = Element(1, "beam", [1, 2], 1, 1, vecxz=[0, 0, 1])
+p.elements[2] = Element(2, "beam", [2, 3], 1, 1, vecxz=[0, 0, 1])
+p.cases["DL"] = LoadCase("DL")
+p.nodal_loads.append(NodalLoad(1, 2, "DL", [0.0, 0.0, -10.0, 0.0, 0.0, 0.0]))
+r = opsgen.run_static(p, "DL")
+loads = beam_load_records(p, "DL")
+my = diagram_series(p, r, p.elements[1], "DL", "My", loads.get(1, []))
+check("diagram My at midspan (sagging positive)", my[-1][1], 20000.0)
+
 print("== point load location ==")
 for pos in (0.25, 0.75):
     p = default_project()

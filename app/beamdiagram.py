@@ -128,10 +128,10 @@ def _station_value(comp: str, x: float, force: Sequence[float],
                 m += p_y * (xm - a * length)
         return m
     if comp == "My":
-        m = -force[4] - force[2] * xm - 0.5 * qz * xm * xm
+        m = force[4] + force[2] * xm + 0.5 * qz * xm * xm
         for _p_y, p_z, a in points:
             if a <= x + 1e-12:
-                m -= p_z * (xm - a * length)
+                m += p_z * (xm - a * length)
         return m
     return 0.0
 
