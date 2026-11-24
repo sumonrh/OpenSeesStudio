@@ -76,6 +76,15 @@ try {
     & $py -m PyInstaller --noconfirm --clean OpenSeesStudio.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
+    Write-Host "== Removing GPL-only Qt Virtual Keyboard ==" -ForegroundColor Cyan
+    $qtRoot = "dist\OpenSeesStudio\_internal\PySide6"
+    if (Test-Path $qtRoot) {
+        Get-ChildItem $qtRoot -Recurse -File |
+            Where-Object { $_.Name -like 'Qt6VirtualKeyboard*' -or
+                           $_.Name -eq 'qtvirtualkeyboardplugin.dll' } |
+            Remove-Item -Force
+    }
+
     Write-Host "== PyInstaller (MCP server) ==" -ForegroundColor Cyan
     & $py -m PyInstaller --noconfirm --clean OpenSeesStudioMCP.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller (MCP) failed" }

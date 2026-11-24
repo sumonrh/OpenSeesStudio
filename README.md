@@ -10,12 +10,27 @@ bridge live-load envelopes and result review. The interface uses a ribbon with
 task tabs, command groups and group captions, and the installer also includes an
 MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.20** - Navigation and selection tools: **Pan** mode in
-> the View tab and vertical view strip, a **Select** cursor in the top toolbar,
-> and editable **Elements** / **Nodes** selection boxes with range syntax and
-> the last five selection lists.
+> **Latest release: 1.0.21** - Licensing correction: **PolyForm Noncommercial
+> 1.0.0**, complete OpenSees/OpenSeesPy/Qt third-party notices, and removal of
+> the GPL-only Qt Virtual Keyboard from the bundle. OpenSees Studio is
+> source-available for noncommercial use.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.20 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.20).
+> or read the [1.0.21 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.21).
+
+## License
+
+OpenSees Studio is **source-available, not OSI open source**. The original
+code is licensed under the **PolyForm Noncommercial License 1.0.0**
+(`LICENSE.txt`): it is free to use, modify, and share for noncommercial
+purposes, but commercial use and selling are not permitted.
+
+The installer also ships OpenSees and OpenSeesPy, which remain under the UC
+Regents OpenSees license and are **not** covered by PolyForm. Commercial
+distribution of those components requires a separate license from UC Berkeley
+and the OpenSeesPy maintainers. Qt/PySide6 is used under LGPL-3.0.
+
+Read `NOTICE.md`, `THIRD_PARTY_NOTICES.md`, and the `licenses/` folder for the
+complete terms.
 
 ## Install on Windows
 
@@ -545,6 +560,8 @@ Tests (closed-form verification + GUI workflows):
 .\.venv\Scripts\python.exe tests\test_gui.py
 ```
 
+See `CONTRIBUTING.md` for the contribution license and DCO sign-off.
+
 Headless self test (also available in the frozen exe):
 
 ```powershell
@@ -563,7 +580,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.20-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.21-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing
