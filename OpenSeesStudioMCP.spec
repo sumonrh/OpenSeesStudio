@@ -25,6 +25,7 @@ a = Analysis(
     datas=[
         ("LICENSE.txt", "."),
         ("NOTICE.md", "."),
+        ("DISCLAIMER.md", "."),
         ("THIRD_PARTY_NOTICES.md", "."),
         ("CONTRIBUTING.md", "."),
         ("licenses", "licenses"),

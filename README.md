@@ -1,6 +1,6 @@
 # OpenSees Studio
 
-[![Download for Windows](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?label=download%20for%20windows&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
+[![Download alpha for Windows](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?include_prereleases&label=download%20alpha&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases)
 
 A graphical model generator and analysis GUI for **OpenSees**, built with Python,
 PySide6 and OpenSeesPy. It covers the complete workflow: model generation, supports and
@@ -10,12 +10,19 @@ bridge live-load envelopes and result review. The interface uses a ribbon with
 task tabs, command groups and group captions, and the installer also includes an
 MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.21** - Licensing correction: **PolyForm Noncommercial
-> 1.0.0**, complete OpenSees/OpenSeesPy/Qt third-party notices, and removal of
-> the GPL-only Qt Virtual Keyboard from the bundle. OpenSees Studio is
-> source-available for noncommercial use.
-> [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.21 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.21).
+> **Research use only.** OpenSees Studio is intended for research, education,
+> and noncommercial evaluation. It is under **active development** and currently
+> an **early alpha**; results are **not fully verified**. It must not be used for
+> real-world commercial work, design decisions, or any application involving
+> public safety. Test and verify all results independently before use. Use at
+> your own risk. Read `DISCLAIMER.md`.
+
+> **Latest release: 1.0.22-alpha** - Early alpha, under active development.
+> Licensing correction: **PolyForm Noncommercial 1.0.0**, complete
+> OpenSees/OpenSeesPy/Qt third-party notices, research-use/public-safety
+> disclaimer, and removal of the GPL-only Qt Virtual Keyboard.
+> [Download the alpha installer](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.22-alpha)
+> or read the [1.0.22-alpha release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.22-alpha).
 
 ## License
 
@@ -29,15 +36,18 @@ Regents OpenSees license and are **not** covered by PolyForm. Commercial
 distribution of those components requires a separate license from UC Berkeley
 and the OpenSeesPy maintainers. Qt/PySide6 is used under LGPL-3.0.
 
-Read `NOTICE.md`, `THIRD_PARTY_NOTICES.md`, and the `licenses/` folder for the
-complete terms.
+OpenSees Studio is an independent project and is not affiliated with or
+endorsed by UC Berkeley, the OpenSees project, or the OpenSeesPy maintainers.
+
+Read `NOTICE.md`, `DISCLAIMER.md`, `THIRD_PARTY_NOTICES.md`, and the
+`licenses/` folder for the complete terms.
 
 ## Install on Windows
 
-[**Download the latest installer**](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
+[**Download the latest alpha installer**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.22-alpha)
 
 1. Open the link above (or **Releases** on the right side of this page) and click
-   `OpenSeesStudio-...-Setup.exe` under **Assets**. Do not download the
+   `OpenSeesStudio-1.0.22-alpha-Setup.exe` under **Assets**. Do not download the
    `Source code (zip)` or `Source code (tar.gz)` files.
 2. Open the downloaded file from your **Downloads** folder.
 3. If Windows shows **"Windows protected your PC"**, click **More info**, then
@@ -580,7 +590,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.21-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.22-alpha-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

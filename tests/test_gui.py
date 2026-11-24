@@ -253,6 +253,11 @@ check("update badge shows a newer release",
 win.update_button.hide()
 check("close project in app menu", win.a_close in win.ribbon.app_menu.actions())
 check("about shows version", f"Version {APP_VERSION}" in win.about_text())
+check("about shows research-use disclaimer",
+      "public safety" in win.about_text().lower()
+      and "research" in win.about_text().lower())
+check("status bar shows research-use notice",
+      win.research_label.text() == "RESEARCH USE ONLY")
 from app.version import is_newer
 check("version comparison", is_newer("v1.0.10", "1.0.9")
       and not is_newer("v1.0.9", "1.0.9"))

@@ -41,6 +41,7 @@ a = Analysis(
     datas=[("app/assets/hysteresis", "app/assets/hysteresis"),
            ("LICENSE.txt", "."),
            ("NOTICE.md", "."),
+           ("DISCLAIMER.md", "."),
            ("THIRD_PARTY_NOTICES.md", "."),
            ("CONTRIBUTING.md", "."),
            ("licenses", "licenses")],

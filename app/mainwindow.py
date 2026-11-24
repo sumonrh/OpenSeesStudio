@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QMimeData, QSettings, QSize, Qt, QTimer, QUrl
@@ -233,6 +234,39 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.viewport.fit)
             QTimer.singleShot(0, lambda: self.resizeDocks(
                 [self.log_dock], [140], Qt.Vertical))
+            QTimer.singleShot(0, self._show_research_disclaimer)
+
+    def _show_research_disclaimer(self) -> None:
+        """Show the research-use notice once per version outside automation."""
+        if os.environ.get("OPENSEES_STUDIO_IN_PROCESS") == "1":
+            return
+        if any(arg in sys.argv for arg in
+               ("--selftest", "--screenshot", "--bridge")):
+            return
+        settings = QSettings("OpenSees Studio", "OpenSees Studio")
+        key = "research_disclaimer/version"
+        if settings.value(key, "") == APP_VERSION:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Research use only")
+        box.setText("OpenSees Studio is a research and education tool.")
+        box.setInformativeText(
+            "It is under active development and is currently an early alpha. "
+            "Results are not fully verified and may contain errors. Test and "
+            "verify all results independently before use. It is not intended "
+            "for real-world commercial work, design decisions, or any "
+            "application involving public safety.\n\n"
+            "The software is provided as is, and you use it at your own risk. "
+            "Do you understand and accept these conditions?")
+        accept = box.addButton("I understand", QMessageBox.AcceptRole)
+        box.addButton("Exit", QMessageBox.RejectRole)
+        box.setDefaultButton(accept)
+        box.exec()
+        if box.clickedButton() is not accept:
+            QTimer.singleShot(0, self.close)
+            return
+        settings.setValue(key, APP_VERSION)
 
     # ================================================================== actions
     def _act(self, text: str, icon_name: str, slot, shortcut: str = "", tip: str = "",
@@ -1649,6 +1683,13 @@ class MainWindow(QMainWindow):
             "color:#b45309; font-weight:700; padding:0 10px;")
         self.lock_label.setVisible(False)
         sb.addPermanentWidget(self.lock_label)
+        self.research_label = QLabel("RESEARCH USE ONLY")
+        self.research_label.setStyleSheet(
+            "color:#b45309; font-weight:700; padding:0 10px;")
+        self.research_label.setToolTip(
+            "Early alpha; results are not fully verified. Not for real-world "
+            "commercial work or public-safety decisions")
+        sb.addPermanentWidget(self.research_label)
         self.model_label = QLabel("")
         sb.addPermanentWidget(self.model_label)
 
@@ -4423,6 +4464,11 @@ class MainWindow(QMainWindow):
             "(source-available; noncommercial use only).<br>"
             "OpenSees/OpenSeesPy and Qt third-party notices are installed "
             "with the application.</p>"
+            "<p><b>Early alpha — research and education use only.</b> Under "
+            "active development; results are not fully verified. Test and "
+            "verify before use. Not intended for real-world commercial work, "
+            "design decisions, or any application involving public safety. "
+            "Use at your own risk.</p>"
             "<p>Features: nodes, elastic and fibre beam-column elements, "
             "trusses, cables, shells, bearings, isolators, dampers, "
             "copy-move-mirror, supports, load cases, nodal and element loads, "
