@@ -10,12 +10,12 @@ bridge live-load envelopes and result review. The interface uses a ribbon with
 task tabs, command groups and group captions, and the installer also includes an
 MCP server so AI agents can drive the model.
 
-> **Latest release: 1.0.19** - Live-load workflow: separate
-> Vehicle, Lane and Live Load Case commands on the Load tab, persistent
-> definitions, and LL Max/Min/All moment plus shear envelopes in the main model
-> view.
+> **Latest release: 1.0.20** - Navigation and selection tools: **Pan** mode in
+> the View tab and vertical view strip, a **Select** cursor in the top toolbar,
+> and editable **Elements** / **Nodes** selection boxes with range syntax and
+> the last five selection lists.
 > [Download the installer](https://github.com/sumonrh/OpenSeesStudio/releases/latest)
-> or read the [1.0.19 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.19).
+> or read the [1.0.20 release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.20).
 
 ## Install on Windows
 
@@ -150,7 +150,10 @@ project specification and obtain engineering review.
 - Ribbon tabs (View, Structure, Node/Element, Properties, Boundary, Load, Analysis,
   Dynamic, Pushover, Results, Tools, Help) with command groups and captions.
 - Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
-  vertical view strip (fit, iso, top, front, right, orbit, node labels, element
+  selection strip with a **Select** cursor plus editable **Elements** and **Nodes**
+  boxes. Type tags separated by spaces or commas, or a range such as `4 to 9`, and
+  press Enter; each box keeps the last five selection lists in its dropdown.
+- Vertical view strip (fit, iso, top, front, right, pan, orbit, node labels, element
   labels, grid, deformed, extruded). Right-click either toolbar or use
   **View > Panels > Toolbars** to add, remove and reorder favourite buttons.
 - **Update badge** in the top-right corner of the ribbon appears only when a newer
@@ -379,6 +382,7 @@ and time-history analysis is in
 | F9 | Model check |
 | F | Fit view |
 | O | 3D orbit mode (left-drag rotates) |
+| P | Pan mode (left-drag moves the view) |
 | Ctrl+L | Lock / unlock model editing |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Ctrl+A | Select all visible nodes and elements |
@@ -387,7 +391,9 @@ and time-history analysis is in
 
 **Mouse:** left = select (drag = box select), middle = pan, right = orbit, wheel = zoom.
 Press **O** (or the Orbit ribbon button) for AutoCAD-style orbit mode, where left-drag rotates
-the model; Shift+left-drag or Shift+middle-drag always orbits. Ctrl adds to the selection.
+the model; Shift+left-drag or Shift+middle-drag always orbits. Press **P** (or the Pan
+button in the View tab or vertical view strip) for pan mode, where left-drag moves the
+view. Ctrl adds to the selection.
 In **Draw Element** mode, left-click a start node and then an end node; the end node
 becomes the next start. **Right-click**, **Esc** or **Finish** ends the tool.
 
@@ -557,7 +563,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.19-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.20-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

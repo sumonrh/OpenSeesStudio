@@ -19,7 +19,8 @@ app = QApplication.instance() or QApplication([])
 
 from app import dialogs, mainwindow, results as results_mod, steelsections  # noqa: E402
 from app.device_dialogs import DeviceDialog  # noqa: E402
-from app.mainwindow import MainWindow  # noqa: E402
+from app.mainwindow import (MainWindow, format_selection_tags,  # noqa: E402
+                            parse_selection_text)
 from app.model import (Project, Section, HingeDefinition, Element, Node,  # noqa: E402
                        default_project)
 from app.tables import SupportValueDelegate, TablesDialog  # noqa: E402
@@ -219,6 +220,19 @@ drag(400, 300, 470, 330, Qt.ShiftModifier)
 check("Shift+left orbits", abs(vp.camera.yaw - yaw2) > 1e-4,
       f"(dyaw={vp.camera.yaw - yaw2:.4f})")
 
+print("== pan control ==")
+target0 = list(vp.camera.target)
+win.a_pan.trigger()
+check("pan mode enabled", vp.pan_mode is True and not win.a_select.isChecked())
+drag(400, 300, 480, 340)
+check("pan drag moves the view",
+      any(abs(a - b) > 1e-6 for a, b in zip(vp.camera.target, target0)),
+      f"(target={vp.camera.target})")
+QTest.keyClick(vp, Qt.Key_Escape)
+check("Esc exits pan and restores select",
+      vp.pan_mode is False and not win.a_pan.isChecked()
+      and win.a_select.isChecked())
+
 print("== ribbon ==")
 titles = [win.ribbon.tabs.tabText(i) for i in range(win.ribbon.tabs.count())]
 check("ribbon tabs", titles == ["View", "Structure", "Node/Element", "Properties",
@@ -269,6 +283,11 @@ check("modal removed from horizontal toolbar",
       win.a_modal not in win.quick_toolbar.actions())
 check("quick view toolbar", win.a_fit in win.quick_view_toolbar.actions()
       and win.a_orbit in win.quick_view_toolbar.actions())
+check("pan control on vertical view toolbar",
+      win.a_pan in win.quick_view_toolbar.actions())
+check("selection toolbar has cursor and two editable boxes",
+      win.a_select in win.selection_toolbar.actions()
+      and win.element_combo.isEditable() and win.node_combo.isEditable())
 check("quick toolbars are movable and customizable",
       win.quick_toolbar.isMovable() and win.quick_view_toolbar.isMovable()
       and hasattr(win, "_toolbar_catalog"))
@@ -297,6 +316,9 @@ view_groups = {g.findChild(QLabel, "ribbonCaption").text(): g
 check("orbit moved under Navigate",
       any(b.defaultAction() is win.a_orbit
           for b in view_groups["Navigate"].findChildren(QToolButton)))
+check("pan moved under Navigate",
+      any(b.defaultAction() is win.a_pan
+          for b in view_groups["Navigate"].findChildren(QToolButton)))
 check("display group has two columns of three buttons",
       view_groups["Display"].row.count() == 2
       and len(view_groups["Display"].findChildren(QToolButton)) == 6)
@@ -306,6 +328,40 @@ check("display group is compact",
 view_actions = [b.defaultAction() for b in view_page.findChildren(QToolButton)]
 check("fit selection moved to View tab", win.a_fit_sel in view_actions)
 check("link visibility is in Display", win.a_constraints_visible in view_actions)
+
+print("== selection boxes ==")
+check("selection text parses spaces, commas and ranges",
+      parse_selection_text("1 2, 4 to 6") == [1, 2, 4, 5, 6])
+check("selection text accepts compact ranges",
+      parse_selection_text("3to5") == [3, 4, 5])
+check("selection text formats compact ranges",
+      format_selection_tags({1, 2, 3, 7, 9}) == "1 to 3, 7, 9")
+win.element_combo.setEditText("1, 3 to 5")
+win._apply_selection_text("element")
+check("element box selects listed tags",
+      win.viewport.sel_elements == {1, 3, 4, 5},
+      f"({sorted(win.viewport.sel_elements)})")
+check("element box normalizes its text",
+      win.element_combo.currentText() == "1, 3 to 5")
+win.node_combo.setEditText("2 4 to 6")
+win._apply_selection_text("node")
+check("node box selects listed tags",
+      win.viewport.sel_nodes == {2, 4, 5, 6},
+      f"({sorted(win.viewport.sel_nodes)})")
+check("node selection clears the element box",
+      win.element_combo.currentText() == "")
+win.viewport.select_elements([7, 8, 9])
+check("cursor selection fills the element box",
+      win.element_combo.currentText() == "7 to 9")
+for tag in (1, 2, 3, 4, 5, 6, 7):
+    win.element_combo.setEditText(str(tag))
+    win._apply_selection_text("element")
+check("selection box keeps five history entries",
+      [win.element_combo.itemText(i)
+       for i in range(win.element_combo.count())] ==
+      ["7", "6", "5", "4", "3"])
+win.viewport.clear_selection()
+
 boundary_page = win.ribbon._pages[4]
 boundary_actions = [b.defaultAction() for b in boundary_page.findChildren(QToolButton)]
 check("show supports moved to View tab",

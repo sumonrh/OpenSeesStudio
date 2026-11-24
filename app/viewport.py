@@ -124,6 +124,7 @@ class Viewport(QWidget):
     cameraChanged = Signal()
     elementDrawRequested = Signal(int, int)
     drawModeCancelled = Signal()
+    navigationCancelled = Signal()
     modelItemDropped = Signal(str, object)
     contextMenuRequested = Signal(str, int, QPoint)
 
@@ -158,6 +159,7 @@ class Viewport(QWidget):
         self.show_axes = True
         self.wireframe = True
         self.orbit_mode = False
+        self.pan_mode = False
         self.show_extruded = False
 
         self.static_results: Optional[StaticResults] = None
@@ -467,9 +469,27 @@ class Viewport(QWidget):
     def set_orbit_mode(self, on: bool) -> None:
         """AutoCAD-style 3D orbit: left-drag rotates instead of selecting."""
         self.orbit_mode = bool(on)
-        self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
+        if self.orbit_mode:
+            self.pan_mode = False
+            self._hover_node = None
+            self._hover_elem = None
+        self.setCursor(Qt.OpenHandCursor if (self.orbit_mode or self.pan_mode)
+                       else Qt.ArrowCursor)
         self.statusMessage.emit("Orbit mode: drag to rotate   (Esc to exit)"
                                 if self.orbit_mode else "Orbit mode off")
+        self.update()
+
+    def set_pan_mode(self, on: bool) -> None:
+        """Pan mode: left-drag moves the view instead of selecting."""
+        self.pan_mode = bool(on)
+        if self.pan_mode:
+            self.orbit_mode = False
+            self._hover_node = None
+            self._hover_elem = None
+        self.setCursor(Qt.OpenHandCursor if (self.orbit_mode or self.pan_mode)
+                       else Qt.ArrowCursor)
+        self.statusMessage.emit("Pan mode: drag to move the view   (Esc to exit)"
+                                if self.pan_mode else "Pan mode off")
         self.update()
 
     # ---------------------------------------------------------- deformation
@@ -1732,7 +1752,10 @@ class Viewport(QWidget):
         self._last = self._press
         self._moved = False
         if ev.button() == Qt.LeftButton:
-            if self.orbit_mode or bool(ev.modifiers() & Qt.ShiftModifier):
+            if self.pan_mode:
+                self._panning = True
+                self.setCursor(Qt.ClosedHandCursor)
+            elif self.orbit_mode or bool(ev.modifiers() & Qt.ShiftModifier):
                 self._orbiting = True
                 self.setCursor(Qt.ClosedHandCursor)
             else:
@@ -1789,6 +1812,9 @@ class Viewport(QWidget):
         if self.orbit_mode:
             self.setCursor(Qt.OpenHandCursor)
             return
+        if self.pan_mode:
+            self.setCursor(Qt.OpenHandCursor)
+            return
 
         node, elem = self._hit(pos)
         if node != self._hover_node or elem != self._hover_elem:
@@ -1822,7 +1848,8 @@ class Viewport(QWidget):
             self._orbiting = False
             self._press = None
             self._moved = False
-            self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
+            self.setCursor(Qt.OpenHandCursor if (self.orbit_mode or self.pan_mode)
+                           else Qt.ArrowCursor)
             self.update()
             return
         if self._band is not None:
@@ -1856,7 +1883,8 @@ class Viewport(QWidget):
         if self.draw_element_mode:
             self.setCursor(Qt.CrossCursor)
         else:
-            self.setCursor(Qt.OpenHandCursor if self.orbit_mode else Qt.ArrowCursor)
+            self.setCursor(Qt.OpenHandCursor if (self.orbit_mode or self.pan_mode)
+                           else Qt.ArrowCursor)
         self.update()
 
     def wheelEvent(self, ev) -> None:
@@ -1875,6 +1903,10 @@ class Viewport(QWidget):
                 self.statusMessage.emit("Draw element finished.")
             elif self.orbit_mode:
                 self.set_orbit_mode(False)
+                self.navigationCancelled.emit()
+            elif self.pan_mode:
+                self.set_pan_mode(False)
+                self.navigationCancelled.emit()
             else:
                 self.clear_selection()
         elif (ev.key() == Qt.Key_A

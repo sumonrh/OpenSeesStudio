@@ -331,6 +331,16 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         path.lineTo(13.5, 21); path.lineTo(16.5, 19.5); path.lineTo(13.5, 13.8)
         path.lineTo(19, 13.5); path.closeSubpath()
         _fill(p, "#ffffff"); p.drawPath(path)
+        _pen(p, INK, 1.5); p.drawPath(path)
+
+    elif name == "pan":
+        _pen(p, INK, 1.4)
+        p.drawLine(QPointF(12, 4), QPointF(12, 20))
+        p.drawLine(QPointF(4, 12), QPointF(20, 12))
+        _arrow_head(p, 12, 3.2, 0, -1, 2.8)
+        _arrow_head(p, 12, 20.8, 0, 1, 2.8)
+        _arrow_head(p, 3.2, 12, -1, 0, 2.8)
+        _arrow_head(p, 20.8, 12, 1, 0, 2.8)
 
     elif name == "run_static":
         _fill(p, GREEN)

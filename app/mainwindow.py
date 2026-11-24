@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QMimeData, QSettings, QSize, Qt, QTimer, QUrl
@@ -52,6 +53,61 @@ SUPPORT_PRESETS = {
     "pinned": [True, True, True, False, False, False],
     "roller_z": [True, True, False, False, False, False],
 }
+MAX_SELECTION_RANGE = 10000
+
+
+def parse_selection_text(text: str) -> List[int]:
+    """Parse tags such as ``1 2, 4 to 7`` into a sorted unique list."""
+    tokens = str(text).replace(",", " ").split()
+    tags: List[int] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        combined = re.fullmatch(r"(\d+)[tT][oO](\d+)", token)
+        if combined:
+            lo, hi = int(combined.group(1)), int(combined.group(2))
+            i += 1
+        elif i + 2 < len(tokens) and tokens[i + 1].lower() == "to":
+            try:
+                lo, hi = int(token), int(tokens[i + 2])
+            except ValueError:
+                i += 1
+                continue
+            i += 3
+        else:
+            try:
+                tags.append(int(token))
+            except ValueError:
+                pass
+            i += 1
+            continue
+        lo, hi = sorted((lo, hi))
+        if hi - lo <= MAX_SELECTION_RANGE:
+            tags.extend(range(lo, hi + 1))
+    return sorted(set(tags))
+
+
+def format_selection_tags(tags) -> str:
+    """Format tags compactly, compressing runs of three or more."""
+    numbers = sorted({int(tag) for tag in tags})
+    if not numbers:
+        return ""
+    parts: List[str] = []
+    run = [numbers[0]]
+    for number in numbers[1:]:
+        if number == run[-1] + 1:
+            run.append(number)
+            continue
+        if len(run) >= 3:
+            parts.append(f"{run[0]} to {run[-1]}")
+        else:
+            parts.extend(str(value) for value in run)
+        run = [number]
+    if len(run) >= 3:
+        parts.append(f"{run[0]} to {run[-1]}")
+    else:
+        parts.extend(str(value) for value in run)
+    return ", ".join(parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -149,6 +205,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.viewport)
         self.viewport.selectionChanged.connect(self._on_selection)
         self.viewport.statusMessage.connect(self._status)
+        self.viewport.navigationCancelled.connect(self._sync_navigation_actions)
         self.viewport.modelItemDropped.connect(self._apply_tree_drop)
         self.viewport.contextMenuRequested.connect(self._viewport_context_menu)
 
@@ -230,6 +287,13 @@ class MainWindow(QMainWindow):
                                   "Delete the selected nodes and elements")
         self.a_sel_all = self._act("Select All", "select_all", self.viewport.select_all, "Ctrl+A")
         self.a_deselect = self._act("Deselect", "deselect", self._escape, "Esc")
+        self.a_select = self._act(
+            "Select", "select", self._toggle_select, "",
+            "Select mode: click elements or nodes, or drag a selection box",
+            checkable=True)
+        self.a_pan = self._act(
+            "Pan", "pan", self._toggle_pan, "P",
+            "Pan mode: left-drag moves the view", checkable=True)
 
         self.a_fit = self._act("Fit", "fit", self.viewport.fit, "F", "Zoom to the whole model")
         self.a_iso = self._act("Iso", "iso", lambda: self.viewport.set_view("iso"), "Ctrl+1")
@@ -353,6 +417,7 @@ class MainWindow(QMainWindow):
         self.a_orbit = self._act("Orbit", "rotate", self._toggle_orbit, "O",
                                  "3D orbit: left-drag rotates the model "
                                  "(Shift+left or Shift+middle always orbits)", checkable=True)
+        self.a_select.setChecked(True)
         self.a_node_labels = self._act(
             "Node Labels", "node_label", lambda on: self._toggle(node_labels=on), "",
             "Show node tags in the viewport", checkable=True)
@@ -554,8 +619,46 @@ class MainWindow(QMainWindow):
             action.blockSignals(False)
         self._status("Clean view: deformation, loads and labels hidden")
 
+    def _toggle_select(self, checked: bool) -> None:
+        if not checked:
+            if not (self.viewport.orbit_mode or self.viewport.pan_mode):
+                self.a_select.setChecked(True)
+            return
+        self.a_pan.setChecked(False)
+        self.a_orbit.setChecked(False)
+        self.viewport.orbit_mode = False
+        self.viewport.pan_mode = False
+        self.viewport.setCursor(Qt.ArrowCursor)
+        self.viewport.statusMessage.emit(
+            "Select mode: click or drag to select")
+
+    def _toggle_pan(self, checked: bool) -> None:
+        if checked:
+            self.a_orbit.setChecked(False)
+            self.a_select.setChecked(False)
+            self.viewport.orbit_mode = False
+            self.viewport.set_pan_mode(True)
+        else:
+            self.viewport.set_pan_mode(False)
+            if not self.viewport.orbit_mode:
+                self.a_select.setChecked(True)
+
     def _toggle_orbit(self, checked: bool) -> None:
-        self.viewport.set_orbit_mode(bool(checked))
+        if checked:
+            self.a_pan.setChecked(False)
+            self.a_select.setChecked(False)
+            self.viewport.pan_mode = False
+            self.viewport.set_orbit_mode(True)
+        else:
+            self.viewport.set_orbit_mode(False)
+            if not self.viewport.pan_mode:
+                self.a_select.setChecked(True)
+
+    def _sync_navigation_actions(self) -> None:
+        self.a_orbit.setChecked(self.viewport.orbit_mode)
+        self.a_pan.setChecked(self.viewport.pan_mode)
+        self.a_select.setChecked(
+            not (self.viewport.orbit_mode or self.viewport.pan_mode))
 
     def _escape(self) -> None:
         if self.viewport.draw_element_mode:
@@ -565,6 +668,12 @@ class MainWindow(QMainWindow):
         if self.viewport.orbit_mode:
             self.a_orbit.setChecked(False)
             self.viewport.set_orbit_mode(False)
+            self.a_select.setChecked(True)
+            return
+        if self.viewport.pan_mode:
+            self.a_pan.setChecked(False)
+            self.viewport.set_pan_mode(False)
+            self.a_select.setChecked(True)
             return
         self.viewport.clear_selection()
 
@@ -646,7 +755,7 @@ class MainWindow(QMainWindow):
         page = ribbon.add_tab("View")
         group = page.add_group("Navigate")
         for action in (self.a_fit, self.a_iso, self.a_top, self.a_front,
-                       self.a_right, self.a_orbit, self.a_fit_sel):
+                       self.a_right, self.a_pan, self.a_orbit, self.a_fit_sel):
             group.add_large(action)
         group = page.add_group("Display")
         group.add_column((self.a_nodes_visible, self.a_node_labels,
@@ -847,7 +956,7 @@ class MainWindow(QMainWindow):
                       "separator", "a_activate", "a_deactivate",
                       "a_activate_all", "separator", "a_undo", "a_redo"],
             "views": ["a_fit", "a_iso", "a_top", "a_front", "a_right",
-                      "separator", "a_orbit", "a_node_labels",
+                      "separator", "a_pan", "a_orbit", "a_node_labels",
                       "a_element_labels", "a_grid", "a_deformed",
                       "a_extruded", "a_clean_view", "separator", "a_fit_sel"],
         }
@@ -856,6 +965,15 @@ class MainWindow(QMainWindow):
             name: self._load_toolbar_keys(name, defaults)
             for name, defaults in self._toolbar_defaults.items()
         }
+        added = str(self._toolbar_settings.value(
+            "toolbar/pan_added", "")).lower()
+        if added not in ("1", "true"):
+            views = self._toolbar_state["views"]
+            if "a_pan" not in views:
+                index = (views.index("a_orbit")
+                         if "a_orbit" in views else len(views))
+                views.insert(index, "a_pan")
+            self._toolbar_settings.setValue("toolbar/pan_added", True)
 
         quick = QToolBar("Quick access", self)
         quick.setObjectName("quick_toolbar")
@@ -870,6 +988,26 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, quick)
         self.quick_toolbar = quick
         self._populate_toolbar(quick, self._toolbar_state["quick"])
+
+        self._element_history: List[str] = []
+        self._node_history: List[str] = []
+        selection = QToolBar("Selection", self)
+        selection.setObjectName("selection_toolbar")
+        selection.setMovable(True)
+        selection.setFloatable(False)
+        selection.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        selection.setIconSize(QSize(18, 18))
+        selection.addAction(self.a_select)
+        selection.addSeparator()
+        selection.addWidget(QLabel("Elements"))
+        self.element_combo = self._selection_combo("element")
+        selection.addWidget(self.element_combo)
+        selection.addSeparator()
+        selection.addWidget(QLabel("Nodes"))
+        self.node_combo = self._selection_combo("node")
+        selection.addWidget(self.node_combo)
+        self.addToolBar(Qt.TopToolBarArea, selection)
+        self.selection_toolbar = selection
 
         views = QToolBar("Quick views", self)
         views.setObjectName("quickview_toolbar")
@@ -905,6 +1043,72 @@ class MainWindow(QMainWindow):
             elif key in self._toolbar_registry:
                 toolbar.addAction(self._toolbar_registry[key])
 
+    def _selection_combo(self, kind: str) -> QComboBox:
+        combo = QComboBox(self)
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setMaxCount(5)
+        combo.setMaxVisibleItems(6)
+        combo.setMinimumContentsLength(18)
+        combo.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMinimumWidth(210)
+        combo.setToolTip(
+            f"Type {kind} numbers separated by spaces or commas, or a range "
+            f"such as 4 to 9, then press Enter. The last five selection "
+            f"lists are kept in the dropdown.")
+        combo.lineEdit().setPlaceholderText("1 2, 4 to 9")
+        combo.lineEdit().returnPressed.connect(
+            lambda: self._apply_selection_text(kind))
+        combo.activated.connect(
+            lambda _index: self._apply_selection_text(kind))
+        return combo
+
+    def _apply_selection_text(self, kind: str) -> None:
+        combo = self.element_combo if kind == "element" else self.node_combo
+        text = combo.currentText().strip()
+        if not text:
+            self.viewport.clear_selection()
+            self._status("Selection cleared")
+            return
+        tags = parse_selection_text(text)
+        source = (self.project.elements if kind == "element"
+                  else self.project.nodes)
+        valid = [tag for tag in tags if tag in source]
+        if not valid:
+            self._status(f"No matching {kind}s in \"{text}\"")
+            return
+        if kind == "element":
+            self.viewport.select_elements(valid)
+        else:
+            self.viewport.select_nodes(valid)
+        missing = len(tags) - len(valid)
+        note = f" ({missing} not found)" if missing else ""
+        self._status(f"Selected {len(valid)} {kind}(s){note}")
+
+    def _sync_selection_boxes(self) -> None:
+        if not hasattr(self, "element_combo"):
+            return
+        self._set_selection_text(
+            self.element_combo, self._element_history,
+            format_selection_tags(self.viewport.sel_elements))
+        self._set_selection_text(
+            self.node_combo, self._node_history,
+            format_selection_tags(self.viewport.sel_nodes))
+
+    def _set_selection_text(self, combo: QComboBox,
+                            history: List[str], text: str) -> None:
+        if text:
+            if text in history:
+                history.remove(text)
+            history.insert(0, text)
+            del history[5:]
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(history)
+        combo.setEditText(text)
+        combo.blockSignals(False)
+
     def _toolbar_context_menu(self, which: str, pos) -> None:
         menu = QMenu(self)
         customize = menu.addAction("Customize Toolbar...")
@@ -930,6 +1134,11 @@ class MainWindow(QMainWindow):
         views.setChecked(not self.quick_view_toolbar.isHidden())
         views.triggered.connect(
             lambda checked: self.quick_view_toolbar.setVisible(bool(checked)))
+        selection = menu.addAction("Selection")
+        selection.setCheckable(True)
+        selection.setChecked(not self.selection_toolbar.isHidden())
+        selection.triggered.connect(
+            lambda checked: self.selection_toolbar.setVisible(bool(checked)))
         menu.addSeparator()
         menu.addAction("Customize Quick Access...",
                        lambda: self._customize_toolbar("quick"))
@@ -2220,6 +2429,7 @@ class MainWindow(QMainWindow):
     def _on_selection(self) -> None:
         sel_n = self.viewport.sel_nodes
         sel_e = self.viewport.sel_elements
+        self._sync_selection_boxes()
         if len(sel_n) == 1 and not sel_e:
             tag = next(iter(sel_n))
             n = self.project.nodes.get(tag)
