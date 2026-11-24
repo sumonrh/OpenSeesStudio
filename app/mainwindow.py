@@ -14,7 +14,7 @@ from PySide6.QtGui import (QAction, QBrush, QColor, QCursor, QDesktopServices,
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                QDockWidget, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
+                               QLineEdit, QInputDialog, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QSpinBox, QStackedWidget, QToolBar,
                                QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
@@ -549,6 +549,11 @@ class MainWindow(QMainWindow):
                                          lambda on: self.model_dock.setVisible(on), "",
                                          "Show or hide the model tree", checkable=True)
         self.a_model_visible.setChecked(True)
+        self.a_groups_visible = self._act(
+            "Groups", "panel_model",
+            lambda on: self.groups_dock.setVisible(on), "",
+            "Show or hide structure and boundary groups", checkable=True)
+        self.a_groups_visible.setChecked(True)
         self.a_props_visible = self._act("Properties", "panel_props",
                                          lambda on: self.props_dock.setVisible(on), "",
                                          "Show or hide the properties panel", checkable=True)
@@ -805,7 +810,8 @@ class MainWindow(QMainWindow):
         group = page.add_group("View mode")
         group.add_large(self.a_extruded)
         group = page.add_group("Panels")
-        group.add_column((self.a_model_visible, self.a_props_visible))
+        group.add_column((self.a_model_visible, self.a_groups_visible,
+                          self.a_props_visible))
         group.add_column((self.a_log_visible, self.a_toolbars))
 
         page = ribbon.add_tab("Structure")
@@ -1534,6 +1540,42 @@ class MainWindow(QMainWindow):
         self.viewport.elementDrawRequested.connect(self._draw_element_between)
         self.viewport.drawModeCancelled.connect(self._cancel_draw_mode)
 
+        # ---- structure / boundary groups -------------------------------
+        self.groups_tree = QTreeWidget()
+        self.groups_tree.setHeaderHidden(True)
+        self.groups_tree.setColumnCount(1)
+        self.groups_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.groups_tree.itemDoubleClicked.connect(self._group_tree_double)
+        self.groups_tree.itemSelectionChanged.connect(self._group_selection_changed)
+        self.groups_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.groups_tree.customContextMenuRequested.connect(
+            self._group_tree_menu)
+        groups_panel = QWidget()
+        groups_lay = QVBoxLayout(groups_panel)
+        groups_lay.setContentsMargins(6, 6, 6, 6)
+        group_buttons = QHBoxLayout()
+        self.new_structure_group_btn = QPushButton("Structure +")
+        self.new_structure_group_btn.clicked.connect(self.new_structure_group)
+        self.new_boundary_group_btn = QPushButton("Boundary +")
+        self.new_boundary_group_btn.clicked.connect(self.new_boundary_group)
+        self.add_group_members_btn = QPushButton("Add selection")
+        self.add_group_members_btn.clicked.connect(self.add_selected_to_group)
+        self.add_group_members_btn.setEnabled(False)
+        group_buttons.addWidget(self.new_structure_group_btn)
+        group_buttons.addWidget(self.new_boundary_group_btn)
+        groups_lay.addLayout(group_buttons)
+        groups_lay.addWidget(self.add_group_members_btn)
+        groups_lay.addWidget(dialogs.hint(
+            "Select elements or nodes, create a group, then use the tree to "
+            "recall each selection. Right-click a group to add, rename or delete."))
+        groups_lay.addWidget(self.groups_tree, 1)
+        groups_dock = QDockWidget("Groups", self)
+        groups_dock.setObjectName("groups_dock")
+        groups_dock.setWidget(groups_panel)
+        groups_dock.setMinimumWidth(240)
+        self.addDockWidget(Qt.RightDockWidgetArea, groups_dock)
+        self.groups_dock = groups_dock
+
         # ---- properties ------------------------------------------------
         self.props = QStackedWidget()
         self.props.setMinimumWidth(280)
@@ -1543,6 +1585,7 @@ class MainWindow(QMainWindow):
         dock2.setWidget(self.props)
         dock2.setMinimumWidth(290)
         self.addDockWidget(Qt.RightDockWidgetArea, dock2)
+        self.splitDockWidget(self.groups_dock, dock2, Qt.Vertical)
         self.props_dock = dock2
 
         # ---- results sidebar -------------------------------------------
@@ -1576,6 +1619,7 @@ class MainWindow(QMainWindow):
         self.log_dock = dock3
 
         for dock, action in ((self.model_dock, self.a_model_visible),
+                             (self.groups_dock, self.a_groups_visible),
                              (self.props_dock, self.a_props_visible),
                              (self.log_dock, self.a_log_visible)):
             dock.visibilityChanged.connect(action.setChecked)
@@ -1764,6 +1808,7 @@ class MainWindow(QMainWindow):
     def refresh_all(self) -> None:
         self._sync_units()
         self._refresh_tree()
+        self._refresh_group_tree()
         self._refresh_scenarios()
         self._refresh_props()
         self._refresh_results_panel()
@@ -1934,6 +1979,211 @@ class MainWindow(QMainWindow):
 
         self.tree.expandAll()
         self.tree.blockSignals(False)
+
+    # ------------------------------------------------- structure/boundary groups
+    def _group_map(self, kind: str) -> Dict[str, List[int]]:
+        if kind == "structure":
+            return self.project.structure_groups
+        return self.project.boundary_groups
+
+    def _group_member_tags(self, kind: str) -> List[int]:
+        return sorted(self.viewport.sel_elements if kind == "structure"
+                      else self.viewport.sel_nodes)
+
+    def _next_group_name(self, kind: str) -> str:
+        base = "Structure" if kind == "structure" else "Boundary"
+        names = {name.casefold() for name in self._group_map(kind)}
+        index = 1
+        while f"{base} {index}".casefold() in names:
+            index += 1
+        return f"{base} {index}"
+
+    def new_structure_group(self) -> None:
+        self._new_group("structure")
+
+    def new_boundary_group(self) -> None:
+        self._new_group("boundary")
+
+    def _new_group(self, kind: str) -> None:
+        title = "Structure" if kind == "structure" else "Boundary"
+        noun = "elements" if kind == "structure" else "nodes"
+        if not self._group_member_tags(kind):
+            self._warn(f"Select one or more {noun} first, then create the group.")
+            return
+        name, ok = QInputDialog.getText(
+            self, f"New {title} Group", "Group name:",
+            text=self._next_group_name(kind))
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if any(existing.casefold() == name.casefold()
+               for existing in self._group_map(kind)):
+            self._warn(f"A {title.lower()} group named '{name}' already exists.")
+            return
+        self._create_group(kind, name, self._group_member_tags(kind))
+
+    def _create_group(self, kind: str, name: str, tags) -> None:
+        source = (self.project.elements if kind == "structure"
+                  else self.project.nodes)
+        valid = sorted({int(tag) for tag in tags if int(tag) in source})
+        if not valid:
+            self._warn("No valid members selected for the group.")
+            return
+        self._group_map(kind)[name] = valid
+        label = "structure" if kind == "structure" else "boundary"
+        self._commit(f"Created {label} group {name}")
+        self._select_group(kind, name)
+
+    def add_selected_to_group(self) -> None:
+        current = self._current_group()
+        if current is None:
+            self._warn("Select a structure or boundary group in the tree first.")
+            return
+        self._add_selection_to_group(*current)
+
+    def _add_selection_to_group(self, kind: str, name: str) -> None:
+        groups = self._group_map(kind)
+        if name not in groups:
+            self._warn(f"The {kind} group '{name}' no longer exists.")
+            return
+        tags = self._group_member_tags(kind)
+        noun = "elements" if kind == "structure" else "nodes"
+        if not tags:
+            self._warn(f"Select one or more {noun} first.")
+            return
+        merged = sorted(set(groups[name]) | set(tags))
+        if merged == groups[name]:
+            self._status(f"{name} already contains the selected {noun}.")
+            return
+        groups[name] = merged
+        self._commit(f"Added {len(tags)} {noun} to {kind} group {name}")
+
+    def _current_group(self):
+        item = self.groups_tree.currentItem()
+        data = item.data(0, Qt.UserRole) if item is not None else None
+        if data and data[0] in ("structure", "boundary") and data[1]:
+            return data[0], data[1]
+        return None
+
+    def _group_selection_changed(self) -> None:
+        self.add_group_members_btn.setEnabled(self._current_group() is not None)
+
+    def _refresh_group_tree(self) -> None:
+        if not hasattr(self, "groups_tree"):
+            return
+        self.groups_tree.blockSignals(True)
+        self.groups_tree.clear()
+        font = QFont("Segoe UI", 9, QFont.Bold)
+        for kind, title in (("structure", "Structure Groups"),
+                            ("boundary", "Boundary Groups")):
+            groups = self._group_map(kind)
+            root = QTreeWidgetItem([f"{title}   ({len(groups)})"])
+            root.setData(0, Qt.UserRole, (f"{kind}_root", None))
+            root.setFont(0, font)
+            root.setForeground(0, QBrush(QColor(theme.ACCENT_DARK)))
+            for name in sorted(groups, key=str.casefold):
+                tags = groups[name]
+                item = QTreeWidgetItem([f"{name}   ({len(tags)} members)"])
+                item.setData(0, Qt.UserRole, (kind, name))
+                preview = ", ".join(str(tag) for tag in tags[:24])
+                if len(tags) > 24:
+                    preview += ", ..."
+                item.setToolTip(
+                    0, f"{len(tags)} member(s): {preview}\n"
+                       "Double-click to select the group in the model. "
+                       "Right-click to add, rename or delete.")
+                root.addChild(item)
+            if not groups:
+                empty = QTreeWidgetItem(["No groups defined"])
+                empty.setFlags(Qt.ItemIsEnabled)
+                root.addChild(empty)
+            root.setExpanded(True)
+            self.groups_tree.addTopLevelItem(root)
+        self.groups_tree.expandAll()
+        self.groups_tree.blockSignals(False)
+        self._group_selection_changed()
+
+    def _group_tree_double(self, item: QTreeWidgetItem, _col: int) -> None:
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+        kind, name = data
+        if kind in ("structure", "boundary") and name:
+            self._select_group(kind, name)
+
+    def _select_group(self, kind: str, name: str) -> None:
+        tags = self._group_map(kind).get(name, [])
+        if not tags:
+            self._status(f"The {kind} group '{name}' is empty.")
+            return
+        if kind == "structure":
+            self.viewport.select_elements(tags)
+        else:
+            self.viewport.select_nodes(tags)
+        self.viewport.fit_selection()
+        noun = "element" if kind == "structure" else "node"
+        self._status(f"Selected {len(tags)} {noun}(s) from {kind} group {name}")
+
+    def _rename_group(self, kind: str, name: str) -> None:
+        groups = self._group_map(kind)
+        if name not in groups:
+            return
+        title = "Structure" if kind == "structure" else "Boundary"
+        new_name, ok = QInputDialog.getText(
+            self, f"Rename {title} Group", "Group name:", text=name)
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == name:
+            return
+        if any(existing.casefold() == new_name.casefold()
+               for existing in groups):
+            self._warn(f"A {title.lower()} group named '{new_name}' already exists.")
+            return
+        groups[new_name] = groups.pop(name)
+        self._commit(f"Renamed {kind} group {name} to {new_name}")
+
+    def _delete_group(self, kind: str, name: str) -> None:
+        groups = self._group_map(kind)
+        if name not in groups:
+            return
+        answer = QMessageBox.question(
+            self, "Delete Group",
+            f"Delete the {kind} group '{name}'?\n\n"
+            "This only removes the group; model nodes and elements are kept.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        groups.pop(name, None)
+        self._commit(f"Deleted {kind} group {name}")
+
+    def _group_tree_menu(self, pos) -> None:
+        item = self.groups_tree.itemAt(pos)
+        data = item.data(0, Qt.UserRole) if item is not None else None
+        menu = QMenu(self)
+        if data and data[0] in ("structure", "boundary") and data[1]:
+            kind, name = data
+            menu.addAction("Select members", lambda: self._select_group(kind, name))
+            menu.addAction("Add current selection",
+                           lambda: self._add_selection_to_group(kind, name))
+            menu.addSeparator()
+            menu.addAction("Rename...", lambda: self._rename_group(kind, name))
+            menu.addAction("Delete...", lambda: self._delete_group(kind, name))
+            menu.addSeparator()
+        if data and data[0] == "structure_root":
+            menu.addAction("New structure group from selection",
+                           self.new_structure_group)
+        elif data and data[0] == "boundary_root":
+            menu.addAction("New boundary group from selection",
+                           self.new_boundary_group)
+        else:
+            menu.addAction("New structure group from selection",
+                           self.new_structure_group)
+            menu.addAction("New boundary group from selection",
+                           self.new_boundary_group)
+        menu.exec(self.groups_tree.viewport().mapToGlobal(pos))
 
     def _tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(0, Qt.UserRole)
@@ -2646,11 +2896,14 @@ class MainWindow(QMainWindow):
                      "nodal_loads", "elem_loads", "self_weight", "combos",
                      "hinge_defs", "hinge_assignments", "springs", "constraints",
                      "ground_motions", "time_history", "response_spectrum",
+                     "lanes", "vehicles", "live_load_cases",
+                     "structure_groups", "boundary_groups",
                      "settings", "title"):
             setattr(p, attr, getattr(other, attr))
         p.settings["force_unit"], p.settings["length_unit"] = keep_units
 
     def _commit(self, label: str) -> None:
+        self.project.prune_groups()
         if (self.static_results or self.modal_results or self.pushover_results
                 or self.time_history_results or self.response_spectrum_results):
             self._clear_results()

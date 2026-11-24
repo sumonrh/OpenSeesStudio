@@ -17,12 +17,13 @@ MCP server so AI agents can drive the model.
 > public safety. Test and verify all results independently before use. Use at
 > your own risk. Read `DISCLAIMER.md`.
 
-> **Latest release: 1.0.22-alpha** - Early alpha, under active development.
-> Licensing correction: **PolyForm Noncommercial 1.0.0**, complete
-> OpenSees/OpenSeesPy/Qt third-party notices, research-use/public-safety
-> disclaimer, and removal of the GPL-only Qt Virtual Keyboard.
-> [Download the alpha installer](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.22-alpha)
-> or read the [1.0.22-alpha release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.22-alpha).
+> **Latest release: 1.0.23-alpha** - Early alpha, under active development.
+> Adds the right-side **Groups** tree for persistent **Structure Groups**
+> (elements) and **Boundary Groups** (nodes). Also includes the PolyForm
+> Noncommercial license, complete third-party notices, and research-use
+> disclaimer.
+> [Download the alpha installer](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.23-alpha)
+> or read the [1.0.23-alpha release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.23-alpha).
 
 ## License
 
@@ -44,10 +45,10 @@ Read `NOTICE.md`, `DISCLAIMER.md`, `THIRD_PARTY_NOTICES.md`, and the
 
 ## Install on Windows
 
-[**Download the latest alpha installer**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.22-alpha)
+[**Download the latest alpha installer**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.23-alpha)
 
 1. Open the link above (or **Releases** on the right side of this page) and click
-   `OpenSeesStudio-1.0.22-alpha-Setup.exe` under **Assets**. Do not download the
+   `OpenSeesStudio-1.0.23-alpha-Setup.exe` under **Assets**. Do not download the
    `Source code (zip)` or `Source code (tar.gz)` files.
 2. Open the downloaded file from your **Downloads** folder.
 3. If Windows shows **"Windows protected your PC"**, click **More info**, then
@@ -181,11 +182,14 @@ project specification and obtain engineering review.
 - Vertical view strip (fit, iso, top, front, right, pan, orbit, node labels, element
   labels, grid, deformed, extruded). Right-click either toolbar or use
   **View > Panels > Toolbars** to add, remove and reorder favourite buttons.
+- **Groups** dock on the right for persistent **Structure Groups** (elements) and
+  **Boundary Groups** (nodes). Create a group from the current selection, add more
+  members, rename or delete it, and double-click to recall the selection.
 - **Update badge** in the top-right corner of the ribbon appears only when a newer
   GitHub release with a Setup installer exists; click it to download the installer.
 - **About** shows the current application version.
-- Model and Messages panels are shown by default; the Properties panel is hidden by
-  default and can be opened from **View > Panels**.
+- Model, Groups and Messages panels are shown by default; the Properties panel is
+  hidden by default and can be opened from **View > Panels**.
 - **Run Analysis (F5)** opens a run-control checklist: static, modal, pushover, time
   history and response spectrum, with unavailable analyses disabled and explained.
 - Materials, sections and hinges can be dragged from the model tree onto the viewport
@@ -590,7 +594,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.22-alpha-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.23-alpha-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

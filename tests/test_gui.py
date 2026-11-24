@@ -744,6 +744,44 @@ check("double-click support group selects its nodes",
 check("boundary presets removed from the tree",
       all(not boundary_item.child(i).text(0).startswith("Presets")
           for i in range(boundary_item.childCount())))
+
+print("== right-side groups tree ==")
+check("groups panel action enabled", win.a_groups_visible.isChecked())
+check("groups tree has structure and boundary roots",
+      win.groups_tree.topLevelItemCount() == 2
+      and win.groups_tree.topLevelItem(0).text(0).startswith("Structure Groups")
+      and win.groups_tree.topLevelItem(1).text(0).startswith("Boundary Groups"))
+structure_members = sorted(win.project.elements)[:3]
+boundary_members = sorted(win.project.nodes)[:2]
+win._create_group("structure", "Girders", structure_members)
+win._create_group("boundary", "Piers", boundary_members)
+check("structure group stores selected elements",
+      win.project.structure_groups.get("Girders") == structure_members)
+check("boundary group stores selected nodes",
+      win.project.boundary_groups.get("Piers") == boundary_members)
+structure_root = win.groups_tree.topLevelItem(0)
+boundary_root = win.groups_tree.topLevelItem(1)
+check("group tree lists both groups",
+      structure_root.child(0).text(0).startswith("Girders")
+      and boundary_root.child(0).text(0).startswith("Piers"))
+win.viewport.clear_selection()
+win._group_tree_double(structure_root.child(0), 0)
+check("structure group double-click selects its elements",
+      set(win.viewport.sel_elements) == set(structure_members))
+win._group_tree_double(boundary_root.child(0), 0)
+check("boundary group double-click selects its nodes",
+      set(win.viewport.sel_nodes) == set(boundary_members))
+clone = Project.from_dict(win.project.to_dict())
+check("structure and boundary groups persist in the project",
+      clone.structure_groups.get("Girders") == structure_members
+      and clone.boundary_groups.get("Piers") == boundary_members)
+win.project.structure_groups.pop("Girders", None)
+win.project.boundary_groups.pop("Piers", None)
+win._refresh_group_tree()
+root = win.tree.topLevelItem(0)
+tree_items = {root.child(i).text(0).split("   ")[0]: root.child(i)
+              for i in range(root.childCount())}
+
 loads_item = tree_items["Loads"]
 load_cases_item = next(loads_item.child(i) for i in range(loads_item.childCount())
                        if loads_item.child(i).text(0).startswith("Load Cases"))

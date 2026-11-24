@@ -949,6 +949,8 @@ class Project:
         self.lanes: Dict[int, Lane] = {}
         self.vehicles: Dict[int, Vehicle] = default_vehicles()
         self.live_load_cases: Dict[str, LiveLoadCase] = {}
+        self.structure_groups: Dict[str, List[int]] = {}
+        self.boundary_groups: Dict[str, List[int]] = {}
         self.settings: dict = dict(DEFAULT_SETTINGS)
         self.title: str = "Untitled"
         self.path: str = ""
@@ -990,6 +992,17 @@ class Project:
 
     def next_load(self) -> int:
         return max([l.tag for l in self.nodal_loads] + [l.tag for l in self.elem_loads] + [0]) + 1
+
+    def prune_groups(self) -> None:
+        """Drop group members that no longer exist in the model."""
+        self.structure_groups = {
+            str(name): sorted({int(tag) for tag in tags
+                               if int(tag) in self.elements})
+            for name, tags in self.structure_groups.items()}
+        self.boundary_groups = {
+            str(name): sorted({int(tag) for tag in tags
+                               if int(tag) in self.nodes})
+            for name, tags in self.boundary_groups.items()}
 
     def subdivide_elements(self, tags: List[int],
                            divisions: int) -> Tuple[List[int], List[int]]:
@@ -1142,6 +1155,12 @@ class Project:
             "vehicles": [vehicle.to_dict() for vehicle in self.vehicles.values()],
             "live_load_cases": [case.to_dict()
                                 for case in self.live_load_cases.values()],
+            "structure_groups": {
+                name: sorted(tags)
+                for name, tags in self.structure_groups.items()},
+            "boundary_groups": {
+                name: sorted(tags)
+                for name, tags in self.boundary_groups.items()},
             "settings": self.settings,
         }
 
@@ -1189,6 +1208,13 @@ class Project:
             p.vehicles = default_vehicles()
         p.live_load_cases = {case.name: case for case in (
             LiveLoadCase.from_dict(x) for x in d.get("live_load_cases", []))}
+        p.structure_groups = {
+            str(name): sorted({int(tag) for tag in tags})
+            for name, tags in d.get("structure_groups", {}).items()}
+        p.boundary_groups = {
+            str(name): sorted({int(tag) for tag in tags})
+            for name, tags in d.get("boundary_groups", {}).items()}
+        p.prune_groups()
         legacy = d.get("hinges", [])
         if legacy and not p.hinge_defs:
             grouped = {}
