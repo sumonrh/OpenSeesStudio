@@ -17,13 +17,13 @@ MCP server so AI agents can drive the model.
 > public safety. Test and verify all results independently before use. Use at
 > your own risk. Read `DISCLAIMER.md`.
 
-> **Latest release: 1.0.23-alpha** - Early alpha, under active development.
+> **Latest release: 1.0.24-alpha** - Early alpha, under active development.
 > Adds the right-side **Groups** tree for persistent **Structure Groups**
 > (elements) and **Boundary Groups** (nodes). Also includes the PolyForm
 > Noncommercial license, complete third-party notices, and research-use
 > disclaimer.
-> [Download the alpha installer](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.23-alpha)
-> or read the [1.0.23-alpha release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.23-alpha).
+> [Download the alpha installer](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+> or read the [1.0.24-alpha release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha).
 
 ## License
 
@@ -45,10 +45,10 @@ Read `NOTICE.md`, `DISCLAIMER.md`, `THIRD_PARTY_NOTICES.md`, and the
 
 ## Install on Windows
 
-[**Download the latest alpha installer**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.23-alpha)
+[**Download the latest alpha installer**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
 
 1. Open the link above (or **Releases** on the right side of this page) and click
-   `OpenSeesStudio-1.0.23-alpha-Setup.exe` under **Assets**. Do not download the
+   `OpenSeesStudio-1.0.24-alpha-Setup.exe` under **Assets**. Do not download the
    `Source code (zip)` or `Source code (tar.gz)` files.
 2. Open the downloaded file from your **Downloads** folder.
 3. If Windows shows **"Windows protected your PC"**, click **More info**, then
@@ -594,7 +594,7 @@ Inno Setup installer. Outputs:
 
 - `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
 - `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.23-alpha-Setup.exe` - Windows installer with Start Menu and
+- `dist\OpenSeesStudio-1.0.24-alpha-Setup.exe` - Windows installer with Start Menu and
   optional desktop shortcut
 
 ### Code signing

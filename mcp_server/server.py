@@ -73,6 +73,7 @@ class State:
         self.pushover: Optional[opsgen.PushoverResults] = None
         self.time_history: Optional[opsgen.TimeHistoryResults] = None
         self.spectrum: Optional[opsgen.ResponseSpectrumResults] = None
+        self.live_load: Optional[dict] = None
         self.gui = GuiClient()
         self.synced_nodes: int = 0
 
@@ -221,6 +222,7 @@ def _changed(label: str, sync: bool = True) -> dict:
     STATE.pushover = None
     STATE.time_history = None
     STATE.spectrum = None
+    STATE.live_load = None
     if sync:
         _sync_gui()
     return {"ok": True, "action": label}
@@ -300,6 +302,7 @@ def project_new(title: str = "Untitled") -> dict:
     STATE.path = ""
     STATE.static = None
     STATE.modal = None
+    STATE.live_load = None
     STATE.synced_nodes = 0
     _sync_gui(fit=True)
     return _summary()
@@ -317,6 +320,7 @@ def project_open(path: str) -> dict:
     STATE.path = str(p)
     STATE.static = None
     STATE.modal = None
+    STATE.live_load = None
     STATE.synced_nodes = 0
     _sync_gui(fit=True)
     return _summary()
@@ -2074,6 +2078,56 @@ def live_load(spans: Optional[List[float]] = None,
         lane_offset=float(lane_offset))
     result = live_load_engine.analyze(span_objects, axle_objects, config)
 
+    # Resolve 3D chain path for GUI envelope overlay.
+    geom = None
+    if beam_tags:
+        geom = live_load_engine.chain_geometry(_p(), beam_tags)
+    elif lane_tag is not None:
+        lane_obj = _p().lanes.get(int(lane_tag))
+        if lane_obj is not None and lane_obj.element_tags:
+            geom = live_load_engine.chain_geometry(_p(), lane_obj.element_tags)
+        elif lane_obj is not None and len(lane_obj.points) >= 2:
+            pts_3d = lane_obj.points
+            dist = 0.0
+            path_pts = [(0.0, tuple(float(v) for v in pts_3d[0]))]
+            for prev, cur in zip(pts_3d, pts_3d[1:]):
+                dist += sum((float(b) - float(a)) ** 2
+                            for a, b in zip(prev, cur)) ** 0.5 / 1000.0
+                path_pts.append((dist, tuple(float(v) for v in cur)))
+            geom = {"points": path_pts}
+    if geom is None and _p().elements:
+        geom = live_load_engine.chain_geometry(_p(), list(_p().elements.keys()))
+    if geom is not None and len(geom.get("points", [])) >= 2:
+        gui_path = [[float(p[0]), [float(v) for v in p[1]]]
+                    for p in geom["points"]]
+    else:
+        total_mm = sum(s.length for s in span_objects) * 1000.0
+        gui_path = [[0.0, [0.0, 0.0, 0.0]],
+                    [total_mm / 1000.0, [total_mm, 0.0, 0.0]]]
+
+    STATE.live_load = {
+        "load_case": result.load_case,
+        "truck_model": result.config.truck_model,
+        "spans_m": [float(s.length) for s in result.spans],
+        "scenario": "LL All",
+        "components": ["My"],
+        "path": gui_path,
+        "cases": {
+            cname: {
+                "moment": [[float(pt.x), float(pt.max), float(pt.min)]
+                           for pt in cval.moment],
+                "shear": [[float(pt.x), float(pt.max), float(pt.min)]
+                          for pt in cval.shear],
+            }
+            for cname, cval in result.cases.items()
+        },
+    }
+    if STATE.gui.connected:
+        try:
+            STATE.gui.call("show_live_load", STATE.live_load, timeout=20.0)
+        except Exception:               # noqa: BLE001
+            STATE.gui.close()
+
     def summary(points, scale: float = 1.0) -> dict:
         high = max(points, key=lambda p: p.max)
         low = min(points, key=lambda p: p.min)
@@ -2299,7 +2353,34 @@ def gui_show_results() -> dict:
     if STATE.modal is not None:
         STATE.gui.call("show_mode", _modal_payload(STATE.modal, 1))
         return {"ok": True, "showing": "modal", "mode": 1}
+    if STATE.live_load is not None:
+        STATE.gui.call("show_live_load", STATE.live_load, timeout=20.0)
+        return {"ok": True, "showing": "live_load",
+                "scenario": STATE.live_load.get("scenario", "LL All")}
     raise ValueError("No results yet. Run an analysis first.")
+
+
+@server.tool()
+@_locked
+def gui_show_live_load(scenario: str = "LL All",
+                       components: Optional[List[str]] = None) -> dict:
+    """Show live-load moment/shear envelopes in the attached GUI.
+
+    scenario = 'LL All' | 'LL Max' | 'LL Min'.
+    components = list containing 'My' and/or 'Vz' (default ['My']).
+    """
+    if not STATE.gui.connected:
+        raise ValueError("No GUI attached. Call gui_connect first.")
+    if STATE.live_load is None:
+        raise ValueError("No live-load results yet. Run live_load first.")
+    comps = [str(c) for c in (components or ["My"])
+             if str(c) in ("My", "Vz", "Vy")] or ["My"]
+    payload = dict(STATE.live_load, scenario=str(scenario or "LL All"),
+                   components=comps)
+    STATE.live_load = payload
+    STATE.gui.call("show_live_load", payload, timeout=20.0)
+    return {"ok": True, "showing": "live_load",
+            "scenario": payload["scenario"], "components": comps}
 
 
 @server.tool()

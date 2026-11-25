@@ -183,6 +183,13 @@ class Viewport(QWidget):
         self.diagram_values = False
         self.diagram_fill = True
 
+        self.show_reactions = False
+        self.reaction_results: Optional[StaticResults] = None
+        self.reaction_scenario: str = ""
+        self.reaction_components: List[str] = ["Rx", "Ry", "Rz", "Mx", "My", "Mz"]
+        self.reaction_scale: float = 0.0
+        self.reaction_values: bool = True
+
         self.live_load_envelope = None
         self.live_load_envelopes = {}
         self.live_load_path = []
@@ -293,6 +300,9 @@ class Viewport(QWidget):
         self.live_load_envelope = None
         self.live_load_envelopes = {}
         self.live_load_path = []
+        self.reaction_results = None
+        self.reaction_scenario = ""
+        self.show_reactions = False
         self.update()
 
     def set_load_scenario(self, scenario: str) -> None:
@@ -367,11 +377,34 @@ class Viewport(QWidget):
         self.live_load_path = []
         self.update()
 
+    def set_reaction_results(self, res: Optional[StaticResults],
+                             scenario: str = "",
+                             components: Optional[Sequence[str]] = None,
+                             scale: float = 0.0,
+                             values: bool = True) -> None:
+        self.reaction_results = res
+        self.reaction_scenario = scenario or (res.scenario if res else "")
+        if components is not None:
+            self.reaction_components = [str(c) for c in components]
+        self.reaction_scale = max(float(scale), 0.0)
+        self.reaction_values = bool(values)
+        self.show_reactions = bool(res and self.reaction_components)
+        self.update()
+
+    def clear_reactions(self) -> None:
+        self.reaction_results = None
+        self.reaction_scenario = ""
+        self.show_reactions = False
+        self.update()
+
     def clear_results(self) -> None:
         self.static_results = None
         self.modal_results = None
         self.diagram_results = None
         self.show_diagrams = False
+        self.reaction_results = None
+        self.reaction_scenario = ""
+        self.show_reactions = False
         self.stop_animation()
         self.update()
 
@@ -672,6 +705,10 @@ class Viewport(QWidget):
         if self.show_loads:
             self._draw_loads(p, w, h, proj)
 
+        # ---- reactions -------------------------------------------------
+        if self.show_reactions and self.reaction_results:
+            self._draw_reactions(p, w, h, node_points)
+
         # ---- supports --------------------------------------------------
         if self.show_supports:
             for tag, n in self.project.nodes.items():
@@ -781,15 +818,16 @@ class Viewport(QWidget):
         for _depth, tag, e, base, screen in items:
             selected = tag in self.sel_elements
             hover = tag == self._hover_elem
+            base_color = theme.ELEM_TRUSS if e.kind == "truss" else theme.ELEM_BEAM
             color = QColor(theme.SELECTED if selected else
-                           (theme.ACCENT if hover else theme.ELEM_BEAM))
+                           (theme.ACCENT if hover else base_color))
             if e.kind == "shell" and len(screen) >= 4:
                 p.setPen(QPen(color, 2.2 if selected else 1.4))
                 p.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 55)))
                 p.drawPolygon(QPolygonF([QPointF(s[0], s[1]) for s in screen]))
                 p.setBrush(Qt.NoBrush)
                 continue
-            if e.kind not in ("beam", "force_beam", "disp_beam") or len(base) < 2:
+            if e.kind not in ("beam", "truss", "force_beam", "disp_beam") or len(base) < 2:
                 p.setPen(QPen(color, 3.4 if selected else 2.0))
                 p.drawPolyline(QPolygonF([QPointF(s[0], s[1]) for s in screen]))
                 continue
@@ -1231,6 +1269,10 @@ class Viewport(QWidget):
         if self.show_diagrams and self.diagram_results:
             comps = "  ".join(c for c in COMPONENTS if c in self.diagram_components)
             lines.append(f"Diagram: {self.diagram_scenario}    {comps}")
+        if self.show_reactions and self.reaction_results:
+            scen = self.reaction_scenario or self.reaction_results.scenario
+            rcomps = "  ".join(self.reaction_components)
+            lines.append(f"Reactions: {scen}    {rcomps}" if rcomps else f"Reactions: {scen}")
         if self.static_results and self.show_deformed:
             sc = self._display_scale()
             lines.append(f"Case: {self.static_results.scenario}    Deformed shape ×{sc:,.1f}")
@@ -1393,6 +1435,179 @@ class Viewport(QWidget):
 
         for pos, text, color in label_items:
             self._draw_load_label(p, pos, text, color)
+
+    def _draw_reactions(self, p: QPainter, w: int, h: int, proj) -> None:
+        """Draw selected support reaction components scaled in world space."""
+        res = self.reaction_results
+        comps = set(self.reaction_components or ())
+        if not self.project or res is None or not res.reactions or not comps:
+            return
+        cam = self.camera
+        deformed = self._deformed_points()
+        pts3 = deformed if (self.show_deformed and deformed) else \
+            {tag: n.xyz for tag, n in self.project.nodes.items()}
+        (x0, y0, z0), (x1, y1, z1) = self.project.bbox()
+        diag = max(math.dist((x0, y0, z0), (x1, y1, z1)), 1.0)
+        user_scale = self.reaction_scale if self.reaction_scale > 0.0 else 1.0
+
+        force_defs = (
+            ("Rx", (0,), True),
+            ("Ry", (1,), True),
+            ("Rz", (2,), True),
+            ("Rxy", (0, 1), False),
+            ("Rxz", (0, 2), False),
+            ("Ryz", (1, 2), False),
+            ("Rxyz", (0, 1, 2), False),
+        )
+        moment_defs = (
+            ("Mx", (3,), True),
+            ("My", (4,), True),
+            ("Mz", (5,), True),
+            ("Mxy", (3, 4), False),
+            ("Mxz", (3, 5), False),
+            ("Myz", (4, 5), False),
+            ("Mxyz", (3, 4, 5), False),
+        )
+
+        force_items = []
+        moment_items = []
+        peak_f = 0.0
+        peak_m = 0.0
+        for tag, r in res.reactions.items():
+            if not self.is_node_visible(tag):
+                continue
+            s = proj.get(tag)
+            pt3 = pts3.get(tag)
+            if s is None or pt3 is None:
+                continue
+            vals = [float(r[i]) if i < len(r) else 0.0 for i in range(6)]
+            for name, idxs, signed in force_defs:
+                if name not in comps:
+                    continue
+                vec = [0.0, 0.0, 0.0]
+                for idx in idxs:
+                    vec[idx] = vals[idx]
+                mag = math.sqrt(vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2)
+                if mag > 1e-9:
+                    peak_f = max(peak_f, mag)
+                    disp_val = vals[idxs[0]] if signed else mag
+                    unit_dir = (vec[0] / mag, vec[1] / mag, vec[2] / mag)
+                    force_items.append((tag, pt3, s, name, unit_dir, mag, disp_val))
+
+            node_m_parts = []
+            node_m_peak = 0.0
+            for name, idxs, signed in moment_defs:
+                if name not in comps:
+                    continue
+                mag = math.sqrt(sum(vals[idx] ** 2 for idx in idxs))
+                if mag > 1e-9:
+                    disp_val = vals[idxs[0]] if signed else mag
+                    node_m_peak = max(node_m_peak, mag)
+                    node_m_parts.append((name, mag, disp_val))
+            if node_m_parts:
+                peak_m = max(peak_m, node_m_peak)
+                moment_items.append((tag, pt3, s, node_m_parts, node_m_peak))
+
+        force_color = QColor(theme.SUPPORT_COLOR)
+        resultant_color = QColor("#0d9488")
+        moment_color = QColor("#7c5cbf")
+        max_world = 0.14 * diag * user_scale
+        min_world = 0.025 * diag * min(user_scale, 1.0)
+        max_px = 90.0 * max(user_scale, 1.0)
+        f_tol = max(1e-9, 1e-5 * peak_f)
+
+        p.setFont(QFont("Segoe UI", 7))
+        fm = p.fontMetrics()
+        label_items = []
+
+        for _tag, pt3, s, name, udir, mag, disp_val in force_items:
+            if mag < f_tol:
+                continue
+            ratio = mag / max(peak_f, 1e-9)
+            wlen = max(min_world, max_world * ratio)
+            tail3 = (pt3[0] - udir[0] * wlen,
+                     pt3[1] - udir[1] * wlen,
+                     pt3[2] - udir[2] * wlen)
+            t = cam.project(tail3, w, h)
+            if t is None:
+                continue
+            vx, vy = s[0] - t[0], s[1] - t[1]
+            slen = math.hypot(vx, vy)
+            if slen < 2.0:
+                continue
+            ux, uy = vx / slen, vy / slen
+            if slen > max_px:
+                slen = max_px
+                tx, ty = s[0] - ux * slen, s[1] - uy * slen
+            else:
+                tx, ty = t[0], t[1]
+            col = force_color if len(name) == 2 else resultant_color
+            pen_w = min(2.2, max(1.0, slen * 0.05))
+            head_sz = min(6.5, max(2.5, slen * 0.25))
+            p.setPen(QPen(col, pen_w))
+            p.drawLine(QPointF(tx, ty), QPointF(s[0], s[1]))
+            self._head(p, s[0], s[1], ux, uy, head_sz, col)
+            if self.reaction_values and slen >= 10.0:
+                text = f"{name}={fmt(UNITS.force(disp_val), 2)} {UNITS.force_unit}"
+                tw = fm.horizontalAdvance(text)
+                th = fm.height()
+                pad = abs(ux) * (tw * 0.5) + abs(uy) * (th * 0.5) + 6.0
+                cx = tx - ux * pad
+                cy = ty - uy * pad
+                label_items.append((cx, cy, tw, th, uy, text, col))
+
+        m_tol = max(1e-9, 1e-5 * peak_m)
+        _eye, _f, cam_r, _u = cam.basis()
+        for _tag, pt3, s, parts, mmag in moment_items:
+            if mmag < m_tol:
+                continue
+            mw = max(0.012 * diag, 0.03 * diag * user_scale * (mmag / max(peak_m, 1e-9)))
+            ref3 = (pt3[0] + cam_r[0] * mw,
+                    pt3[1] + cam_r[1] * mw,
+                    pt3[2] + cam_r[2] * mw)
+            sr = cam.project(ref3, w, h)
+            if sr is None:
+                continue
+            radius = min(16.0 * max(user_scale, 1.0),
+                         math.hypot(sr[0] - s[0], sr[1] - s[1]))
+            if radius < 3.0:
+                continue
+            p.setPen(QPen(moment_color, min(1.8, max(1.0, radius * 0.14))))
+            p.setBrush(Qt.NoBrush)
+            p.drawArc(QRectF(s[0] - radius, s[1] - radius,
+                             2.0 * radius, 2.0 * radius),
+                      30 * 16, 290 * 16)
+            self._head(p, s[0] + radius * 0.8, s[1] - radius * 0.55,
+                       1.0, -1.0, min(5.0, max(2.2, radius * 0.35)),
+                       moment_color)
+            if self.reaction_values and radius >= 5.5:
+                rendered = [f"{nm}={fmt(UNITS.moment(dv), 2)}"
+                            for nm, m_val, dv in parts if m_val >= m_tol]
+                if rendered:
+                    text = f"{', '.join(rendered)} {UNITS.moment_unit}"
+                    tw = fm.horizontalAdvance(text)
+                    th = fm.height()
+                    cx = s[0] + radius + tw * 0.5 + 8.0
+                    cy = s[1] - radius - th * 0.5 - 4.0
+                    label_items.append((cx, cy, tw, th, 1.0, text, moment_color))
+
+        placed: list[QRectF] = []
+        p.setFont(QFont("Segoe UI", 7))
+        for cx, cy, tw, th, uy, text, color in label_items:
+            rect = QRectF(cx - tw * 0.5 - 2.0, cy - th * 0.5 - 1.0,
+                          tw + 4.0, th + 2.0)
+            step = (th + 3.0) * (1.0 if uy <= 0.0 else -1.0)
+            for _ in range(6):
+                if not any(rect.intersects(other) for other in placed):
+                    break
+                rect.translate(0.0, step)
+            placed.append(rect)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(255, 255, 255, 210)))
+            p.drawRoundedRect(rect, 2.0, 2.0)
+            p.setPen(QPen(color.darker(130)))
+            p.drawText(QPointF(rect.left() + 2.0, rect.top() + 1.0 + fm.ascent()),
+                       text)
 
     def _udl_labels(self, items, w: int, h: int, peak: float,
                     multiple: bool, colors) -> list:

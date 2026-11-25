@@ -145,6 +145,9 @@ class GuiBridge(QObject):
         if cmd == "show_mode":
             w.bridge_show_mode(params)
             return True
+        if cmd == "show_live_load":
+            w.bridge_show_live_load(params)
+            return True
         if cmd == "select":
             nodes = [int(t) for t in params.get("nodes", [])]
             elems = [int(t) for t in params.get("elements", [])]

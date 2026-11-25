@@ -67,6 +67,7 @@ class ResultsDialog(QDialog):
         self.static = static
         self.modal = modal
         self.scenario = scenario
+        self.modal_table: Optional[QTableWidget] = None
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
@@ -76,7 +77,9 @@ class ResultsDialog(QDialog):
         title.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {theme.ACCENT_DARK};")
         header.addWidget(title)
         header.addStretch(1)
-        if static:
+        if static and modal:
+            label = QLabel(f"Static ({scenario})   ·   Modal ({len(modal.modes)} modes)")
+        elif static:
             label = QLabel(f"Static analysis   ·   {scenario}")
         elif modal:
             label = QLabel(f"Modal analysis   ·   {len(modal.modes)} modes")
@@ -180,7 +183,7 @@ class ResultsDialog(QDialog):
         log.setReadOnly(True)
         log.setPlainText(r.log or "No solver messages.")
         log.setStyleSheet("font-family: Consolas; font-size: 11px;")
-        self.tabs.addTab(log, "Messages")
+        self.tabs.addTab(log, "Static Messages" if self.modal else "Messages")
 
     # ------------------------------------------------------------------- modal
     def _build_modal(self) -> None:
@@ -190,20 +193,20 @@ class ResultsDialog(QDialog):
                  fmt(2 * math.pi / max(x.period, 1e-12), 5)] for x in m.modes]
         table = _table(["Mode", "Eigenvalue λ", "Period T (s)", "Frequency f (Hz)", "ω (rad/s)"], rows)
         table.cellDoubleClicked.connect(lambda r, _c: self.plotMode.emit(int(table.item(r, 0).text())))
+        self.modal_table = table
         self.tabs.addTab(_wrap("Double-click a mode to plot it in the viewport", table), "Modes")
 
         log = QTextEdit()
         log.setReadOnly(True)
         log.setPlainText(m.log or "No solver messages.")
         log.setStyleSheet("font-family: Consolas; font-size: 11px;")
-        self.tabs.addTab(log, "Messages")
+        self.tabs.addTab(log, "Modal Messages" if self.static else "Messages")
 
     def _animate(self) -> None:
         if not self.modal:
             return
-        current = self.tabs.currentIndex()
         mode = 1
-        table = self.tabs.widget(current).findChild(QTableWidget)
+        table = self.modal_table
         if table is not None and table.currentRow() >= 0:
             try:
                 mode = int(table.item(table.currentRow(), 0).text())

@@ -625,6 +625,18 @@ def _draw(p: QPainter, name: str, accent: str) -> None:
         _fill(p, accent)
         p.drawEllipse(QPointF(20.5, 16), 1.7, 1.7)
 
+    elif name == "reactions":
+        _pen(p, "#8ea6bd", 1.5)
+        p.drawLine(QPointF(3.5, 6.5), QPointF(20.5, 6.5))
+        _pen(p, GREEN, 1.9)
+        p.drawLine(QPointF(8.0, 20.5), QPointF(8.0, 10.0))
+        _fill(p, GREEN)
+        _arrow_head(p, 8.0, 8.0, 0, -1, 3.1)
+        _pen(p, GREEN, 1.9)
+        p.drawLine(QPointF(16.0, 16.5), QPointF(16.0, 10.0))
+        _fill(p, GREEN)
+        _arrow_head(p, 16.0, 8.0, 0, -1, 3.1)
+
     elif name == "pushover":
         _pen(p, "#8ea6bd", 1.2)
         p.drawLine(QPointF(3, 20.5), QPointF(21, 20.5))

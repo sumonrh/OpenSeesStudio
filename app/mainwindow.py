@@ -447,6 +447,10 @@ class MainWindow(QMainWindow):
             "Deformation", "deformed", self._toggle_deformation, "",
             "Show the deformed shape of a load case or combination",
             checkable=True)
+        self.a_reactions = self._act(
+            "Reactions", "reactions", self._toggle_reactions, "",
+            "Show support reaction arrows scaled by magnitude",
+            checkable=True)
 
         self.a_orbit = self._act("Orbit", "rotate", self._toggle_orbit, "O",
                                  "3D orbit: left-drag rotates the model "
@@ -644,6 +648,7 @@ class MainWindow(QMainWindow):
     def clean_view(self) -> None:
         self.viewport.stop_animation()
         self.viewport.clear_diagrams()
+        self.viewport.clear_reactions()
         self.viewport.set_show(show_deformed=False, show_loads=False,
                                show_node_labels=False, show_element_labels=False)
         for action, state in ((self.a_deformed, False),
@@ -652,7 +657,8 @@ class MainWindow(QMainWindow):
                               (self.a_element_labels, False),
                               (self.a_animate, False),
                               (self.a_beam_diagram, False),
-                              (self.a_deformation, False)):
+                              (self.a_deformation, False),
+                              (self.a_reactions, False)):
             action.blockSignals(True)
             action.setChecked(state)
             action.blockSignals(False)
@@ -933,6 +939,7 @@ class MainWindow(QMainWindow):
         group = page.add_group("Result display")
         group.add_large(self.a_beam_diagram)
         group.add_large(self.a_deformation)
+        group.add_large(self.a_reactions)
         group = page.add_group("Model state")
         group.add_large(self.a_lock)
 
@@ -992,9 +999,10 @@ class MainWindow(QMainWindow):
 
         self._toolbar_defaults = {
             "quick": ["a_save", "separator", "a_run", "a_results",
-                      "a_check", "separator", "a_lock", "a_nodes_visible",
-                      "separator", "a_activate", "a_deactivate",
-                      "a_activate_all", "separator", "a_undo", "a_redo"],
+                      "a_reactions", "a_check", "separator", "a_lock",
+                      "a_nodes_visible", "separator", "a_activate",
+                      "a_deactivate", "a_activate_all", "separator",
+                      "a_undo", "a_redo"],
             "views": ["a_fit", "a_iso", "a_top", "a_front", "a_right",
                       "separator", "a_pan", "a_orbit", "a_node_labels",
                       "a_element_labels", "a_grid", "a_deformed",
@@ -1014,6 +1022,16 @@ class MainWindow(QMainWindow):
                          if "a_orbit" in views else len(views))
                 views.insert(index, "a_pan")
             self._toolbar_settings.setValue("toolbar/pan_added", True)
+        reactions_added = str(self._toolbar_settings.value(
+            "toolbar/reactions_v1_added", "")).lower()
+        if reactions_added not in ("1", "true"):
+            quick_keys = self._toolbar_state["quick"]
+            if "a_reactions" not in quick_keys:
+                index = (quick_keys.index("a_results") + 1
+                         if "a_results" in quick_keys else len(quick_keys))
+                quick_keys.insert(index, "a_reactions")
+                self._save_toolbar_keys("quick")
+            self._toolbar_settings.setValue("toolbar/reactions_v1_added", True)
 
         quick = QToolBar("Quick access", self)
         quick.setObjectName("quick_toolbar")
@@ -1235,7 +1253,7 @@ class MainWindow(QMainWindow):
             self._apply_beam_diagram()
         else:
             self.viewport.clear_diagrams()
-            if not self.a_deformation.isChecked():
+            if not self.a_deformation.isChecked() and not self.a_reactions.isChecked():
                 self.viewport.show_deformed = False
                 self.a_deformed.blockSignals(True)
                 self.a_deformed.setChecked(False)
@@ -1254,19 +1272,65 @@ class MainWindow(QMainWindow):
             self.a_deformed.blockSignals(True)
             self.a_deformed.setChecked(False)
             self.a_deformed.blockSignals(False)
-            if not self.a_beam_diagram.isChecked():
+            if not self.a_beam_diagram.isChecked() and not self.a_reactions.isChecked():
                 self.results_dock.hide()
+
+    def _toggle_reactions(self, checked: bool) -> None:
+        if checked:
+            self.results_dock.show()
+            self.results_dock.raise_()
+            self.results_panel.show_reactions_tab()
+            self._refresh_results_panel()
+            self._apply_reactions()
+        else:
+            self.viewport.clear_reactions()
+            if not self.a_beam_diagram.isChecked() and not self.a_deformation.isChecked():
+                self.results_dock.hide()
+            self._status("Reaction diagram hidden")
+
+    def _apply_reactions(self) -> None:
+        comps = self.results_panel.reaction_components()
+        if not comps:
+            self.viewport.clear_reactions()
+            self._status("Select at least one reaction component.")
+            return
+        scenario = (self.results_panel.reaction_scenario()
+                    or self.results_scenario
+                    or self.scenario_combo.currentText())
+        res = self._ensure_static_results(scenario)
+        if res is None:
+            self.a_reactions.blockSignals(True)
+            self.a_reactions.setChecked(False)
+            self.a_reactions.blockSignals(False)
+            return
+        self.results_dock.show()
+        self.results_dock.raise_()
+        self.viewport.show_loads = False
+        self.a_loads_visible.blockSignals(True)
+        self.a_loads_visible.setChecked(False)
+        self.a_loads_visible.blockSignals(False)
+        self.viewport.set_reaction_results(
+            res, res.scenario, comps,
+            self.results_panel.reaction_scale_value(),
+            self.results_panel.reaction_show_values())
+        self.a_reactions.blockSignals(True)
+        self.a_reactions.setChecked(True)
+        self.a_reactions.blockSignals(False)
+        self.ribbon.set_current("Results")
+        self._status(f"Reactions: {res.scenario} · {', '.join(comps)}")
 
     def _results_dock_visibility(self, visible: bool) -> None:
         if visible:
             return
         deform_was = self.a_deformation.isChecked()
         diagram_was = self.a_beam_diagram.isChecked()
-        for action in (self.a_beam_diagram, self.a_deformation):
+        for action in (self.a_beam_diagram, self.a_deformation,
+                       self.a_reactions):
             action.blockSignals(True)
             action.setChecked(False)
             action.blockSignals(False)
         self.viewport.clear_diagrams()
+        self.viewport.clear_reactions()
         if deform_was or diagram_was:
             self.viewport.show_deformed = False
             self.a_deformed.blockSignals(True)
@@ -1291,9 +1355,22 @@ class MainWindow(QMainWindow):
             self.mode_combo.setEnabled(False)
         self.mode_combo.blockSignals(False)
 
+    def _clear_non_modal_overlays(self) -> None:
+        """Clear static diagrams, reactions, and live-load overlays for modal view."""
+        self.viewport.clear_diagrams()
+        self.viewport.clear_reactions()
+        for action in (self.a_beam_diagram, self.a_deformation,
+                       self.a_reactions):
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+        if hasattr(self, "results_dock"):
+            self.results_dock.hide()
+
     def _mode_selected(self, index: int) -> None:
         if self.modal_results is None or index < 0:
             return
+        self._clear_non_modal_overlays()
         mode = self.mode_combo.itemData(index) or (index + 1)
         self.viewport.set_modal_results(self.modal_results, int(mode))
         self.viewport.show_deformed = True
@@ -1592,6 +1669,7 @@ class MainWindow(QMainWindow):
         self.results_panel = ResultsPanel(self)
         self.results_panel.diagramRequested.connect(self._apply_beam_diagram)
         self.results_panel.deformationRequested.connect(self._apply_deformation)
+        self.results_panel.reactionRequested.connect(self._apply_reactions)
         self.results_panel.deform_values.toggled.connect(
             self._deformation_values_changed)
         dock4 = QDockWidget("Results View", self)
@@ -2967,13 +3045,6 @@ class MainWindow(QMainWindow):
         res.element_kind = {int(k): str(v) for k, v in (payload.get("element_kind") or {}).items()}
         res.max_disp = float(payload.get("max_disp", 0.0))
         self.static_results = res
-        self.modal_results = None
-        self.pushover_results = None
-        self.time_history_results = None
-        self.response_spectrum_results = None
-        self.a_pushover_results.setEnabled(False)
-        self.a_time_history_results.setEnabled(False)
-        self.a_spectrum_results.setEnabled(False)
         self._refresh_mode_combo()
         self.results_scenario = res.scenario
         self.static_cache[res.scenario] = res
@@ -3026,18 +3097,12 @@ class MainWindow(QMainWindow):
                   for k, shape in (payload.get("shapes") or {}).items()}
         res = opsgen.ModalResults(modes=modes, shapes=shapes)
         self.modal_results = res
-        self.static_results = None
-        self.pushover_results = None
-        self.time_history_results = None
-        self.response_spectrum_results = None
-        self.a_pushover_results.setEnabled(False)
-        self.a_time_history_results.setEnabled(False)
-        self.a_spectrum_results.setEnabled(False)
         mode = int(payload.get("mode", 1))
         self._refresh_mode_combo()
         index = self.mode_combo.findData(mode)
         if index >= 0:
             self.mode_combo.setCurrentIndex(index)
+        self._clear_non_modal_overlays()
         self.viewport.set_modal_results(res, mode)
         self.viewport.show_loads = False
         self.a_loads_visible.blockSignals(True)
@@ -3048,6 +3113,69 @@ class MainWindow(QMainWindow):
         self.a_animate.setChecked(True)
         self._status(f"MCP: animating mode {mode}")
         self._set_locked(True)
+
+    def bridge_show_live_load(self, payload: dict) -> None:
+        from .live_load import (CaseResults, EnvelopePoint, LiveLoadConfig,
+                                LiveLoadResults, Span)
+
+        cases_raw = payload.get("cases") or {}
+        cases = {}
+        for key, data in cases_raw.items():
+            cases[str(key)] = CaseResults(
+                moment=[EnvelopePoint(float(pt[0]), float(pt[1]), float(pt[2]))
+                        for pt in (data.get("moment") or [])],
+                shear=[EnvelopePoint(float(pt[0]), float(pt[1]), float(pt[2]))
+                       for pt in (data.get("shear") or [])],
+            )
+        if not cases:
+            return
+        load_case = str(payload.get("load_case") or next(iter(cases)))
+        spans = [Span(float(s)) for s in (payload.get("spans_m") or [])]
+        cfg = LiveLoadConfig(
+            load_case=load_case,
+            truck_model=str(payload.get("truck_model") or "CL-625"),
+        )
+        res = LiveLoadResults(
+            load_case=load_case, cases=cases, spans=spans, axles=[],
+            config=cfg, x_nodes=[], support_positions=[], truck_positions=[],
+            increment_used=0.0, base_increment=0.0, increment_reason="",
+            bcl_spacings=[],
+        )
+        for name in ("LL Max", "LL Min", "LL All"):
+            if name not in self.project.cases:
+                self.project.cases[name] = LoadCase(name, "Live")
+        primary = "truck" if "truck" in cases else next(iter(cases))
+        combined = "envelope" if "envelope" in cases else primary
+        self.live_load_results = res
+        self.live_load_geometry = {
+            "points": [(float(p[0]), tuple(float(v) for v in p[1]))
+                       for p in (payload.get("path") or [])]
+        }
+        self.live_load_modes = {
+            "LL Max": (primary, "max"),
+            "LL Min": (primary, "min"),
+            "LL All": (combined, "both"),
+        }
+        self.refresh_all()
+        self._refresh_results_panel()
+        scenario = str(payload.get("scenario") or "LL All")
+        if scenario not in self.live_load_modes:
+            scenario = "LL All"
+        allowed = ("My", "Vz", "Vy")
+        components = [str(c) for c in (payload.get("components") or ["My"])
+                      if str(c) in allowed]
+        if not components:
+            components = ["My"]
+        self.results_scenario = scenario
+        if self.scenario_combo.findText(scenario) >= 0:
+            self.scenario_combo.setCurrentText(scenario)
+        if hasattr(self, "results_panel"):
+            self.results_panel.set_current_scenario(scenario)
+            for comp, box in self.results_panel.component_boxes.items():
+                box.setChecked(comp in components)
+        self._apply_live_load_envelope(scenario)
+        self.viewport.fit()
+        self._status(f"MCP: live-load envelope ({scenario} · {', '.join(components)})")
         self.ribbon.set_current("Results")
 
     def file_new(self) -> None:
@@ -3267,7 +3395,8 @@ class MainWindow(QMainWindow):
         self.viewport.clear_results()
         self._refresh_mode_combo()
         if hasattr(self, "results_panel"):
-            for action in (self.a_beam_diagram, self.a_deformation):
+            for action in (self.a_beam_diagram, self.a_deformation,
+                           self.a_reactions):
                 action.blockSignals(True)
                 action.setChecked(False)
                 action.blockSignals(False)
@@ -4173,13 +4302,6 @@ class MainWindow(QMainWindow):
 
     def _static_finished(self, res: opsgen.StaticResults) -> None:
         self.static_results = res
-        self.modal_results = None
-        self.pushover_results = None
-        self.time_history_results = None
-        self.response_spectrum_results = None
-        self.a_pushover_results.setEnabled(False)
-        self.a_time_history_results.setEnabled(False)
-        self.a_spectrum_results.setEnabled(False)
         scenario = res.scenario
         self.results_scenario = scenario
         self.static_cache[scenario] = res
@@ -4202,6 +4324,8 @@ class MainWindow(QMainWindow):
             self.results_panel.set_current_scenario(scenario)
         if self.viewport.show_diagrams:
             self._apply_beam_diagram()
+        if self.a_reactions.isChecked():
+            self._apply_reactions()
         self._log("Model locked after analysis. Press Ctrl+L to unlock before editing.")
 
     def run_modal(self) -> None:
@@ -4214,18 +4338,12 @@ class MainWindow(QMainWindow):
 
     def _modal_finished(self, res: opsgen.ModalResults) -> None:
         self.modal_results = res
-        self.static_results = None
-        self.pushover_results = None
-        self.time_history_results = None
-        self.response_spectrum_results = None
-        self.a_pushover_results.setEnabled(False)
-        self.a_time_history_results.setEnabled(False)
-        self.a_spectrum_results.setEnabled(False)
         self._refresh_mode_combo()
         if self.mode_combo.count():
             self.mode_combo.setCurrentIndex(0)
             self._mode_selected(0)
         else:
+            self._clear_non_modal_overlays()
             self.viewport.set_modal_results(res, 1)
         txt = ", ".join(f"T{m.mode}={fmt(m.period, 4)}s" for m in res.modes[:4])
         self._log(f"Modal analysis complete: {txt}")

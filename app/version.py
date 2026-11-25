@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-APP_VERSION = "1.0.23-alpha"
+APP_VERSION = "1.0.24-alpha"
 GITHUB_OWNER = "sumonrh"
 GITHUB_REPO = "OpenSeesStudio"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
