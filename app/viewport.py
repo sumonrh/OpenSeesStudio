@@ -186,9 +186,10 @@ class Viewport(QWidget):
         self.show_reactions = False
         self.reaction_results: Optional[StaticResults] = None
         self.reaction_scenario: str = ""
-        self.reaction_components: List[str] = ["Rx", "Ry", "Rz", "Mx", "My", "Mz"]
+        self.reaction_components: List[str] = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
         self.reaction_scale: float = 0.0
         self.reaction_values: bool = True
+        self.reaction_legend: bool = True
 
         self.live_load_envelope = None
         self.live_load_envelopes = {}
@@ -381,13 +382,15 @@ class Viewport(QWidget):
                              scenario: str = "",
                              components: Optional[Sequence[str]] = None,
                              scale: float = 0.0,
-                             values: bool = True) -> None:
+                             values: bool = True,
+                             legend: bool = True) -> None:
         self.reaction_results = res
         self.reaction_scenario = scenario or (res.scenario if res else "")
         if components is not None:
             self.reaction_components = [str(c) for c in components]
         self.reaction_scale = max(float(scale), 0.0)
         self.reaction_values = bool(values)
+        self.reaction_legend = bool(legend)
         self.show_reactions = bool(res and self.reaction_components)
         self.update()
 
@@ -785,6 +788,8 @@ class Viewport(QWidget):
         if self.show_axes:
             self._draw_triad(p, w, h)
         self._draw_hud(p, w, h)
+        if self.show_reactions and self.reaction_results and self.reaction_legend:
+            self._draw_reaction_legend(p, w, h, _expand_reaction_components(self.reaction_components))
         if self._band is not None:
             p.setPen(QPen(QColor(theme.ACCENT), 1.2, Qt.DashLine))
             p.setBrush(QBrush(QColor(15, 111, 184, 28)))
@@ -1437,10 +1442,10 @@ class Viewport(QWidget):
             self._draw_load_label(p, pos, text, color)
 
     def _draw_reactions(self, p: QPainter, w: int, h: int, proj) -> None:
-        """Draw selected support reaction components scaled in world space."""
+        """Draw selected support reaction arrows separately in world space."""
         res = self.reaction_results
-        comps = set(self.reaction_components or ())
-        if not self.project or res is None or not res.reactions or not comps:
+        active_comps = _expand_reaction_components(self.reaction_components)
+        if not self.project or res is None or not res.reactions or not active_comps:
             return
         cam = self.camera
         deformed = self._deformed_points()
@@ -1451,24 +1456,17 @@ class Viewport(QWidget):
         user_scale = self.reaction_scale if self.reaction_scale > 0.0 else 1.0
 
         force_defs = (
-            ("Rx", (0,), True),
-            ("Ry", (1,), True),
-            ("Rz", (2,), True),
-            ("Rxy", (0, 1), False),
-            ("Rxz", (0, 2), False),
-            ("Ryz", (1, 2), False),
-            ("Rxyz", (0, 1, 2), False),
+            ("Fx", 0, (1.0, 0.0, 0.0)),
+            ("Fy", 1, (0.0, 1.0, 0.0)),
+            ("Fz", 2, (0.0, 0.0, 1.0)),
         )
         moment_defs = (
-            ("Mx", (3,), True),
-            ("My", (4,), True),
-            ("Mz", (5,), True),
-            ("Mxy", (3, 4), False),
-            ("Mxz", (3, 5), False),
-            ("Myz", (4, 5), False),
-            ("Mxyz", (3, 4, 5), False),
+            ("Mx", 3, (1.0, 0.0, 0.0)),
+            ("My", 4, (0.0, 1.0, 0.0)),
+            ("Mz", 5, (0.0, 0.0, 1.0)),
         )
 
+        active_set = set(active_comps)
         force_items = []
         moment_items = []
         peak_f = 0.0
@@ -1481,40 +1479,33 @@ class Viewport(QWidget):
             if s is None or pt3 is None:
                 continue
             vals = [float(r[i]) if i < len(r) else 0.0 for i in range(6)]
-            for name, idxs, signed in force_defs:
-                if name not in comps:
+            for name, idx, axis in force_defs:
+                if name not in active_set:
                     continue
-                vec = [0.0, 0.0, 0.0]
-                for idx in idxs:
-                    vec[idx] = vals[idx]
-                mag = math.sqrt(vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2)
-                if mag > 1e-9:
-                    peak_f = max(peak_f, mag)
-                    disp_val = vals[idxs[0]] if signed else mag
-                    unit_dir = (vec[0] / mag, vec[1] / mag, vec[2] / mag)
-                    force_items.append((tag, pt3, s, name, unit_dir, mag, disp_val))
+                val = vals[idx]
+                if abs(val) > 1e-9:
+                    peak_f = max(peak_f, abs(val))
+                    sign = 1.0 if val >= 0.0 else -1.0
+                    udir = (sign * axis[0], sign * axis[1], sign * axis[2])
+                    force_items.append((tag, pt3, s, name, udir, abs(val), val))
 
-            node_m_parts = []
-            node_m_peak = 0.0
-            for name, idxs, signed in moment_defs:
-                if name not in comps:
+            for name, idx, axis in moment_defs:
+                if name not in active_set:
                     continue
-                mag = math.sqrt(sum(vals[idx] ** 2 for idx in idxs))
-                if mag > 1e-9:
-                    disp_val = vals[idxs[0]] if signed else mag
-                    node_m_peak = max(node_m_peak, mag)
-                    node_m_parts.append((name, mag, disp_val))
-            if node_m_parts:
-                peak_m = max(peak_m, node_m_peak)
-                moment_items.append((tag, pt3, s, node_m_parts, node_m_peak))
+                val = vals[idx]
+                if abs(val) > 1e-9:
+                    peak_m = max(peak_m, abs(val))
+                    sign = 1.0 if val >= 0.0 else -1.0
+                    udir = (sign * axis[0], sign * axis[1], sign * axis[2])
+                    moment_items.append((tag, pt3, s, name, udir, abs(val), val))
 
         force_color = QColor(theme.SUPPORT_COLOR)
-        resultant_color = QColor("#0d9488")
         moment_color = QColor("#7c5cbf")
         max_world = 0.14 * diag * user_scale
         min_world = 0.025 * diag * min(user_scale, 1.0)
         max_px = 90.0 * max(user_scale, 1.0)
         f_tol = max(1e-9, 1e-5 * peak_f)
+        m_tol = max(1e-9, 1e-5 * peak_m)
 
         p.setFont(QFont("Segoe UI", 7))
         fm = p.fontMetrics()
@@ -1541,12 +1532,11 @@ class Viewport(QWidget):
                 tx, ty = s[0] - ux * slen, s[1] - uy * slen
             else:
                 tx, ty = t[0], t[1]
-            col = force_color if len(name) == 2 else resultant_color
             pen_w = min(2.2, max(1.0, slen * 0.05))
             head_sz = min(6.5, max(2.5, slen * 0.25))
-            p.setPen(QPen(col, pen_w))
+            p.setPen(QPen(force_color, pen_w))
             p.drawLine(QPointF(tx, ty), QPointF(s[0], s[1]))
-            self._head(p, s[0], s[1], ux, uy, head_sz, col)
+            self._head(p, s[0], s[1], ux, uy, head_sz, force_color)
             if self.reaction_values and slen >= 10.0:
                 text = f"{name}={fmt(UNITS.force(disp_val), 2)} {UNITS.force_unit}"
                 tw = fm.horizontalAdvance(text)
@@ -1554,42 +1544,44 @@ class Viewport(QWidget):
                 pad = abs(ux) * (tw * 0.5) + abs(uy) * (th * 0.5) + 6.0
                 cx = tx - ux * pad
                 cy = ty - uy * pad
-                label_items.append((cx, cy, tw, th, uy, text, col))
+                label_items.append((cx, cy, tw, th, uy, text, force_color))
 
-        m_tol = max(1e-9, 1e-5 * peak_m)
-        _eye, _f, cam_r, _u = cam.basis()
-        for _tag, pt3, s, parts, mmag in moment_items:
-            if mmag < m_tol:
+        for _tag, pt3, s, name, udir, mag, disp_val in moment_items:
+            if mag < m_tol:
                 continue
-            mw = max(0.012 * diag, 0.03 * diag * user_scale * (mmag / max(peak_m, 1e-9)))
-            ref3 = (pt3[0] + cam_r[0] * mw,
-                    pt3[1] + cam_r[1] * mw,
-                    pt3[2] + cam_r[2] * mw)
-            sr = cam.project(ref3, w, h)
-            if sr is None:
+            ratio = mag / max(peak_m, 1e-9)
+            wlen = max(min_world, max_world * ratio)
+            tip3 = (pt3[0] + udir[0] * wlen,
+                    pt3[1] + udir[1] * wlen,
+                    pt3[2] + udir[2] * wlen)
+            t = cam.project(tip3, w, h)
+            if t is None:
                 continue
-            radius = min(16.0 * max(user_scale, 1.0),
-                         math.hypot(sr[0] - s[0], sr[1] - s[1]))
-            if radius < 3.0:
+            vx, vy = t[0] - s[0], t[1] - s[1]
+            slen = math.hypot(vx, vy)
+            if slen < 2.0:
                 continue
-            p.setPen(QPen(moment_color, min(1.8, max(1.0, radius * 0.14))))
-            p.setBrush(Qt.NoBrush)
-            p.drawArc(QRectF(s[0] - radius, s[1] - radius,
-                             2.0 * radius, 2.0 * radius),
-                      30 * 16, 290 * 16)
-            self._head(p, s[0] + radius * 0.8, s[1] - radius * 0.55,
-                       1.0, -1.0, min(5.0, max(2.2, radius * 0.35)),
-                       moment_color)
-            if self.reaction_values and radius >= 5.5:
-                rendered = [f"{nm}={fmt(UNITS.moment(dv), 2)}"
-                            for nm, m_val, dv in parts if m_val >= m_tol]
-                if rendered:
-                    text = f"{', '.join(rendered)} {UNITS.moment_unit}"
-                    tw = fm.horizontalAdvance(text)
-                    th = fm.height()
-                    cx = s[0] + radius + tw * 0.5 + 8.0
-                    cy = s[1] - radius - th * 0.5 - 4.0
-                    label_items.append((cx, cy, tw, th, 1.0, text, moment_color))
+            ux, uy = vx / slen, vy / slen
+            if slen > max_px:
+                slen = max_px
+                tx, ty = s[0] + ux * slen, s[1] + uy * slen
+            else:
+                tx, ty = t[0], t[1]
+            pen_w = min(2.2, max(1.0, slen * 0.05))
+            head_sz = min(6.0, max(2.4, slen * 0.22))
+            p.setPen(QPen(moment_color, pen_w))
+            p.drawLine(QPointF(s[0], s[1]), QPointF(tx, ty))
+            self._head(p, tx, ty, ux, uy, head_sz, moment_color)
+            self._head(p, tx - ux * head_sz * 0.95, ty - uy * head_sz * 0.95,
+                       ux, uy, head_sz, moment_color)
+            if self.reaction_values and slen >= 10.0:
+                text = f"{name}={fmt(UNITS.moment(disp_val), 2)} {UNITS.moment_unit}"
+                tw = fm.horizontalAdvance(text)
+                th = fm.height()
+                pad = abs(ux) * (tw * 0.5) + abs(uy) * (th * 0.5) + 6.0
+                cx = tx + ux * pad
+                cy = ty + uy * pad
+                label_items.append((cx, cy, tw, th, -uy, text, moment_color))
 
         placed: list[QRectF] = []
         p.setFont(QFont("Segoe UI", 7))
@@ -1608,6 +1600,70 @@ class Viewport(QWidget):
             p.setPen(QPen(color.darker(130)))
             p.drawText(QPointF(rect.left() + 2.0, rect.top() + 1.0 + fm.ascent()),
                        text)
+
+    def _draw_reaction_legend(self, p: QPainter, w: int, h: int,
+                              active_comps: Sequence[str]) -> None:
+        """Draw right-side max/min reaction summary overlay with case and node tags."""
+        res = self.reaction_results
+        if not self.project or res is None or not res.reactions or not active_comps:
+            return
+        idx_map = {"Fx": 0, "Fy": 1, "Fz": 2, "Mx": 3, "My": 4, "Mz": 5}
+        support_nodes = []
+        for tag in sorted(res.reactions):
+            if not self.is_node_visible(tag):
+                continue
+            r = res.reactions[tag]
+            node = self.project.nodes.get(tag)
+            if node is not None and (any(node.support) or any(abs(v) > 1e-9 for v in r)):
+                support_nodes.append((tag, r))
+        if not support_nodes:
+            return
+
+        p.setFont(QFont("Segoe UI", 8))
+        fm = p.fontMetrics()
+        scenario = self.reaction_scenario or res.scenario
+        title = f"Reactions · {scenario}" if scenario else "Reactions"
+        entries = []
+        for comp in active_comps:
+            idx = idx_map.get(comp)
+            if idx is None:
+                continue
+            is_moment = idx >= 3
+            conv = UNITS.moment if is_moment else UNITS.force
+            unit = UNITS.moment_unit if is_moment else UNITS.force_unit
+            max_tag, max_r = max(support_nodes, key=lambda item: float(item[1][idx]))
+            min_tag, min_r = min(support_nodes, key=lambda item: float(item[1][idx]))
+            max_v = conv(float(max_r[idx]))
+            min_v = conv(float(min_r[idx]))
+            line = (f"{comp}   Max: {fmt(max_v, 2)} {unit} (N{max_tag})"
+                    f"   Min: {fmt(min_v, 2)} {unit} (N{min_tag})")
+            col = QColor("#7c5cbf") if is_moment else QColor(theme.SUPPORT_COLOR)
+            entries.append((comp, col, line))
+
+        if not entries:
+            return
+        bw = max([fm.horizontalAdvance(title)] +
+                 [fm.horizontalAdvance(line) + 22 for _c, _col, line in entries]) + 24
+        row_h = fm.height() + 4
+        bh = 12 + (1 + len(entries)) * row_h + 4
+        top = 10
+        if self.show_diagrams and self.diagram_results and self.diagram_components:
+            top += 10 + (1 + len(self.diagram_components)) * (fm.height() + 3) + 12
+        x = max(10, w - bw - 12)
+        p.setPen(QPen(QColor(theme.BORDER), 1.0))
+        p.setBrush(QBrush(QColor(255, 255, 255, 232)))
+        p.drawRoundedRect(QRectF(x, top, bw, bh), 4, 4)
+
+        p.setPen(QPen(QColor(theme.ACCENT_DARK)))
+        y = top + 6 + fm.ascent()
+        p.drawText(QPointF(x + 10, y), title)
+        y += row_h
+        for _comp, col, line in entries:
+            p.setPen(QPen(col, 2.4))
+            p.drawLine(QPointF(x + 10, y - 4), QPointF(x + 24, y - 4))
+            p.setPen(QPen(QColor("#33475f")))
+            p.drawText(QPointF(x + 30, y), line)
+            y += row_h
 
     def _udl_labels(self, items, w: int, h: int, peak: float,
                     multiple: bool, colors) -> list:
@@ -2151,6 +2207,16 @@ def _nice_step(x: float) -> float:
         if x <= m * base:
             return m * base
     return 10 * base
+
+
+def _expand_reaction_components(components: Sequence[str]) -> List[str]:
+    """Expand Fxyz/Mxyz into separate primary reaction components in order."""
+    selected = set(components or ())
+    if "Fxyz" in selected:
+        selected.update(("Fx", "Fy", "Fz"))
+    if "Mxyz" in selected:
+        selected.update(("Mx", "My", "Mz"))
+    return [c for c in ("Fx", "Fy", "Fz", "Mx", "My", "Mz") if c in selected]
 
 
 def _section_profiles(sec) -> list:

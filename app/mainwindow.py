@@ -1312,12 +1312,19 @@ class MainWindow(QMainWindow):
         self.viewport.set_reaction_results(
             res, res.scenario, comps,
             self.results_panel.reaction_scale_value(),
-            self.results_panel.reaction_show_values())
+            self.results_panel.reaction_show_values(),
+            self.results_panel.reaction_show_legend())
         self.a_reactions.blockSignals(True)
         self.a_reactions.setChecked(True)
         self.a_reactions.blockSignals(False)
         self.ribbon.set_current("Results")
         self._status(f"Reactions: {res.scenario} · {', '.join(comps)}")
+
+    def _reaction_display_changed(self) -> None:
+        if self.viewport.show_reactions and self.viewport.reaction_results is not None:
+            self.viewport.reaction_values = self.results_panel.reaction_show_values()
+            self.viewport.reaction_legend = self.results_panel.reaction_show_legend()
+            self.viewport.update()
 
     def _results_dock_visibility(self, visible: bool) -> None:
         if visible:
@@ -1670,6 +1677,8 @@ class MainWindow(QMainWindow):
         self.results_panel.diagramRequested.connect(self._apply_beam_diagram)
         self.results_panel.deformationRequested.connect(self._apply_deformation)
         self.results_panel.reactionRequested.connect(self._apply_reactions)
+        self.results_panel.reactionDisplayChanged.connect(
+            self._reaction_display_changed)
         self.results_panel.deform_values.toggled.connect(
             self._deformation_values_changed)
         dock4 = QDockWidget("Results View", self)

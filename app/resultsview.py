@@ -14,23 +14,17 @@ from .beamdiagram import COMPONENTS, COMPONENT_TITLES
 
 
 REACTION_FORCE_COMPONENTS = (
-    ("Rx", "Force reaction along global X"),
-    ("Ry", "Force reaction along global Y"),
-    ("Rz", "Force reaction along global Z"),
-    ("Rxy", "Resultant force reaction in the X-Y plane"),
-    ("Rxz", "Resultant force reaction in the X-Z plane"),
-    ("Ryz", "Resultant force reaction in the Y-Z plane"),
-    ("Rxyz", "3D resultant force reaction"),
+    ("Fx", "Force reaction along global X"),
+    ("Fy", "Force reaction along global Y"),
+    ("Fz", "Force reaction along global Z"),
+    ("Fxyz", "Show Fx, Fy, and Fz reaction arrows separately"),
 )
 
 REACTION_MOMENT_COMPONENTS = (
     ("Mx", "Moment reaction about global X"),
     ("My", "Moment reaction about global Y"),
     ("Mz", "Moment reaction about global Z"),
-    ("Mxy", "Resultant moment reaction in the X-Y plane"),
-    ("Mxz", "Resultant moment reaction in the X-Z plane"),
-    ("Myz", "Resultant moment reaction in the Y-Z plane"),
-    ("Mxyz", "3D resultant moment reaction"),
+    ("Mxyz", "Show Mx, My, and Mz reaction arrows separately"),
 )
 
 
@@ -40,6 +34,7 @@ class ResultsPanel(QWidget):
     diagramRequested = Signal()
     deformationRequested = Signal()
     reactionRequested = Signal()
+    reactionDisplayChanged = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -172,10 +167,10 @@ class ResultsPanel(QWidget):
         for i, (comp, tip) in enumerate(REACTION_FORCE_COMPONENTS):
             cb = QCheckBox(comp)
             cb.setToolTip(tip)
-            cb.setChecked(comp in ("Rx", "Ry", "Rz"))
+            cb.setChecked(comp in ("Fx", "Fy", "Fz"))
             cb.toggled.connect(lambda on, c=comp: self._reaction_component_toggled(c, on))
             self.reaction_boxes[comp] = cb
-            fgrid.addWidget(cb, i // 3, i % 3)
+            fgrid.addWidget(cb, i // 2, i % 2)
         lay.addWidget(force_box)
 
         moment_box = QGroupBox("Moment reactions")
@@ -187,7 +182,7 @@ class ResultsPanel(QWidget):
             cb.setChecked(comp in ("Mx", "My", "Mz"))
             cb.toggled.connect(lambda on, c=comp: self._reaction_component_toggled(c, on))
             self.reaction_boxes[comp] = cb
-            mgrid.addWidget(cb, i // 3, i % 3)
+            mgrid.addWidget(cb, i // 2, i % 2)
         lay.addWidget(moment_box)
 
         opt = QGroupBox("Display options")
@@ -202,8 +197,16 @@ class ResultsPanel(QWidget):
         self.reaction_scale.setToolTip("Reaction arrow scale multiplier; Auto fits the model")
         self.reaction_values = QCheckBox("Show values")
         self.reaction_values.setChecked(True)
+        self.reaction_values.toggled.connect(lambda _on: self.reactionDisplayChanged.emit())
+        self.reaction_legend = QPushButton("Legend")
+        self.reaction_legend.setCheckable(True)
+        self.reaction_legend.setChecked(True)
+        self.reaction_legend.setToolTip(
+            "Show or hide the max/min reaction summary overlay on the right side of the viewport")
+        self.reaction_legend.toggled.connect(lambda _on: self.reactionDisplayChanged.emit())
         opt_lay.addRow("Scale", self.reaction_scale)
         opt_lay.addRow("", self.reaction_values)
+        opt_lay.addRow("", self.reaction_legend)
         lay.addWidget(opt)
 
         apply_btn = QPushButton("Apply reactions")
@@ -221,18 +224,16 @@ class ResultsPanel(QWidget):
     def _reaction_component_toggled(self, comp: str, checked: bool) -> None:
         if not checked:
             return
-        force_primary = ("Rx", "Ry", "Rz")
-        force_composite = ("Rxy", "Rxz", "Ryz", "Rxyz")
+        force_primary = ("Fx", "Fy", "Fz")
         moment_primary = ("Mx", "My", "Mz")
-        moment_composite = ("Mxy", "Mxz", "Myz", "Mxyz")
-        if comp in force_composite:
-            to_uncheck = [c for c in force_primary + force_composite if c != comp]
+        if comp == "Fxyz":
+            to_uncheck = list(force_primary)
         elif comp in force_primary:
-            to_uncheck = list(force_composite)
-        elif comp in moment_composite:
-            to_uncheck = [c for c in moment_primary + moment_composite if c != comp]
+            to_uncheck = ["Fxyz"]
+        elif comp == "Mxyz":
+            to_uncheck = list(moment_primary)
         elif comp in moment_primary:
-            to_uncheck = list(moment_composite)
+            to_uncheck = ["Mxyz"]
         else:
             return
         for other in to_uncheck:
@@ -332,6 +333,9 @@ class ResultsPanel(QWidget):
 
     def reaction_show_values(self) -> bool:
         return self.reaction_values.isChecked()
+
+    def reaction_show_legend(self) -> bool:
+        return self.reaction_legend.isChecked()
 
     def set_note(self, text: str) -> None:
         self.diagram_note.setText(text)

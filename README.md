@@ -6,8 +6,8 @@
 
 **Modern 3D graphical modeler, structural analysis GUI, and AI-ready MCP server for OpenSees**
 
-[![Latest Alpha](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?include_prereleases&label=release&color=0f6fb8&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d4)](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+[![Latest Alpha](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?include_prereleases&label=release&color=0f6fb8&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.25-alpha)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d4)](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.25-alpha)
 [![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41cd52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![MCP](https://img.shields.io/badge/MCP-96%20Tools-7c5cbf)](#mcp-server-ai-agents)
@@ -25,8 +25,8 @@
 > **Research & educational use only (Early Alpha).** OpenSees Studio is under active development and results are **not fully verified**. Do not use it for commercial engineering work, structural design decisions, or any application involving public safety. Independently verify all outputs before use. See [`DISCLAIMER.md`](DISCLAIMER.md).
 
 > [!NOTE]
-> **Latest release: `v1.0.24-alpha`** — Adds extruded section rendering for 2D/3D trusses, a dedicated **Reactions** panel (`Rx/Ry/Rz/Rxy/Rxz/Ryz/Rxyz` and `Mx/My/Mz/Mxy/Mxz/Myz/Mxyz`) with world-scaled arrows, preserved static + modal results tables, clean modal view overlays, persistent **Structure/Boundary Groups**, and live-load envelope display over the MCP GUI bridge.
-> [**Download `OpenSeesStudio-1.0.24-alpha-Setup.exe`**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+> **Latest release: `v1.0.25-alpha`** — Updates the **Reactions** diagram (`Fx/Fy/Fz/Fxyz` and `Mx/My/Mz/Mxyz` with separate global-axis arrows, live **Show values** toggle, and a right-side **Legend** overlay showing max/min reactions with node numbers), alongside extruded 2D/3D trusses, preserved static + modal results tables, clean modal view overlays, persistent **Structure/Boundary Groups**, and live-load envelope display over the MCP GUI bridge.
+> [**Download `OpenSeesStudio-1.0.25-alpha-Setup.exe`**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.25-alpha)
 
 ---
 
@@ -45,7 +45,7 @@
 
 ### Analysis & Post-Processing
 
-| Beam Force Diagrams (`My`, `Mz`, `Vy`, `Vz`, `Fx`, `Mx`) | Support Reaction Diagrams (`Rx–Rxyz`, `Mx–Mxyz`) |
+| Beam Force Diagrams (`My`, `Mz`, `Vy`, `Vz`, `Fx`, `Mx`) | Support Reaction Diagrams (`Fx–Fxyz`, `Mx–Mxyz`) |
 | :---: | :---: |
 | ![Beam force diagrams](docs/beam_diagrams.png) | ![Support reaction diagrams](docs/reactions.png) |
 | **Deformed Shape Overlay** | **Unified Static + Modal Results Table** |
@@ -63,9 +63,9 @@
 
 ## Install on Windows
 
-[**Download the latest alpha installer (`v1.0.24-alpha`)**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+[**Download the latest alpha installer (`v1.0.25-alpha`)**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.25-alpha)
 
-1. Open the release link above and download **`OpenSeesStudio-1.0.24-alpha-Setup.exe`** under **Assets** (not the source archives).
+1. Open the release link above and download **`OpenSeesStudio-1.0.25-alpha-Setup.exe`** under **Assets** (not the source archives).
 2. Run the downloaded installer from your **Downloads** folder.
 3. If Windows SmartScreen displays *"Windows protected your PC"*, click **More info → Run anyway** (alpha builds are not yet code-signed).
 4. Follow the installer wizard and launch **OpenSees Studio** from the Start menu or desktop shortcut.
@@ -252,7 +252,7 @@ py -3.12 -m venv .venv
 <summary>Code signing & Project layout</summary>
 
 ### Optional Code Signing
-Set `$env:OSS_SIGN_PFX` (with optional `$env:OSS_SIGN_PASSWORD`) or `$env:OSS_SIGN_THUMBPRINT` before running `.\build.ps1` to SHA-256 timestamp-sign both executables and `dist\OpenSeesStudio-1.0.24-alpha-Setup.exe`.
+Set `$env:OSS_SIGN_PFX` (with optional `$env:OSS_SIGN_PASSWORD`) or `$env:OSS_SIGN_THUMBPRINT` before running `.\build.ps1` to SHA-256 timestamp-sign both executables and `dist\OpenSeesStudio-1.0.25-alpha-Setup.exe`.
 
 ### Project Layout
 ```text
