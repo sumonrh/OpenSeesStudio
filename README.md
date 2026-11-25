@@ -1,513 +1,171 @@
+<div align="center">
+
+<img src="assets/opensees_studio.png" alt="OpenSees Studio" width="84" />
+
 # OpenSees Studio
 
-[![Download alpha for Windows](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?include_prereleases&label=download%20alpha&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases)
+**Modern 3D graphical modeler, structural analysis GUI, and AI-ready MCP server for OpenSees**
 
-A graphical model generator and analysis GUI for **OpenSees**, built with Python,
-PySide6 and OpenSeesPy. It covers the complete workflow: model generation, supports and
-constraints, nonlinear frame members, bearings/isolators/dampers, load cases and
-combinations, static and modal analysis, pushover, time history, response spectrum,
-bridge live-load envelopes and result review. The interface uses a ribbon with
-task tabs, command groups and group captions, and the installer also includes an
-MCP server so AI agents can drive the model.
+[![Latest Alpha](https://img.shields.io/github/v/release/sumonrh/OpenSeesStudio?include_prereleases&label=release&color=0f6fb8&sort=semver)](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d4)](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+[![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41cd52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
+[![MCP](https://img.shields.io/badge/MCP-96%20Tools-7c5cbf)](#mcp-server-ai-agents)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-64748b)](LICENSE.txt)
 
-> **Research use only.** OpenSees Studio is intended for research, education,
-> and noncommercial evaluation. It is under **active development** and currently
-> an **early alpha**; results are **not fully verified**. It must not be used for
-> real-world commercial work, design decisions, or any application involving
-> public safety. Test and verify all results independently before use. Use at
-> your own risk. Read `DISCLAIMER.md`.
+[Download Installer](#-install-on-windows) · [Gallery](#-visual-tour) · [Bridge Live Load](#-bridge-live-load) · [Design Tools](#-design-calculators) · [MCP Server](#mcp-server-ai-agents) · [Development](#-development)
 
-> **Latest release: 1.0.24-alpha** - Early alpha, under active development.
-> Adds the right-side **Groups** tree for persistent **Structure Groups**
-> (elements) and **Boundary Groups** (nodes). Also includes the PolyForm
-> Noncommercial license, complete third-party notices, and research-use
-> disclaimer.
-> [Download the alpha installer](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
-> or read the [1.0.24-alpha release notes](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha).
+<br />
 
-## License
+<img src="docs/main.png" alt="OpenSees Studio main workspace with 3D extruded steel frame" width="100%" />
 
-OpenSees Studio is **source-available, not OSI open source**. The original
-code is licensed under the **PolyForm Noncommercial License 1.0.0**
-(`LICENSE.txt`): it is free to use, modify, and share for noncommercial
-purposes, but commercial use and selling are not permitted.
+</div>
 
-The installer also ships OpenSees and OpenSeesPy, which remain under the UC
-Regents OpenSees license and are **not** covered by PolyForm. Commercial
-distribution of those components requires a separate license from UC Berkeley
-and the OpenSeesPy maintainers. Qt/PySide6 is used under LGPL-3.0.
+> [!WARNING]
+> **Research & educational use only (Early Alpha).** OpenSees Studio is under active development and results are **not fully verified**. Do not use it for commercial engineering work, structural design decisions, or any application involving public safety. Independently verify all outputs before use. See [`DISCLAIMER.md`](DISCLAIMER.md).
 
-OpenSees Studio is an independent project and is not affiliated with or
-endorsed by UC Berkeley, the OpenSees project, or the OpenSeesPy maintainers.
+> [!NOTE]
+> **Latest release: `v1.0.24-alpha`** — Adds extruded section rendering for 2D/3D trusses, a dedicated **Reactions** panel (`Rx/Ry/Rz/Rxy/Rxz/Ryz/Rxyz` and `Mx/My/Mz/Mxy/Mxz/Myz/Mxyz`) with world-scaled arrows, preserved static + modal results tables, clean modal view overlays, persistent **Structure/Boundary Groups**, and live-load envelope display over the MCP GUI bridge.
+> [**Download `OpenSeesStudio-1.0.24-alpha-Setup.exe`**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
 
-Read `NOTICE.md`, `DISCLAIMER.md`, `THIRD_PARTY_NOTICES.md`, and the
-`licenses/` folder for the complete terms.
+---
+
+## Overview
+
+**OpenSees Studio** wraps **OpenSeesPy** in a fast, desktop-native engineering workspace built with Python and PySide6. It covers the full finite-element workflow in one interface:
+
+- **3D Modeling & Wizards:** Ribbon-driven interface with 2D/3D Frame, 2D/3D Truss, and Multi-Span Girder Bridge wizards, AISC/CISC steel section libraries, custom cross-sections, nonlinear fibre frames, bearings/isolators/dampers, point springs, constraints, and persistent Structure/Boundary Groups.
+- **Comprehensive Analysis:** Static, modal (animated mode shapes), displacement-controlled nonlinear pushover with lumped/fibre plastic hinges, dynamic time history (with PEER AT2 ground-motion catalog), response spectrum (SRSS/CQC), and bridge moving-truck live-load envelopes.
+- **Interactive Post-Processing:** Filled beam force diagrams (`Fx, Vy, Vz, Mx, My, Mz`), world-scaled support reaction arrows with directional filtering, deformed shapes, and unified static + modal results tables with CSV export.
+- **AI Agent Ready (MCP):** Ships a 96-tool **Model Context Protocol** server (`OpenSeesStudioMCP.exe`) with a live GUI bridge so AI assistants can construct models, run analyses, inspect results, and capture viewport screenshots.
+
+---
+
+## Visual Tour
+
+### Analysis & Post-Processing
+
+| Beam Force Diagrams (`My`, `Mz`, `Vy`, `Vz`, `Fx`, `Mx`) | Support Reaction Diagrams (`Rx–Rxyz`, `Mx–Mxyz`) |
+| :---: | :---: |
+| ![Beam force diagrams](docs/beam_diagrams.png) | ![Support reaction diagrams](docs/reactions.png) |
+| **Deformed Shape Overlay** | **Unified Static + Modal Results Table** |
+| ![Deformation for a load combination](docs/deformation.png) | ![Combined static and modal results table](docs/results_table.png) |
+
+### 3D Modeling, Wizards & Extruded Sections
+
+| Extruded 3D Space Truss | Multi-Span Girder Bridge Grillage |
+| :---: | :---: |
+| ![Extruded 3D truss](docs/extruded.png) | ![Girder bridge template](docs/template_bridge.png) |
+| **3D Moment Frame Wizard** | **AISC & CISC Standard Section Library** |
+| ![3D frame template](docs/template_frame3d.png) | ![Standard steel section library](docs/section_dialog.png) |
+
+---
 
 ## Install on Windows
 
-[**Download the latest alpha installer**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
+[**Download the latest alpha installer (`v1.0.24-alpha`)**](https://github.com/sumonrh/OpenSeesStudio/releases/tag/v1.0.24-alpha)
 
-1. Open the link above (or **Releases** on the right side of this page) and click
-   `OpenSeesStudio-1.0.24-alpha-Setup.exe` under **Assets**. Do not download the
-   `Source code (zip)` or `Source code (tar.gz)` files.
-2. Open the downloaded file from your **Downloads** folder.
-3. If Windows shows **"Windows protected your PC"**, click **More info**, then
-   **Run anyway**. The installer is not code-signed yet, so Windows asks once.
-4. Click **Next**, choose whether you want a desktop shortcut, then **Install**.
-5. Start **OpenSees Studio** from the Start menu or the desktop shortcut.
+1. Open the release link above and download **`OpenSeesStudio-1.0.24-alpha-Setup.exe`** under **Assets** (not the source archives).
+2. Run the downloaded installer from your **Downloads** folder.
+3. If Windows SmartScreen displays *"Windows protected your PC"*, click **More info → Run anyway** (alpha builds are not yet code-signed).
+4. Follow the installer wizard and launch **OpenSees Studio** from the Start menu or desktop shortcut.
 
-Requirements: Windows 10 or 11, 64-bit. Python is not needed and no administrator
-password is required — the app installs for the current user in
-`%LOCALAPPDATA%\Programs\OpenSees Studio`.
+- **Requirements:** Windows 10 or 11 (64-bit). No Python installation or administrator password required — installs per-user into `%LOCALAPPDATA%\Programs\OpenSees Studio`.
+- **Includes MCP Server:** `%LOCALAPPDATA%\Programs\OpenSees Studio\mcp\OpenSeesStudioMCP.exe` — see [MCP server](#mcp-server-ai-agents).
+- **Uninstall:** **Settings → Apps → Installed apps → OpenSees Studio → Uninstall** or Start menu uninstaller.
 
-To remove it, use **Settings > Apps > Installed apps > OpenSees Studio > Uninstall**
-or "Uninstall OpenSees Studio" in the Start menu.
+---
 
-The installer also contains the MCP server for AI agents; see
-[MCP server](#mcp-server-ai-agents).
+## Design Calculators
 
-![main window](docs/main.png)
+| Section Property Pro (`Tools > Section Properties`) | Moment Curvature Pro (`Tools > Moment Curvature`) |
+| :---: | :---: |
+| ![Section Property Pro](docs/section_property_pro.png) | ![Moment Curvature Pro](docs/moment_curvature_pro.png) |
 
-## Units
+- **Section Property Pro:** Computes area, centroid, strong/weak/principal inertias, section moduli, radii of gyration, Saint-Venant torsion constant `J`, and warping constant `Cw` for I, T, C, L, rectangular, hollow box, open-top box, circle, pipe, hexagon, octagon, double-angle, double-channel, and octagon-with-hole sections using Green's theorem + triangular Saint-Venant FEM. **Transfer to Section Library** saves both properties and 3D extrusion outline.
+- **Moment Curvature Pro:** Fibre-section Mander (confined/unconfined concrete) + Park (rebar) analysis for rectangular and circular RC columns/beams. Reports yield/peak/ultimate moments, curvature ductility, plastic hinge length, and idealises a trilinear **`MomentBackbone`** hinge definition for pushover and nonlinear time-history `zeroLength` springs.
 
-The model is stored and solved in **kN, mm, tonne, s**. The default display units are
-**kN and m**. The status bar at the bottom right has two selectors that change the units
-used for input, tables and results without changing the stored model:
-
-- **Force:** kN, N, kip, lbs
-- **Length:** m, mm, in, ft
-
-Moments, stresses, densities, section properties and distributed loads follow from the chosen
-pair (for example moment in kN·m, stress in N/m², distributed load in kN/m). Project files,
-Tcl export and the MCP server always use the base units below, so switching the display units
-never changes the analysis.
-
-| Quantity | Base unit |
-|---|---|
-| Length | mm |
-| Force | kN |
-| Moment | kN·mm |
-| Stress / E | kN/mm² (1 kN/mm² = 1000 MPa) |
-| Density | t/mm³ (steel 7.85e-9) |
-| Distributed load | kN/mm (10 kN/m = 0.01 kN/mm) |
-
-Self weight is computed as `ρ · A · g` with `g = 9806.65 mm/s²`.
-
-## Design tools
-
-**Tools > Section Properties** is the Section Property Pro calculator. It handles
-I, T, C, L, rectangular, hollow rectangular, open-top box, solid circle, pipe,
-hexagon, octagon, double-angle, double-channel and octagon-with-hole shapes.
-Area, centroid, strong/weak inertias, product and principal inertias, section
-moduli, radii of gyration, torsion constant `J` and warping constant `Cw` are
-computed from a Green's-theorem polygon engine and, where no closed form exists,
-a triangular Saint-Venant finite-element solve. **Transfer to Section Library**
-adds the result as a User-defined custom section with A, Iy, Iz and J populated,
-and stores the calculated outline for the section preview and 3D view.
-
-![Section Property Pro](docs/section_property_pro.png)
-
-**Tools > Moment Curvature** is the Moment Curvature Pro calculator. It supports
-rectangular and circular reinforced-concrete sections with cover, longitudinal
-bars, ties, axial load and member length. Concrete uses the Mander confined and
-unconfined envelopes, steel uses the Park envelope, and the section is integrated
-over a fibre grid for strong-axis and weak-axis behaviour. The tool reports
-yield, peak and ultimate moments, rotations, curvature ductility, the confined
-strength/strain and the plastic hinge length.
-
-![Moment Curvature Pro](docs/moment_curvature_pro.png)
-
-The calculated curve is idealised to a trilinear moment-rotation backbone. **Create
-Hinge** stores it as a `MomentBackbone` hinge definition; the same tool can assign
-it directly to the selected beam elements. `MomentBackbone` definitions build
-rotational `zeroLength` spring hinges at both member ends, so they are used by
-pushover and nonlinear time history. The same backbone is applied to both local
-bending axes and torsion remains elastic. The other moment-rotation library
-materials remain reference-only until they receive a stored backbone.
+<details>
+<summary>View idealised moment-rotation backbone screenshot</summary>
 
 ![Moment-rotation backbone](docs/moment_backbone.png)
 
-## Bridge live load
+</details>
 
-OpenSees does not provide a built-in truck/lane moving-load or influence-line
-module, so the Tools tab includes a bridge live-load analyser built on the
-influence-line engine from the Live Load Analyzer for Bridges. It analyses a
-continuous Euler-Bernoulli beam with pinned vertical supports at every span
-boundary and continuous rotations, using a single beam-FEM factorization and
-four unit-load influence solves per element.
+---
 
-![Bridge live load envelopes](docs/live_load.png)
+## Bridge Live Load
 
-- **Model:** support locations, span lengths and mean E/I are read from the
-  selected continuous beam chain in the 3D model; the dialog shows the detected
-  supports and spans, and only the influence-engine mesh and truck sweep
-  increment are analysis settings.
-- **Vehicle and lane:** CL-625, BCL-625 (variable axle 3-4 spacing from 6.6 m to
-  18 m) or a custom vehicle/train with 1-20 axles; an axle elevation
-  shows loads and spacing dimensions; lane name, lane UDL, DLA mode and DLA
-  multiplier d. The BCL axle-spacing control is shown only for BCL-625.
-- **Vehicle, lane and case:** the Load tab has separate **Vehicles**,
-  **Lanes** and **Live Load Case** commands. Vehicles store axle loads/spacing;
-  lanes store a straight or curved element chain and lateral shift; a live-load
-  case selects a saved vehicle and lane plus DLA and lane UDL.
-- **Traffic lanes:** define a lane from a selected single line of beam elements,
-  straight or curved, with the direction set from the start to the end of the
-  chain (reverse if needed). A lateral shift places the lane and its CL-625 wheel
-  lines across the bridge.
-- **Result cases:** **LL Max** displays the upper truck envelope, **LL Min** the
-  lower truck envelope, and **LL All** both curves for the combined live-load
-  envelope. Moment **My** and vertical shear **Vz** can be displayed together in
-  the main model view.
-- **Dialog scope:** the live-load case dialog only selects the saved vehicle and
-  lane and runs the analysis; it contains no result plots. Envelopes are
-  displayed by selecting LL Max, LL Min or LL All in the Results view.
+OpenSees has no native moving-truck or influence-line engine. OpenSees Studio includes a dedicated **Bridge Live-Load Analyzer** built on a continuous Euler-Bernoulli beam influence-line solver:
 
-The truck is swept in both axle orientations. Auto DLA uses the selected-axle
-40/30/25% groups; a manual override and the d multiplier are also available.
-The analyser is a moving-load envelope tool, not a time-history vehicle run.
-For design use, match the bridge properties, lane rules and load factors to the
-project specification and obtain engineering review.
+| Moving-Truck & Lane Envelopes | Influence Lines |
+| :---: | :---: |
+| ![Bridge live load envelopes](docs/live_load.png) | ![Live-load influence lines](docs/live_load_influence.png) |
 
-![Live-load influence lines](docs/live_load_influence.png)
+- **Model-driven:** Automatically reads support locations, span lengths, and mean `E`/`I` from any selected continuous beam chain in the 3D model.
+- **Vehicles & Lanes (`Load` tab):** Built-in **CL-625**, **BCL-625** (variable 6.6–18 m axle 3–4 spacing), and custom 1–20 axle vehicles; straight or curved traffic lanes with lateral wheel-line offset; auto selected-axle DLA (40/30/25%) with manual override and `d` multiplier; bi-directional truck sweeps.
+- **Viewport Envelopes:** Generates **LL Max**, **LL Min**, and **LL All** result cases with simultaneous moment (`My`) and shear (`Vz`) envelopes rendered directly along the 3D bridge chain.
 
-## Features
+---
 
-**Interface**
-- Ribbon tabs (View, Structure, Node/Element, Properties, Boundary, Load, Analysis,
-  Dynamic, Pushover, Results, Tools, Help) with command groups and captions.
-- Quick horizontal command strip (save, run, results, check, lock, undo/redo) and a
-  selection strip with a **Select** cursor plus editable **Elements** and **Nodes**
-  boxes. Type tags separated by spaces or commas, or a range such as `4 to 9`, and
-  press Enter; each box keeps the last five selection lists in its dropdown.
-- Vertical view strip (fit, iso, top, front, right, pan, orbit, node labels, element
-  labels, grid, deformed, extruded). Right-click either toolbar or use
-  **View > Panels > Toolbars** to add, remove and reorder favourite buttons.
-- **Groups** dock on the right for persistent **Structure Groups** (elements) and
-  **Boundary Groups** (nodes). Create a group from the current selection, add more
-  members, rename or delete it, and double-click to recall the selection.
-- **Update badge** in the top-right corner of the ribbon appears only when a newer
-  GitHub release with a Setup installer exists; click it to download the installer.
-- **About** shows the current application version.
-- Model, Groups and Messages panels are shown by default; the Properties panel is
-  hidden by default and can be opened from **View > Panels**.
-- **Run Analysis (F5)** opens a run-control checklist: static, modal, pushover, time
-  history and response spectrum, with unavailable analyses disabled and explained.
-- Materials, sections and hinges can be dragged from the model tree onto the viewport
-  and are applied to the selected elements. Right-click a tree header to add new
-  materials, sections, hinges, cases or combinations.
-- Right-click a node or element in the viewport for **Show details**, **Edit
-  properties**, table and delete actions.
-- **Help** tab with Quick Start, a FAQ, About, and links to the official
-  OpenSees wiki and documentation.
-- **Clean View** hides deformation, loads and labels for a plain structural view.
-  It is on the vertical sidebar on the right.
-- **Extruded** mode draws beams and columns with their real section sizes. The View
-  tab also has separate visibility switches for links/constraints, supports, labels
-  and nodes.
+## Feature Highlights
 
-![extruded section view](docs/extruded.png)
+### Interface & Viewport
+- **Ribbon UI** with task tabs (`View`, `Structure`, `Node/Element`, `Properties`, `Boundary`, `Load`, `Analysis`, `Dynamic`, `Pushover`, `Results`, `Tools`, `Help`).
+- **Customizable Toolbars:** Quick horizontal strip (save, run, results, reactions, check, lock, visibility, undo/redo), selection strip with range parsing (`1, 4 to 9`), and vertical view strip (fit, iso/top/front/right, pan, orbit, labels, grid, deformed, extruded, clean view).
+- **Persistent Groups Dock:** Create, rename, and recall **Structure Groups** (elements) and **Boundary Groups** (nodes).
+- **Extruded 3D View:** Renders beams, columns, and 2D/3D trusses with true cross-section geometry.
+- **Spreadsheet Tables & Drag-and-Drop:** Excel-compatible `Ctrl+C` / `Ctrl+V` model tables for every entity; drag materials, sections, or hinges directly from the Model tree onto selected elements.
 
-![standard steel section library](docs/section_dialog.png)
+### Modeling & Libraries
+- **Wizards:** 2D/3D Frame, 2D/3D Truss, and Multi-Span Girder Bridge grillage.
+- **Elements:** `elasticBeamColumn`, `forceBeamColumn` & `dispBeamColumn` (fibre sections, Lobatto/Legendre/NewtonCotes/Radau integration), standard/tension-only/compression-only trusses, `corotTruss` cables, `ShellMITC4` shells, `elastomericBearingBoucWen` bearings, `LeadRubberX` isolators, and `ViscousDamper`/`BilinearOilDamper` links.
+- **Boundary & Springs:** 6-DOF supports, `zeroLength` Elastic / `MultiLinear` / `PySimple1` point springs (standard, tension-only, compression-only), `rigidLink`, `equalDOF`, and `rigidDiaphragm`.
+- **Sections & Materials:** Full **AISC (USA)** and **CISC (Canada)** steel catalogs, custom parametric shapes, and `Elastic`, `ElasticPP`, `Steel02`, `Concrete02` materials (plus 20 OpenSees uniaxial/moment-rotation hinge families).
+- Full inventory and roadmap: [`docs/OPENSEES_TYPES.md`](docs/OPENSEES_TYPES.md) · [`docs/ANALYSIS_ROADMAP.md`](docs/ANALYSIS_ROADMAP.md).
 
-**Structure**
-- Structure tab wizards generate complete models: **2D Frame**, **3D Frame**,
-  **2D Truss**, **3D Truss**, and a multi-span **Girder Bridge** grillage with
-  longitudinal girders, transverse cross beams, pier supports and self weight.
-  Each wizard takes bays/panels, dimensions, spans, material and sections from the
-  project libraries and asks before replacing an existing model.
-- Create nodes by coordinates, with repetition and spacing.
-- Create beams (`elasticBeamColumn`), standard/tension-only/compression-only
-  trusses, tension-only `corotTruss` cables and 4-node shells (`ShellMITC4`).
-- **Nonlinear frame members**: `forceBeamColumn` and `dispBeamColumn` with fibre
-  sections generated from the section outline and material, and `Lobatto`,
-  `Legendre`, `NewtonCotes` or `Radau` beam integration (2-40 points).
-- **Devices**: elastomeric bearings (`elastomericBearingBoucWen`), lead-rubber
-  isolators (`LeadRubberX`), and viscous or bilinear oil dampers
-  (`twoNodeLink` + `ViscousDamper`/`BilinearOilDamper`).
-- **Batch Element** creates beam/truss/cable/shell elements from a selected node list;
-  **Draw Element** opens a side panel with material and section lists and draws
-  beams by clicking from node to node (the end node becomes the next start).
-- **Activate** shows only the selected nodes/elements, **Deactivate** hides the
-  selected items, and **Activate All** restores the full view. The same three
-  buttons are on the horizontal toolbar below the ribbon.
-- Chain creation: give a list of nodes and beams/trusses are created between consecutive nodes.
-- Copy / move with a translation and repeat count; attached elements are duplicated.
-- Subdivide selected beam, frame or truss elements into a user-defined number of equal
-  segments; intermediate nodes and element loads are carried over automatically.
-- Mirror about the XY, XZ or YZ plane at any coordinate, with or without keeping
-  the original. The plane is previewed in the viewport while the dialog is open.
-- Supports: fixed, pinned, roller Z, or any combination of 6 DOF. The model tree
-  groups identical restraint patterns and shows their count, for example
-  `1,1,1,1,1,1 (6)`; double-click a group to select its nodes. The supports table
-  separates restrained and collapsible unrestrained groups, and restraint cells are
-  restricted to **0** or **1**.
-- The model tree supports Ctrl multi-selection; double-click or use the right-click
-  menu to act on every selected material, section, support group or load case.
-- **Point springs** (`zeroLength`): linear Elastic stiffness, multi-linear
-  force-deformation (`MultiLinear`), and **PySimple1** p-y springs for piles.
-  Linear/multi-linear springs can be standard, **tension-only** or
-  **compression-only**; springs are drawn at the node and connect to an
-  automatically fixed ground point.
-- **Truss behaviour**: standard, tension-only (`TensionOnly`) or compression-only
-  (`ENT`). **Cable** elements use `corotTruss` with `TensionOnly`.
-- **Constraints**: `rigidLink` beam/bar, `equalDOF`, and `rigidDiaphragm`, created
-  from selected master/slave nodes and listed in the model tree.
-- The full OpenSees element/constraint inventory and the planned implementation
-  sequence are in [docs/OPENSEES_TYPES.md](docs/OPENSEES_TYPES.md).
+### Analysis & Post-Processing
+- **Isolated Solver Process:** OpenSees runs in a dedicated child process with live progress and Cancel support so solver crashes never close the GUI.
+- **Analysis Types:** Static (`LoadControl`), Modal (animated mode shapes + mode selector), Nonlinear Pushover (`beamWithHinges` / rotational spring hinges), Dynamic Time History (ground-motion catalog, PEER AT2 / 1-col / 2-col, Rayleigh damping, step slider), Response Spectrum (SRSS/CQC), and Bridge Live Load.
+- **Preserved Multi-Analysis Results:** Running static and modal analyses preserves both in the **Analysis Results** table (`Summary`, `Displacements`, `Reactions`, `Element Forces`, `Modes`, and logs) with CSV export; viewing mode shapes automatically clears static/reaction overlays for a clean animation.
+- **Model Lock & Validation:** Model check (`F9`) catches orphan nodes, zero-length elements, and missing supports/loads; models auto-lock after analysis (`Ctrl+L` to unlock).
 
-**Template gallery**
+---
 
-The Structure tab generates complete models from parameters. These screenshots were
-made with the built-in templates:
+## Units
 
-| 2D Frame | 3D Frame |
-| --- | --- |
-| ![2D frame template](docs/template_frame2d.png) | ![3D frame template](docs/template_frame3d.png) |
-| **2D Truss** | **3D Truss** |
-| ![2D truss template](docs/template_truss2d.png) | ![3D truss template](docs/template_truss3d.png) |
+Internal storage, solver execution, `.ospj` files, Tcl export, and the MCP server always use consistent base units (**kN, mm, tonne, s**). Display units default to **kN and m** and can be switched live from the status bar (**Force:** `kN, N, kip, lbs` · **Length:** `m, mm, in, ft`) without altering the model.
 
-![Girder bridge template](docs/template_bridge.png)
+| Quantity | Base Unit | Notes |
+| --- | --- | --- |
+| Length | `mm` | Self weight `ρ · A · g` with `g = 9806.65 mm/s²` |
+| Force | `kN` | — |
+| Moment | `kN·mm` | Displayed in selected force × length unit |
+| Stress / `E` | `kN/mm²` | `1 kN/mm² = 1000 MPa` |
+| Density | `t/mm³` | Steel `7.85e-9 t/mm³` |
+| Distributed load | `kN/mm` | `10 kN/m = 0.01 kN/mm` |
 
-*Girder bridge template with three spans, five longitudinal girders and cross beams.*
+---
 
-- Material library: Elastic, ElasticPP, Steel02, Concrete02.
-- Section library with a standard steel database and custom shapes. The database
-  contains AISC (USA) and CISC (Canada) W, HP, M, S, rectangular/square hollow,
-  round hollow and pipe sections with published dimensions and section properties.
-- Custom shapes: solid rectangle, circle, hexagon, octagon, rectangular hollow,
-  circular hollow/pipe, I/H section, angle (L), tee (T), and user-defined A/Iy/Iz/J.
-  Custom properties are computed from the dimensions; standard database values are
-  kept exactly as published.
-- Section dialog with database/family selection, designation search, live preview,
-  area, mass, Iy, Iz and J. An **Add** button commits the database or custom section
-  currently shown in the editor to the model list. New projects start with W610x82,
-  W610x92 and a 300 x 600 mm rectangular section.
-- Model tree lists materials, sections, supports, load cases and combinations.
-  **Nodes** and **Elements** are table links; clicking them opens their spreadsheet.
-  Double-click a material or section to select its elements, right-click to delete it.
-- Load cases appear once per case (not once per load). Double-click a case to select
-  the loaded elements; right-click for **Display**, **Undisplay**, **Table** and
-  **Delete** from a case context menu.
-- Spreadsheet **Tables** editor for every entity, with validation and Excel-compatible
-  copy/paste (Ctrl+C / Ctrl+V). Ribbon table buttons open the tab for their group
-  (nodes, elements, supports, materials, sections, cases, loads or combinations).
-  The load table can be filtered to one load case and edits element loads row by row.
+## Keyboard Shortcuts & Navigation
 
-**Loads**
-- Load cases (Dead, Live, Wind, Seismic, …), each becomes an OpenSees pattern.
-- Nodal forces and moments on selected nodes, a single node, or all nodes.
-- Element loads: uniform, trapezoidal (approximated by point loads) and point loads,
-  in local y/z or global X/Y/Z directions, with automatic local-axis conversion.
-- Self weight per load case with a factor.
-- Load combinations with per-case factors.
-- Active load case selector in the status bar; loads are drawn for the active case.
-  The tree can display several load cases at once, with individual **Display /
-  Undisplay** control. Uniform and trapezoidal loads are drawn as UDL envelopes and
-  point loads are drawn at their exact x/L position.
+| Key | Action | Key | Action |
+| --- | --- | --- | --- |
+| `N` / `E` | New nodes / Batch elements | `F5` / `F6` | Run Analysis Control / Modal |
+| `C` / `M` | Copy-Move / Mirror | `F7` / `F9` | Results table / Model check |
+| `S` / `L` / `K` | Supports / Nodal loads / Combos | `F` / `O` / `P` | Fit view / Orbit mode / Pan mode |
+| `T` | Model Tables | `Ctrl+L` | Lock / unlock model editing |
+| `Ctrl+A` / `Del` | Select visible / Delete | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo (100 steps) |
 
-**Analysis and results**
-- Static analysis (`LoadControl`, `BandGen`, RCM, Linear).
-- Modal analysis (eigenvalues, periods, frequencies, animated mode shapes).
-  **Modal Settings** in the Analysis tab sets the number of modes and the OpenSees
-  eigen solver; the modal run button is in the Dynamic tab.
-- **Dynamic** ribbon tab: manage a project **ground-motion catalog** (import,
-  edit, remove, preview), define a catalog-backed or file-backed time-history
-  case (sine or PEER AT2 / two-column / single-column), optional gravity preload,
-  and Rayleigh damping from the first mode.
-- **Time-history results**: node/DOF displacement, velocity or acceleration plot,
-  CSV export, and a step slider that updates the deformed shape, beam diagrams
-  and an element end-force table at every step.
-- **Response spectrum**: a user-defined period/Sa table or a 5%-damped spectrum
-  generated from a catalog record, with SRSS/CQC modal combination, a spectrum
-  plot and modal mass-ratio table.
-- **File > Close Project** returns to an Untitled model without quitting the app.
-- Analyses run in a **separate OpenSees process** with progress and Cancel, so a
-  solver failure does not take down the GUI.
-- **Mode shapes** are available from a dropdown in the **Results** ribbon tab;
-  select any mode and use **Animate** without opening the results table.
-- **Pushover** ribbon tab: displacement-controlled nonlinear static analysis with
-  `beamWithHinges` fibre hinges or beam-end rotational spring hinges. Use
-  **Define Hinges** to create reusable hinge materials and **Assign Hinges** to
-  selected beam elements. Hinge definitions are grouped by material family and
-  use the exact OpenSees names: `Steel01`, `Steel02`, `Hardening`,
-  `ElasticBilin`, `Concrete01`, `Concrete02`, `Concrete02IS`, `Concrete04`,
-  `Hysteretic`, `HystereticSM`, `HystereticSmooth`, `HystereticAsym`,
-  `Pinching4`, `BoucWen`, `FlagShape`, `SelfCentering`, and moment-rotation
-  `MomentBackbone`, `IMKBilin`, `IMKPeakOriented`, `IMKPinching`.
-  `MomentBackbone` definitions come from **Tools > Moment Curvature** and build
-  `zeroLength` rotational springs at both member ends for pushover and nonlinear
-  time history. Fibre models can use different steel and concrete definitions;
-  unassigned members stay elastic. The hinge definition dialog provides the
-  published OpenSees reference diagram, parameter values and definitions.
-  Results include the capacity curve, step table, hinge rotations/moments,
-  yielding state and deformed shape per step.
-- The model tree lists the created hinge definitions under **Hinges**; double-click
-  the group or a definition to open the hinge library. Unused materials, sections,
-  load cases and hinge definitions are shown in blue.
-- **Nodes** can be hidden from the viewport using the node button in the View tab
-  or the horizontal quick toolbar. Analysis results show the deformed shape only;
-  load diagrams are not forced on after a run.
-- Model check (`F9`) for missing references, zero-length elements, unconnected nodes,
-  missing supports and missing loads.
-- Result viewer: displacements, reactions, element forces (N, Vy, Vz, T, My, Mz at both ends),
-  modal periods; CSV export.
-- **Beam Diagrams** sidebar: shear **Vy/Vz**, bending **My/Mz**, torsion **Mx** and
-  axial **Fx** diagrams for any load case or load combination. Sagging moments are
-  positive for both **My** and **Mz**. Diagrams are computed
-  along each member from its end forces and applied loads, with fill, scale, value and
-  deformed-shape overlay options.
-- **Deformation** sidebar: deformed shape for any load case or combination, with an
-  automatic or manual scale and an optional **Show deformation values** overlay. The
-  undeformed shape stays visible as a dashed outline, and small displacement-table
-  values use scientific notation instead of rounding to 0.00.
-- Selecting another case or combination in either sidebar solves it automatically and
-  caches the result, so results can be reviewed case by case without rerunning the model.
-- Finished analyses switch to the **Results** ribbon tab instead of opening a dialog.
-- The model locks automatically after an analysis; press **Ctrl+L** or use the lock
-  button to unlock for editing. Results clear when the model is changed.
-- Deformed shape overlay with automatic scale.
+**Mouse:** Left = select (drag = box select, `Ctrl` = add), Middle = pan, Right = orbit, Wheel = zoom. `Shift+Left` always orbits.
 
-![beam force diagrams](docs/beam_diagrams.png)
+---
 
-![deformation for a load combination](docs/deformation.png)
+## MCP Server (AI Agents)
 
-![results and model lock](docs/results_lock.png)
+`mcp_server/` exposes **96 tools** over the **Model Context Protocol** (stdio transport), enabling AI coding agents (Antigravity, Claude Desktop, OpenCode, Cursor, etc.) to build models, assign materials/sections/hinges, run static/modal/pushover/time-history/response-spectrum/live-load analyses, import/export Tcl, and drive the live GUI.
 
-**AI integration**
-- MCP server (95 tools) so AI agents can build models, run analyses and read
-  results; optional live GUI bridge with screenshots, visibility and labels.
-
-**Project and scripting**
-- Save / open `.ospj` JSON projects.
-- Export an OpenSees Tcl input file; **Import Tcl** reads nodes, supports,
-  materials, sections, elements and load patterns from a Tcl model.
-- **Script Console** runs OpenSeesPy Python or OpenSees Tcl model commands in one
-  window, captures the model in metres or millimetres, and loads it into Studio;
-  the current model is one click away as Tcl.
-- Undo / redo (100 steps).
-- Built-in 3-storey steel frame example.
-
-## Roadmap
-
-The engine audit and prioritized plan for nonlinear materials, fiber modelling,
-plastic hinges, links, dampers, isolation bearings, pushover, response-spectrum
-and time-history analysis is in
-[docs/ANALYSIS_ROADMAP.md](docs/ANALYSIS_ROADMAP.md).
-
-## Keyboard shortcuts
-
-| Key | Action |
-|---|---|
-| N | New nodes |
-| E | Batch elements |
-| C | Copy / move |
-| M | Mirror |
-| S | Supports |
-| L | Nodal loads |
-| K | Load combinations |
-| T | Tables |
-| F5 / F6 | Run analysis control / modal |
-| F7 | Results |
-| F9 | Model check |
-| F | Fit view |
-| O | 3D orbit mode (left-drag rotates) |
-| P | Pan mode (left-drag moves the view) |
-| Ctrl+L | Lock / unlock model editing |
-| Ctrl+Z / Ctrl+Y | Undo / redo |
-| Ctrl+A | Select all visible nodes and elements |
-| Ctrl+C | Copy selected table cells (right-click also copies) |
-| Del | Delete selection |
-
-**Mouse:** left = select (drag = box select), middle = pan, right = orbit, wheel = zoom.
-Press **O** (or the Orbit ribbon button) for AutoCAD-style orbit mode, where left-drag rotates
-the model; Shift+left-drag or Shift+middle-drag always orbits. Press **P** (or the Pan
-button in the View tab or vertical view strip) for pan mode, where left-drag moves the
-view. Ctrl adds to the selection.
-In **Draw Element** mode, left-click a start node and then an end node; the end node
-becomes the next start. **Right-click**, **Esc** or **Finish** ends the tool.
-
-## Help and FAQ
-
-The **Help** tab contains **Quick Start**, **FAQ**, **About** and **OpenSees Help**.
-OpenSeesPy has no embedded help engine, so the FAQ summarizes the official OpenSees
-documentation (model building, supports, singular-matrix errors, mass and modal
-analysis, convergence, hinges, ground motions, SRSS/CQC) and links to the
-[OpenSees Wiki](https://opensees.berkeley.edu/wiki/index.php/Main_Page), the
-[Command Language Manual](https://opensees.berkeley.edu/OpenSees/manuals/usermanual/OpenSeesCommandLanguageManualJune2006.pdf),
-the [OpenSees documentation](https://opensees.github.io/OpenSeesDocumentation/)
-and the [OpenSeesPy documentation](https://openseespydoc.readthedocs.io/en/latest/).
-
-## Script console and Tcl import
-
-**Tools > Script Console** opens one window with a language selector for
-**Python (OpenSeesPy)** and **Tcl (OpenSees commands)**. Scripts run in the
-shared OpenSees domain. While they run, the console captures model commands
-(`node`, `element`, `fix`, materials, sections, patterns, nodal and element
-loads); choose the script **Units** first (metres/kN or millimetres/kN), then
-**Load captured model into Studio** converts the captured model to Studio's
-kN-mm base and displays it. The checkbox loads it automatically after a run, and
-replacing an existing model asks for confirmation. Analysis-only experiments
-that build no model do not touch the Studio project. **Current Studio Model
-(Tcl)** inserts the current model as a Tcl script.
-
-**File > Import Tcl** (nine-dot menu) reads an OpenSees Tcl model: nodes, supports,
-uniaxial/nD materials, PlateFiber sections, `geomTransf`, beam/truss/ShellMITC4
-elements and `pattern` loads. Loops, procedures and `expr` are not evaluated; skipped
-commands are reported in the message log.
-
-## MCP server (AI agents)
-
-`mcp_server/` exposes OpenSees Studio to AI agents over the **Model Context
-Protocol** (stdio transport, 95 tools). Agents can build the whole model,
-run analyses and read results.
-
-**Tools** (grouped): project new/open/save/summary; nodes (single, list, line,
-move, copy, mirror, delete); elements (beam/truss/cable/shell, update, delete,
-subdivide); material and section libraries, including custom-section outlines;
-supports, point springs and node constraints (rigid links, equalDOF,
-diaphragms); load cases, nodal and element loads, self weight, combinations;
-hinge material catalogue, hinge definitions and assignments, including stored
-`MomentBackbone` curves; static, modal, pushover, time-history and
-response-spectrum analyses with result tools; section-property, moment-curvature
-and bridge live-load calculators; ground-motion catalog and record spectra;
-frame/truss/bridge wizards; model check; Tcl import/export; Python and Tcl script
-execution; and GUI control (`gui_launch`, `gui_connect`, `gui_sync`,
-`gui_screenshot`, `gui_show_results`, `gui_set_visibility`, `gui_set_labels`).
-
-### Run it
-
-From source (development):
-
-```powershell
-.\.venv\Scripts\python.exe -m mcp_server
-```
-
-Installed application:
-
-```
-%LOCALAPPDATA%\Programs\OpenSees Studio\mcp\OpenSeesStudioMCP.exe
-```
-
-The server speaks MCP on stdio, so it is normally started by the AI client,
-not by hand.
-
-### Client configuration
-
-OpenCode (`opencode.json`):
-
-```json
-{
-  "mcp": {
-    "opensees-studio": {
-      "type": "local",
-      "command": ["C:\\Users\\<you>\\AppData\\Local\\Programs\\OpenSees Studio\\mcp\\OpenSeesStudioMCP.exe"],
-      "enabled": true
-    }
-  }
-}
-```
-
-Claude Desktop / other clients using the `mcpServers` schema:
+### Client Configuration (`mcpServers` JSON)
 
 ```json
 {
@@ -520,8 +178,23 @@ Claude Desktop / other clients using the `mcpServers` schema:
 }
 ```
 
-To use the Python module instead:
+<details>
+<summary>OpenCode & Python-source MCP configuration examples</summary>
 
+**OpenCode (`opencode.json`):**
+```json
+{
+  "mcp": {
+    "opensees-studio": {
+      "type": "local",
+      "command": ["C:\\Users\\<you>\\AppData\\Local\\Programs\\OpenSees Studio\\mcp\\OpenSeesStudioMCP.exe"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**From Python source:**
 ```json
 {
   "mcpServers": {
@@ -534,118 +207,69 @@ To use the Python module instead:
 }
 ```
 
-### Live GUI control
+</details>
 
-Start the application with the bridge enabled:
+### Live GUI Bridge
+
+Launch the desktop app with `--bridge` (or let the agent call `gui_launch` directly):
 
 ```powershell
 OpenSeesStudio.exe --bridge 8765
 ```
 
-Then the agent calls `gui_launch` (starts the app itself) or `gui_connect`
-(default port 8765). Every model change is mirrored into the running window,
-results are drawn as deformed shapes / mode animations, and `gui_screenshot`
-returns the viewport as an image.
+Every model edit, static/modal solve, and bridge live-load envelope can be mirrored live into the viewport (`gui_sync`, `gui_show_results`, `gui_show_diagram`, `gui_show_live_load`, `gui_screenshot`). The bridge binds strictly to `127.0.0.1`.
 
 ![MCP-controlled GUI](docs/mcp_gui.png)
 
-The bridge binds to `127.0.0.1` only and has no authentication; do not expose
-the port to untrusted networks.
+---
 
-### Verification
+## Script Console & Tcl Import
+
+- **Tools > Script Console:** Run **Python (OpenSeesPy)** or **Tcl** commands directly in the shared OpenSees domain, capture generated geometry/loads in metres or millimetres, and load them into Studio (or export the current model as Tcl in one click).
+- **File > Import Tcl:** Imports nodes, supports, uniaxial/nD materials, `PlateFiber` sections, `geomTransf`, beam/truss/`ShellMITC4` elements, and load patterns.
+
+---
+
+## Development & Packaging
 
 ```powershell
-.\.venv\Scripts\python.exe tests\test_mcp.py        # protocol + full workflow
-.\.venv\Scripts\python.exe tests\test_mcp_gui.py    # live GUI bridge
-```
-
-## Development
-
-```powershell
+# Setup & run from source
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m app.main
-```
 
-Tests (closed-form verification + GUI workflows):
-
-```powershell
+# Run verification suites
 .\.venv\Scripts\python.exe tests\test_solver.py
 .\.venv\Scripts\python.exe tests\test_gui.py
-```
+.\.venv\Scripts\python.exe tests\test_mcp.py
+.\.venv\Scripts\python.exe tests\test_mcp_gui.py
 
-See `CONTRIBUTING.md` for the contribution license and DCO sign-off.
-
-Headless self test (also available in the frozen exe):
-
-```powershell
-.\.venv\Scripts\python.exe -m app.main --selftest --report report.txt
-```
-
-## Packaging
-
-```powershell
+# Build portable exes + Windows installer (runs all tests & frozen self-test)
 .\build.ps1
 ```
 
-The script renders the icon, runs PyInstaller for both the application and the
-MCP server, executes all tests (including the frozen MCP server), and compiles the
-Inno Setup installer. Outputs:
+<details>
+<summary>Code signing & Project layout</summary>
 
-- `dist\OpenSeesStudio\OpenSeesStudio.exe` – portable application folder
-- `dist\OpenSeesStudioMCP\OpenSeesStudioMCP.exe` – MCP server (stdio)
-- `dist\OpenSeesStudio-1.0.24-alpha-Setup.exe` - Windows installer with Start Menu and
-  optional desktop shortcut
+### Optional Code Signing
+Set `$env:OSS_SIGN_PFX` (with optional `$env:OSS_SIGN_PASSWORD`) or `$env:OSS_SIGN_THUMBPRINT` before running `.\build.ps1` to SHA-256 timestamp-sign both executables and `dist\OpenSeesStudio-1.0.24-alpha-Setup.exe`.
 
-### Code signing
-
-Signing is optional and off by default. To sign the application, the MCP server and
-the installer, set one of these before running `build.ps1`:
-
-```powershell
-# certificate file
-$env:OSS_SIGN_PFX = "C:\keys\codesign.pfx"
-$env:OSS_SIGN_PASSWORD = "..."
-
-# or a certificate already installed in the Windows certificate store
-$env:OSS_SIGN_THUMBPRINT = "A1B2C3..."
+### Project Layout
+```text
+app/            PySide6 GUI, 3D viewport, wizards, calculators, OpenSeesPy engine, GUI bridge
+mcp_server/     96-tool MCP stdio server & GUI bridge client
+tests/          Closed-form solver verification, GUI workflows, MCP & bridge tests
+tools/          Icon renderer and screenshot capture utilities
+packaging/      Inno Setup installer script and MCP client config example
+docs/           Screenshots, OpenSees element inventory, analysis roadmap
 ```
 
-`build.ps1` signs with `signtool` (SHA-256, timestamped) and continues with a
-warning when no certificate is configured, so unsigned developer builds still work.
+</details>
 
-## Project layout
+---
 
-```
-app/
-  main.py         entry point, self test, screenshot mode
-  mainwindow.py   ribbon, docks, workflows
-  ribbon.py       ribbon tabs, command groups and captions
-  viewport.py     3D viewport: camera, picking, loads, diagrams, deformed shapes
-  beamdiagram.py  member force distribution from end forces and loads
-  resultsview.py  beam diagram / deformation sidebar
-  model.py        data model, section properties and JSON persistence
-  steelsections.py standard AISC and CISC steel section database
-  units.py        display-unit conversion and unit labels
-  opsgen.py       OpenSees model builder, analyses, Tcl export, validation
-  dialogs.py      node / element / copy / load / combination dialogs
-  tables.py       spreadsheet model tables and load-case filter
-  results.py      result viewer and CSV export
-  boundary_dialogs.py springs, rigid links, equalDOF and diaphragms
-  runcontrol.py   analysis run-control checklist
-  faq.py          FAQ dialog and official OpenSees links
-  console.py      Python/Tcl script console
-  scriptmodel.py  capture script-built models into a project
-  tcl.py          Tcl model import and command runner
-  dnd.py          drag-and-drop payload for tree items
-  example.py      built-in demo frame
-  theme.py        light professional theme
-  icons.py        vector ribbon icons
-  bridge.py       local JSON bridge for live GUI control
-mcp_server/
-  server.py       MCP tools, state, resources
-  gui.py          client for the GUI bridge
-tests/            solver, GUI and MCP tests
-tools/            icon renderer, screenshot generator
-packaging/        Inno Setup script and MCP config sample
-```
+## License
+
+OpenSees Studio is **source-available, not OSI open source**. Original code is licensed under the **PolyForm Noncommercial License 1.0.0** ([`LICENSE.txt`](LICENSE.txt)) — free to use, modify, and share for noncommercial purposes; commercial use and selling are not permitted.
+
+The Windows installer bundles **OpenSees** and **OpenSeesPy** (UC Regents OpenSees license; not covered by PolyForm — commercial distribution requires a separate license from UC Berkeley / OpenSeesPy maintainers) and **Qt / PySide6** (LGPL-3.0). OpenSees Studio is an independent project and is not affiliated with or endorsed by UC Berkeley, OpenSees, or OpenSeesPy. See [`NOTICE.md`](NOTICE.md), [`DISCLAIMER.md`](DISCLAIMER.md), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`licenses/`](licenses/).
